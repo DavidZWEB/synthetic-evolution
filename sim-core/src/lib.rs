@@ -10,8 +10,12 @@
 
 pub mod agents;
 pub mod arena;
+pub mod crossover;
+pub mod founder;
+pub mod genome;
 pub mod ids;
 pub mod math;
+pub mod mutate;
 pub mod params;
 pub mod pool;
 pub mod rng;

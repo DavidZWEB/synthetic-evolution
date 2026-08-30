@@ -46,6 +46,16 @@ macro_rules! define_id {
             }
         }
 
+        impl Default for $name {
+            /// [`Self::NULL`], deliberately. A default id names nothing, so a gene
+            /// with a field left unset fails genome validation as a dangling
+            /// reference rather than silently binding to neuron 0.
+            #[inline]
+            fn default() -> Self {
+                Self::NULL
+            }
+        }
+
         impl From<usize> for $name {
             #[inline]
             fn from(i: usize) -> Self {

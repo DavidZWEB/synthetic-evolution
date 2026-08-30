@@ -8,8 +8,12 @@
 //! Deliberately not here yet: the tick. `step()` arrives at M8 with the 11 phases of
 //! spec §2.4 in `tick.rs`; this module owns state and lifecycle only.
 
+use glam::Vec3;
+
 use crate::agents::{Agents, SpawnSpec};
 use crate::arena::Arena;
+use crate::founder::FounderPlan;
+use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::params::{ParamError, SimParams};
 use crate::pool::SlotPool;
@@ -31,6 +35,14 @@ pub struct World {
     agents: Agents,
     /// Neuron activations, one block per agent.
     brains: Arena<f32>,
+    /// Gene lists, one block per agent.
+    genes: Arena<Gene>,
+    /// The founding topology, whose innovation ids every founder in this world shares
+    /// (spec §3.1).
+    plan: FounderPlan,
+    /// Reusable buffer for building a genome before it is copied into the arena.
+    /// Owned by the world and sized once, so a birth allocates nothing.
+    genome_scratch: Vec<Gene>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
     parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
@@ -46,14 +58,25 @@ impl World {
     pub fn new(seed: u64, params: SimParams) -> Result<Self, ParamError> {
         params.validate()?;
         let capacity = params.world.max_agents;
-        let brain_stride = Self::brain_stride(&params);
+        let mut next_innovation = 0u32;
+        // The plan draws the world's first innovation ids, before any agent exists.
+        let plan = FounderPlan::new(&params, || {
+            let id = InnovationId::new(next_innovation);
+            next_innovation += 1;
+            id
+        });
+        let brain_stride = plan.neuron_count() as u32;
+        let genome_stride = plan.len() as u32;
         Ok(Self {
             rng: Rng::from_seed(seed),
             tick: 0,
-            next_innovation: 0,
+            next_innovation,
             pool: SlotPool::with_capacity(capacity),
             agents: Agents::with_capacity(capacity),
             brains: Arena::with_capacity(capacity, brain_stride),
+            genes: Arena::with_capacity(capacity, genome_stride),
+            genome_scratch: vec![Gene::default(); plan.len()],
+            plan,
             parts: Arena::with_capacity(capacity, PARTS_PER_AGENT),
             hash: SpatialHash::new(
                 params.world.size,
@@ -64,22 +87,13 @@ impl World {
         })
     }
 
-    /// Neurons per brain under Phase 1's fixed topology.
-    ///
-    /// Sensor and effector counts are hardcoded this phase; they become genetic in
-    /// Phase 2, at which point this becomes the arena's stride ceiling rather than
-    /// every agent's exact size.
-    fn brain_stride(params: &SimParams) -> u32 {
-        let inputs = params.sensing.vision_rays * 4 // distance + signature RGB
-            + 3 // chemo: concentration + gradient x/y
-            + 1; // interoception: own energy
-        let outputs = 4; // thrust, turn, ingest, reproduce
-        inputs + outputs + params.brain.hidden_neurons + params.brain.oscillators
-    }
-
     /// Claims a slot and its arena blocks. `None` when any pool is full — a normal
     /// condition at the population ceiling, not an error.
-    pub fn spawn(&mut self, spec: &SpawnSpec) -> Option<AgentId> {
+    pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Option<AgentId> {
+        debug_assert!(
+            genome::validate(genes).is_ok(),
+            "spawning an incoherent genome"
+        );
         let id = self.pool.alloc()?;
         let Some(brain) = self.brains.alloc(self.brains.stride()) else {
             self.pool.free(id);
@@ -90,8 +104,55 @@ impl World {
             self.pool.free(id);
             return None;
         };
+        let Some(genome) = self.genes.alloc(genes.len() as u32) else {
+            self.parts.free(parts);
+            self.brains.free(brain);
+            self.pool.free(id);
+            return None;
+        };
+        self.genes.get_mut(genome).copy_from_slice(genes);
         self.agents.init(id, spec, brain, parts);
+        self.agents.genome[id.index()] = genome;
         Some(id)
+    }
+
+    /// Spawns a founder: the world's fixed topology with fresh random scalars.
+    ///
+    /// Body traits come out of the genome rather than the caller, because that is the
+    /// point of carrying them genetically — an offspring inherits its parent's size
+    /// and colour without anything else having to remember to copy them.
+    pub fn spawn_founder(&mut self, position: Vec3) -> Option<AgentId> {
+        // Taken out of `self` so the borrow checker sees the buffer and the world as
+        // separate; put back before returning.
+        let mut scratch = core::mem::take(&mut self.genome_scratch);
+        debug_assert_eq!(scratch.len(), self.plan.len());
+        self.plan
+            .instantiate(&mut self.rng, &self.params, &mut scratch);
+
+        let yaw = self
+            .rng
+            .range(-core::f32::consts::PI, core::f32::consts::PI);
+        let spec = SpawnSpec {
+            position,
+            yaw,
+            energy: self.params.reproduction.start_energy,
+            size: genome::body_trait(&scratch, BodyTrait::Size).unwrap_or(self.params.body.size),
+            signature: Vec3::new(
+                genome::body_trait(&scratch, BodyTrait::SignatureR).unwrap_or(0.5),
+                genome::body_trait(&scratch, BodyTrait::SignatureG).unwrap_or(0.5),
+                genome::body_trait(&scratch, BodyTrait::SignatureB).unwrap_or(0.5),
+            ),
+            parent_a: AgentId::NULL,
+        };
+        let spawned = self.spawn(&spec, &scratch);
+        self.genome_scratch = scratch;
+        spawned
+    }
+
+    /// One agent's genes.
+    #[inline]
+    pub fn genome(&self, id: AgentId) -> &[Gene] {
+        self.genes.get(self.agents.genome[id.index()])
     }
 
     /// Returns a slot and its arena blocks. Despawning a dead agent is a no-op, so a
@@ -101,13 +162,14 @@ impl World {
             return false;
         }
         let i = id.index();
-        let (brain, parts) = (self.agents.brain[i], self.agents.parts[i]);
-        if !brain.is_empty() {
-            self.brains.free(brain);
-        }
-        if !parts.is_empty() {
-            self.parts.free(parts);
-        }
+        let (brain, parts, genome) = (
+            self.agents.brain[i],
+            self.agents.parts[i],
+            self.agents.genome[i],
+        );
+        self.brains.free(brain);
+        self.parts.free(parts);
+        self.genes.free(genome);
         self.agents.clear(id);
         self.pool.free(id)
     }
@@ -135,6 +197,12 @@ impl World {
         let id = InnovationId::new(self.next_innovation);
         self.next_innovation += 1;
         id
+    }
+
+    /// The world's founding topology.
+    #[inline]
+    pub fn founder_plan(&self) -> &FounderPlan {
+        &self.plan
     }
 
     #[inline]
@@ -185,17 +253,6 @@ mod tests {
         World::new(7, params).expect("defaults are valid")
     }
 
-    fn spec_at(x: f32, y: f32) -> SpawnSpec {
-        SpawnSpec {
-            position: Vec3::new(x, y, 0.0),
-            yaw: 0.0,
-            energy: SimParams::default().reproduction.start_energy,
-            size: 3.0,
-            signature: Vec3::splat(0.5),
-            parent_a: AgentId::NULL,
-        }
-    }
-
     #[test]
     fn rejects_invalid_params_at_construction() {
         let mut params = SimParams::default();
@@ -207,8 +264,8 @@ mod tests {
     fn spawn_and_despawn_track_population() {
         let mut w = small_world();
         assert_eq!(w.population(), 0);
-        let a = w.spawn(&spec_at(1.0, 2.0)).unwrap();
-        let b = w.spawn(&spec_at(3.0, 4.0)).unwrap();
+        let a = w.spawn_founder(Vec3::new(1.0, 2.0, 0.0)).unwrap();
+        let b = w.spawn_founder(Vec3::new(3.0, 4.0, 0.0)).unwrap();
         assert_eq!(w.population(), 2);
         assert!(w.despawn(a));
         assert!(!w.despawn(a), "despawning twice must be a no-op");
@@ -220,7 +277,7 @@ mod tests {
     fn every_live_agent_has_a_distinct_brain_block() {
         let mut w = small_world();
         let ids: Vec<_> = (0..32)
-            .map(|i| w.spawn(&spec_at(i as f32, 0.0)).unwrap())
+            .map(|i| w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap())
             .collect();
         let mut offsets: Vec<u32> = ids
             .iter()
@@ -230,7 +287,7 @@ mod tests {
         offsets.dedup();
         assert_eq!(offsets.len(), 32, "two agents are sharing a brain");
         assert!(
-            w.spawn(&spec_at(0.0, 0.0)).is_none(),
+            w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_none(),
             "full pool must refuse"
         );
     }
@@ -239,9 +296,9 @@ mod tests {
     fn arena_blocks_come_back_on_death() {
         let mut w = small_world();
         let ids: Vec<_> = (0..32)
-            .map(|i| w.spawn(&spec_at(i as f32, 0.0)).unwrap())
+            .map(|i| w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap())
             .collect();
-        assert!(w.spawn(&spec_at(0.0, 0.0)).is_none());
+        assert!(w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_none());
         for id in &ids {
             w.despawn(*id);
         }
@@ -249,7 +306,7 @@ mod tests {
         // If blocks leaked, the pool would have slots but the arena would not.
         for i in 0..32 {
             assert!(
-                w.spawn(&spec_at(i as f32, 0.0)).is_some(),
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_some(),
                 "arena leaked a block"
             );
         }
@@ -258,11 +315,11 @@ mod tests {
     #[test]
     fn a_recycled_slot_starts_with_a_blank_brain() {
         let mut w = small_world();
-        let a = w.spawn(&spec_at(0.0, 0.0)).unwrap();
+        let a = w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).unwrap();
         let block = w.agents().brain[a.index()];
         w.brains.get_mut(block).fill(0.75);
         w.despawn(a);
-        let b = w.spawn(&spec_at(0.0, 0.0)).unwrap();
+        let b = w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).unwrap();
         assert!(
             w.brain(b).iter().all(|&x| x == 0.0),
             "inherited the dead agent's activations"
@@ -271,33 +328,59 @@ mod tests {
 
     #[test]
     fn innovation_ids_are_per_world_and_monotonic() {
-        // Two worlds in one process must not share a counter (spec §7.2).
+        // Two worlds in one process must not share a counter (spec §7.2). Both start
+        // wherever their own founding topology left off, not at zero — the plan draws
+        // the world's first ids during construction.
         let mut a = small_world();
         let mut b = small_world();
-        assert_eq!(a.next_innovation().raw(), 0);
-        assert_eq!(a.next_innovation().raw(), 1);
-        assert_eq!(
-            b.next_innovation().raw(),
-            0,
-            "counter leaked between worlds"
+        let first = a.next_innovation();
+        assert!(
+            first.raw() > 0,
+            "the founding plan should already have drawn ids"
         );
+        assert_eq!(a.next_innovation().raw(), first.raw() + 1);
+        assert_eq!(b.next_innovation(), first, "counter leaked between worlds");
     }
 
     #[test]
-    fn brain_width_covers_the_hardcoded_sensor_and_effector_set() {
-        let params = SimParams::default();
-        let stride = World::brain_stride(&params);
-        let expected = params.sensing.vision_rays * 4
-            + 3
-            + 1
-            + 4
-            + params.brain.hidden_neurons
-            + params.brain.oscillators;
-        assert_eq!(stride, expected);
-        assert_eq!(
-            small_world().brain(AgentId::new(0)).len(),
-            0,
-            "no agent spawned yet"
-        );
+    fn brain_width_matches_the_founding_topology() {
+        let w = small_world();
+        assert_eq!(w.brains.stride() as usize, w.founder_plan().neuron_count());
+        assert_eq!(w.genes.stride() as usize, w.founder_plan().len());
+    }
+
+    #[test]
+    fn founders_share_one_set_of_innovation_ids() {
+        // Shared ancestry is what makes crossover and genetic distance mean anything.
+        // Fresh ids per founder would make every agent its own lineage (spec §3.1).
+        let mut w = small_world();
+        let a = w.spawn_founder(Vec3::new(1.0, 1.0, 0.0)).unwrap();
+        let b = w.spawn_founder(Vec3::new(2.0, 2.0, 0.0)).unwrap();
+        let ids_a: Vec<_> = w.genome(a).iter().map(|g| g.sort_key()).collect();
+        let ids_b: Vec<_> = w.genome(b).iter().map(|g| g.sort_key()).collect();
+        assert_eq!(ids_a, ids_b, "founders diverged structurally");
+        assert_ne!(w.genome(a), w.genome(b), "founders got identical scalars");
+    }
+
+    #[test]
+    fn a_genome_is_valid_and_freed_with_its_agent() {
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::ZERO).unwrap();
+        assert!(genome::validate(w.genome(id)).is_ok());
+        assert_eq!(w.genes.live_blocks(), 1);
+        w.despawn(id);
+        assert_eq!(w.genes.live_blocks(), 0, "genome block leaked on death");
+    }
+
+    #[test]
+    fn body_traits_come_from_the_genome() {
+        // The point of carrying size and colour genetically: nothing outside the
+        // genome has to remember to copy them.
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::ZERO).unwrap();
+        let size = genome::body_trait(w.genome(id), BodyTrait::Size).unwrap();
+        assert_eq!(w.agents().size[id.index()], size);
+        let r = genome::body_trait(w.genome(id), BodyTrait::SignatureR).unwrap();
+        assert_eq!(w.agents().signature[id.index()].x, r);
     }
 }

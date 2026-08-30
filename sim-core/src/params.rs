@@ -59,13 +59,53 @@ pub struct BodyParams {
 pub struct MetabolismParams {
     /// Flat upkeep. Idling must be fatal within ~2000 ticks on a full tank, or
     /// sitting still is a viable strategy and nothing evolves (spec §10).
+    ///
+    /// That ~2000 is the relationship for *total* idle cost, not for this term alone,
+    /// and the defaults do not yet meet it. At the default topology and body:
+    ///
+    /// | term | per tick | vs base |
+    /// |---|---|---|
+    /// | `base` | 0.050 | 1.0× |
+    /// | `k_brain` × 268 units | 0.013 | 0.27× |
+    /// | `k_sensor` × 16 units | 0.160 | 3.2× |
+    /// | `k_size` × size² | 0.180 | 3.6× |
+    /// | total | 0.403 | — |
+    ///
+    /// That is ~250 idle ticks on a 100-energy tank, against the ~2000 asked for.
+    /// `k_brain` now lands where §5.5 wants it; the overshoot is the other two. Both
+    /// come from defaults chosen here rather than from the spec: `k_size` is quadratic
+    /// in [`BodyParams::size`], which defaults to 3, and `k_sensor` is multiplied by
+    /// channel count rather than sensor count. Left as a known gap rather than papered
+    /// over, because none of it is measurable until M7 wires metabolism to a running
+    /// population — and guessing at three constants at once is how tuning becomes
+    /// unfalsifiable.
     pub base: f32,
     /// Cost coefficient on size². Doubling radius should roughly quadruple upkeep.
     pub k_size: f32,
-    /// Cost per gene. A 200-gene brain should cost ~20% of base — noticeable, not
-    /// crippling. This term is what stops genomes bloating without limit.
+    /// Cost per neuron and per connection — see `genome::brain_complexity`, and note
+    /// it is *not* per gene: sensors are billed by `k_sensor` instead.
+    ///
+    /// The term that stops genomes bloating without limit. It does no selective work
+    /// until Phase 2, because every Phase 1 genome is the same size, so today it only
+    /// adds to `base`.
+    ///
+    /// **0.00005, deliberately not the 0.001 in spec §5.5.** That table's two stated
+    /// relationships contradict each other. A 200-unit brain at "~20% of base" means
+    /// the term should land near 0.01 when `base` is 0.05 — but 200 × 0.001 is 0.2,
+    /// four times base rather than a fifth of it. Taken literally it kills an idle
+    /// agent in ~300 ticks against the ~2000 the same table asks for, which is spec
+    /// §10's "population → 0 early" written into the defaults. 0.00005 satisfies both
+    /// relationships at once.
     pub k_brain: f32,
-    /// Cost per sensor gene, weighted by modality. Eyes are meant to be expensive.
+    /// Cost per sensor, weighted by channel count — see `genome::sensor_load`. An eye
+    /// returning distance and colour costs four times a single-channel interoceptor,
+    /// and metering perception is what makes evolution pay for its own compute
+    /// (spec §2.2c).
+    ///
+    /// Weighting by channels rather than per-sensor is this codebase's reading of §5.5's
+    /// "0.01 each, weighted by modality"; it makes the default sensor set 16 weighted
+    /// units rather than 5, so this term now dominates the metabolic budget. See the
+    /// note on [`Self::base`] before tuning it.
     pub k_sensor: f32,
     /// Cost coefficient on |force|². Sprinting should drain a full tank in ~200 ticks.
     pub k_move: f32,
@@ -348,7 +388,7 @@ impl Default for WorldParams {
     fn default() -> Self {
         Self {
             size: 1_000.0,
-            max_agents: 20_000,
+            max_agents: 5_000,
             dt: 1.0 / 60.0,
         }
     }
@@ -365,7 +405,7 @@ impl Default for MetabolismParams {
         Self {
             base: 0.05,
             k_size: 0.02,
-            k_brain: 0.001,
+            k_brain: 0.00005,
             k_sensor: 0.01,
             k_move: 0.5,
         }

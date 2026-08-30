@@ -100,6 +100,10 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   arena.rs       flat arenas for variable-length per-agent data
   agents.rs      the SoA state arrays (spec §2.2a)
   spatial.rs     uniform grid hash over a toroidal world, plus its brute-force reference
+  genome.rs      the typed-gene list and the rules that make one coherent
+  founder.rs     Phase 1's fixed topology, instantiated with random scalars
+  mutate.rs      mutation operators (scalars only this phase)
+  crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands
   tests/         invariants.rs — scans src for banned patterns; no_alloc.rs
 shells/wasm/     wasm-bindgen bindings, snapshot pointer export
@@ -107,8 +111,8 @@ shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
 web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never committed
 ```
 
-Still to come, one concept each: `tick.rs` (the 11 steps, order normative), `genome.rs`,
-`brain.rs`, `perceive.rs`, and the systems that write the intent buffer.
+Still to come, one concept each: `tick.rs` (the 11 steps, order normative), `brain.rs`,
+`perceive.rs`, and the systems that write the intent buffer.
 
 ## Commands
 
@@ -144,6 +148,8 @@ These are separate loops and must stay separate.
 **Editing `sim-core` in response to metric outcomes requires human review.** "Population is unstable" can be fixed by weakening a metabolic cost: every metric improves and the simulation is quietly ruined. If a metric looks wrong, check spec §10 first — most symptoms there map to one constant, not to a bug.
 
 **Never optimize toward a scalar objective.** Report a vector of metrics with the random-brain control alongside. Don't rank configurations or pick a winner; produce a shortlist for a human to watch. Every metric here is Goodhart-able — maximizing species count just means lowering the speciation threshold until noise counts as speciation.
+
+**Where a default departs from spec §5.5, the reason lives on the field.** Not in a commit message and not here — on the `SimParams` doc comment, where the next person to tune it will be looking. Add to those notes rather than replacing them when the numbers move.
 
 ## Working style
 
