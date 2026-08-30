@@ -99,6 +99,7 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   pool.rs        fixed-capacity slot allocation, free list, alive flags
   arena.rs       flat arenas for variable-length per-agent data
   agents.rs      the SoA state arrays (spec §2.2a)
+  spatial.rs     uniform grid hash over a toroidal world, plus its brute-force reference
   world.rs       World struct, spawn/despawn, and step() when it lands
   tests/         invariants.rs — scans src for banned patterns; no_alloc.rs
 shells/wasm/     wasm-bindgen bindings, snapshot pointer export
@@ -106,8 +107,8 @@ shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
 web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never committed
 ```
 
-Still to come, one concept each: `tick.rs` (the 11 steps, order normative), `spatial.rs`,
-`genome.rs`, `brain.rs`, `perceive.rs`, and the systems that write the intent buffer.
+Still to come, one concept each: `tick.rs` (the 11 steps, order normative), `genome.rs`,
+`brain.rs`, `perceive.rs`, and the systems that write the intent buffer.
 
 ## Commands
 

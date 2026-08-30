@@ -15,6 +15,7 @@ pub mod math;
 pub mod params;
 pub mod pool;
 pub mod rng;
+pub mod spatial;
 pub mod world;
 
 pub use agents::{Agents, SpawnSpec};
@@ -23,4 +24,5 @@ pub use ids::{AgentId, InnovationId, NULL_ID, NeuronId, PartId};
 pub use params::{ParamError, SimParams};
 pub use pool::SlotPool;
 pub use rng::Rng;
+pub use spatial::SpatialHash;
 pub use world::World;
