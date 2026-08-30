@@ -129,6 +129,9 @@ impl SpatialHash {
         debug_assert!(world_size > 0.0, "world must have extent");
         debug_assert!(min_cell_size > 0.0, "cells must have extent");
         let per_axis = ((world_size / min_cell_size) as u32).max(1);
+        // `SimParams::validate` bounds this for any world built from params, but this
+        // constructor is public and the cell array is quadratic in the result.
+        debug_assert!(per_axis <= 4_096, "grid of {per_axis}² cells is a runaway");
         let dims = [per_axis, per_axis, 1];
         let cell_xy = world_size / per_axis as f32;
         let cells = cell_count(dims);
@@ -162,6 +165,14 @@ impl SpatialHash {
             if alive[i] == 0 {
                 continue;
             }
+            // A non-finite coordinate casts to cell 0 rather than trapping, so without
+            // this the whole population appears to pile onto the wrap seam and the
+            // actual cause — an over-large force, a divide by zero in an effector — is
+            // nowhere near the symptom.
+            debug_assert!(
+                pos.x.is_finite() && pos.y.is_finite(),
+                "agent {i} has a non-finite position: {pos:?}"
+            );
             let c = self.cell_of(pos);
             grid_cell[i] = c;
             self.cell_starts[c as usize + 1] += 1;
@@ -440,6 +451,35 @@ mod tests {
         let mut sorted = seen.clone();
         sorted.sort();
         assert_eq!(seen, sorted);
+    }
+
+    #[test]
+    fn a_shrinking_population_leaves_no_ghosts() {
+        // Entries past `live` keep the previous rebuild's indices; only cell_starts
+        // stops them being read. If that bound ever slips, dead agents keep sensing.
+        let pos: Vec<Vec3> = (0..20)
+            .map(|i| Vec3::new(i as f32 * 4.0, 10.0, 0.0))
+            .collect();
+        let mut cells = vec![0u32; 20];
+        let mut h = grid(10.0, 20);
+
+        h.rebuild(&pos, &[1u8; 20], &mut cells);
+        assert_eq!(h.live(), 20);
+
+        let mut alive = vec![1u8; 20];
+        for flag in alive.iter_mut().skip(3) {
+            *flag = 0;
+        }
+        h.rebuild(&pos, &alive, &mut cells);
+        assert_eq!(h.live(), 3);
+
+        let found = collect(|v| h.for_each_within(&pos, Vec3::new(40.0, 10.0, 0.0), 45.0, v));
+        let ids: Vec<u32> = found.iter().map(|t| t.0).collect();
+        assert_eq!(
+            ids,
+            vec![0, 1, 2],
+            "stale entries surfaced as live neighbours"
+        );
     }
 
     #[test]
