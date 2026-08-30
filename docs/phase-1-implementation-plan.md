@@ -15,8 +15,9 @@ referenced in commit messages.
 | M0 Scaffold | done |
 | M1 Foundations | done |
 | M2 Pools and arenas | done |
-| M3 Spatial hash | next |
-| M4–M12 | not started |
+| M3 Spatial hash | done |
+| M4 Genome, mutation, crossover | next |
+| M5–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -82,6 +83,12 @@ Build-plan task 3.
 
 **Done when:** `proptest` differential parity against the brute-force reference on random
 populations.
+
+**The world is a torus.** It wraps in x and y, so distances are minimum-image and cell walks
+wrap. The spec does not state a boundary condition either way; wrapping was chosen because a
+bounded world hands out edge and corner geography for free, and an artificial refugium is hard
+to tell apart from evolved anti-predator behaviour later. The choice is contained in
+`spatial.rs` and the movement integrator, so it stays reversible.
 
 ## M4 — Genome, mutation, crossover
 

@@ -128,6 +128,44 @@ fn spawn_and_despawn_never_allocate() {
 }
 
 #[test]
+fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
+    // This runs every tick for every agent — step 1 of the tick, then once per sensor
+    // during perception. It is the hottest path in the simulation (spec §2.2c).
+    let mut params = SimParams::default();
+    params.world.max_agents = 5_000;
+    let mut world = World::new(9, params).expect("valid params");
+    for i in 0..5_000 {
+        world.spawn(&spec(i)).expect("pool sized for 5k");
+    }
+
+    // Warmup: first rebuild touches every bucket and cursor.
+    world.rebuild_spatial_hash();
+
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            world.rebuild_spatial_hash();
+            let positions = &world.agents().position;
+            let radius = world.params().sensing.max_sense_radius();
+            let mut seen = 0u64;
+            for id in 0..500u32 {
+                world.spatial_hash().for_each_within(
+                    positions,
+                    positions[id as usize],
+                    radius,
+                    |_, _, _| seen += 1,
+                );
+            }
+            std::hint::black_box(seen);
+        }
+    });
+
+    assert_eq!(
+        observed, 0,
+        "spatial hash allocated {observed} times after warmup"
+    );
+}
+
+#[test]
 fn a_full_pool_refuses_without_allocating() {
     // The interesting case: at the population ceiling, every birth is a rejection.
     let mut params = SimParams::default();

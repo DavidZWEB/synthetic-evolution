@@ -234,6 +234,9 @@ const MAX_PLANTS: u32 = 1_000_000;
 const MAX_VISION_RAYS: u32 = 256;
 /// Total chemo cells across all axes and channels.
 const MAX_CHEMO_CELLS: u64 = 16_777_216;
+/// Spatial-hash cells per axis. The grid is `world.size / max_sense_radius` across, so
+/// a very short sense radius in a large world is what blows this up.
+const MAX_GRID_CELLS_PER_AXIS: f32 = 1_024.0;
 
 /// A parameter set that cannot produce a coherent world.
 ///
@@ -282,6 +285,11 @@ impl SimParams {
         if self.sensing.max_sense_radius() * 2.0 > self.world.size {
             return Err(ParamError(
                 "sense radius exceeds half the world; the hash cannot wrap",
+            ));
+        }
+        if self.world.size / self.sensing.max_sense_radius() > MAX_GRID_CELLS_PER_AXIS {
+            return Err(ParamError(
+                "sense radius is too small for the world; the spatial grid would explode",
             ));
         }
         if self.brain.tau_min <= 0.0 || self.brain.tau_max < self.brain.tau_min {
@@ -508,6 +516,10 @@ mod tests {
                 p.sensing.vision_rays = 2_000_000_000
             }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
+            ("sense radius too small for the world", |p| {
+                p.sensing.vision_range = 0.01;
+                p.sensing.chemo_radius = 0.01;
+            }),
             ("breeding needs no growth", |p| {
                 p.reproduction.threshold = 50.0
             }),

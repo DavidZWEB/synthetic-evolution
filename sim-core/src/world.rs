@@ -14,6 +14,7 @@ use crate::ids::{AgentId, InnovationId};
 use crate::params::{ParamError, SimParams};
 use crate::pool::SlotPool;
 use crate::rng::Rng;
+use crate::spatial::SpatialHash;
 
 /// One part per agent, at the agent's own origin, for all of V1 (spec §9.1).
 const PARTS_PER_AGENT: u32 = 1;
@@ -32,6 +33,8 @@ pub struct World {
     brains: Arena<f32>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
     parts: Arena<f32>,
+    /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
+    hash: SpatialHash,
 }
 
 impl World {
@@ -52,6 +55,11 @@ impl World {
             agents: Agents::with_capacity(capacity),
             brains: Arena::with_capacity(capacity, brain_stride),
             parts: Arena::with_capacity(capacity, PARTS_PER_AGENT),
+            hash: SpatialHash::new(
+                params.world.size,
+                params.sensing.max_sense_radius(),
+                capacity,
+            ),
             params,
         })
     }
@@ -102,6 +110,24 @@ impl World {
         }
         self.agents.clear(id);
         self.pool.free(id)
+    }
+
+    /// Rebuilds the neighbour grid from current positions. Step 1 of the tick.
+    ///
+    /// Lives here rather than in `spatial` because it is the only place that knows
+    /// which slices belong together; the hash itself takes plain slices so it can be
+    /// tested without a world.
+    pub fn rebuild_spatial_hash(&mut self) {
+        self.hash.rebuild(
+            &self.agents.position,
+            self.pool.alive_flags(),
+            &mut self.agents.grid_cell,
+        );
+    }
+
+    #[inline]
+    pub fn spatial_hash(&self) -> &SpatialHash {
+        &self.hash
     }
 
     /// Draws the next innovation id and advances the counter.
