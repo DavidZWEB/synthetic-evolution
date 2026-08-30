@@ -68,9 +68,16 @@ pub struct Agents {
     pub parent_b: Vec<u32>,
     /// Spatial hash bucket, rebuilt every tick.
     pub grid_cell: Vec<u32>,
-    /// Handle into the brain arena: neuron activations.
+    /// Handle into the brain arena: this agent's neurons and their state.
+    ///
+    /// Spec §2.2a writes a single `brainOffset` because it does not say how a brain is
+    /// laid out. A compiled one is two blocks — neurons here, wiring in
+    /// [`Self::synapses`] — because they are different element types.
     pub brain: Vec<Block>,
-    /// Handle into the genome arena. Empty until genomes exist at M4.
+    /// Handle into the synapse arena: this agent's wiring, endpoints already resolved
+    /// to slots in [`Self::brain`].
+    pub synapses: Vec<Block>,
+    /// Handle into the genome arena.
     pub genome: Vec<Block>,
     /// Handle into the parts arena. Exactly one part at the agent's origin in V1;
     /// the indirection is what makes Phase 5 morphology additive (spec §9.1).
@@ -92,6 +99,19 @@ pub struct SpawnSpec {
     pub parent_a: AgentId,
 }
 
+/// Where one agent's variable-length data lives: the arena blocks claimed for it.
+///
+/// Passed to [`Agents::init`] as a set rather than assigned field by field afterwards,
+/// so a handle cannot be left holding the previous tenant's block — which reads as an
+/// agent sharing a dead one's brain.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Handles {
+    pub brain: Block,
+    pub synapses: Block,
+    pub genome: Block,
+    pub parts: Block,
+}
+
 impl Agents {
     pub fn with_capacity(capacity: u32) -> Self {
         let n = capacity as usize;
@@ -109,6 +129,7 @@ impl Agents {
             parent_b: vec![NULL_ID; n],
             grid_cell: vec![0; n],
             brain: vec![Block::EMPTY; n],
+            synapses: vec![Block::EMPTY; n],
             genome: vec![Block::EMPTY; n],
             parts: vec![Block::EMPTY; n],
         }
@@ -120,7 +141,7 @@ impl Agents {
 
     /// Writes a freshly claimed slot. Every field is assigned, so nothing survives from
     /// the slot's previous tenant.
-    pub fn init(&mut self, id: AgentId, spec: &SpawnSpec, brain: Block, parts: Block) {
+    pub fn init(&mut self, id: AgentId, spec: &SpawnSpec, handles: &Handles) {
         let i = id.index();
         debug_assert!(i < self.position.len(), "slot out of range");
         // Z pinned to 0 — the simulation plane. Spec §2.3 and §9.1.
@@ -137,9 +158,10 @@ impl Agents {
         // Always NULL in V1. The field is the hedge, not a placeholder to fill in.
         self.parent_b[i] = NULL_ID;
         self.grid_cell[i] = 0;
-        self.brain[i] = brain;
-        self.genome[i] = Block::EMPTY;
-        self.parts[i] = parts;
+        self.brain[i] = handles.brain;
+        self.synapses[i] = handles.synapses;
+        self.genome[i] = handles.genome;
+        self.parts[i] = handles.parts;
     }
 
     /// Clears the handles of a slot being returned to the pool, so a stale block can
@@ -147,6 +169,7 @@ impl Agents {
     pub fn clear(&mut self, id: AgentId) {
         let i = id.index();
         self.brain[i] = Block::EMPTY;
+        self.synapses[i] = Block::EMPTY;
         self.genome[i] = Block::EMPTY;
         self.parts[i] = Block::EMPTY;
         self.energy[i] = 0.0;
@@ -182,7 +205,7 @@ mod tests {
     #[test]
     fn init_pins_z_to_the_simulation_plane() {
         let mut a = Agents::with_capacity(4);
-        a.init(AgentId::new(0), &spec(), Block::EMPTY, Block::EMPTY);
+        a.init(AgentId::new(0), &spec(), &Handles::default());
         assert_eq!(a.position[0].z, 0.0, "V1 simulates on a plane (spec §2.3)");
         assert_eq!(a.velocity[0].z, 0.0);
     }
@@ -190,7 +213,7 @@ mod tests {
     #[test]
     fn init_leaves_orientation_on_the_z_axis() {
         let mut a = Agents::with_capacity(4);
-        a.init(AgentId::new(0), &spec(), Block::EMPTY, Block::EMPTY);
+        a.init(AgentId::new(0), &spec(), &Handles::default());
         let q = a.orientation[0];
         assert!(
             q.x.abs() < 1e-6 && q.y.abs() < 1e-6,
@@ -206,7 +229,7 @@ mod tests {
         let mut a = Agents::with_capacity(4);
         let mut s = spec();
         s.parent_a = AgentId::new(2);
-        a.init(AgentId::new(0), &s, Block::EMPTY, Block::EMPTY);
+        a.init(AgentId::new(0), &s, &Handles::default());
         assert_eq!(a.parent_a[0], 2);
         assert_eq!(a.parent_b[0], NULL_ID);
     }
@@ -217,11 +240,11 @@ mod tests {
         let mut first = spec();
         first.energy = 500.0;
         first.parent_a = AgentId::new(1);
-        a.init(AgentId::new(0), &first, Block::EMPTY, Block::EMPTY);
+        a.init(AgentId::new(0), &first, &Handles::default());
         a.age[0] = 9_999;
         a.clear(AgentId::new(0));
 
-        a.init(AgentId::new(0), &spec(), Block::EMPTY, Block::EMPTY);
+        a.init(AgentId::new(0), &spec(), &Handles::default());
         assert_eq!(a.energy[0], 100.0);
         assert_eq!(a.age[0], 0);
         assert_eq!(a.parent_a[0], NULL_ID);

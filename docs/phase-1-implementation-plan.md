@@ -17,8 +17,9 @@ referenced in commit messages.
 | M2 Pools and arenas | done |
 | M3 Spatial hash | done |
 | M4 Genome, mutation, crossover | done |
-| M5 CTRNN | next |
-| M6–M12 | not started |
+| M5 CTRNN | done |
+| M6 Sensors and effectors | next |
+| M7–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -157,6 +158,39 @@ anything about M5's dynamics.
 
 **Done when:** a hand-built network produces known outputs, an oscillator neuron oscillates at
 its specified period, and a founder brain's activations are distributed rather than pinned.
+
+**Decisions taken here.**
+
+*A brain is compiled at birth, not read from the genome each tick.* The genome binds
+neurons by innovation id, and resolving one is a binary search; at 240 connections per
+agent per tick that lookup costs several times the arithmetic it feeds. `brain::compile`
+resolves every endpoint to a slot once, and the tick is a flat scan over two slices.
+The cost is memory: a compiled brain is 3.6 KB per agent and took the default world
+from 57 MB to 71 MB, against a 96 MB ceiling. The two levers for getting it back are
+recorded on `arena`'s module doc, in the order they should be pulled.
+
+*The fan-in check found the initialisation bug this milestone predicted.* Measured over
+64 founders, drawing weights from the full ±`weight_limit` bound pins 52% of wired
+neurons against a rail of the sigmoid and cuts the mean activation slope to 0.064 of a
+possible 0.25. With `weight_init_scale` at ±2 over √fan-in it is 0% and 0.217.
+`brain`'s `without_fan_in_scaling_a_founder_saturates` holds that second measurement so
+the first cannot quietly become vacuous.
+
+*The Euler gain `dt/tau` is clamped at 1.* Mutation floors tau at 1e-3 against a dt of
+1/60, and an unclamped gain of 16 makes the state alternate and diverge within a few
+dozen ticks. The clamp is not a fudge: a neuron faster than the timestep can only be
+observed tracking its input exactly.
+
+*An oscillator's state is a phase, and its bias is a phase offset.* A free-running
+neuron ignores its input, so it has no potential to integrate and the state slot is
+free for the one thing it does need. Feeding `phase + bias` through the activation
+makes the bias gene a phase offset rather than dead weight — the second thing an
+oscillator can evolve, after its period. Output is ranged to [0, 1] to match the
+sigmoid neurons it feeds, so one weight scale is right across a whole brain.
+
+*`dt` is not folded into the compiled brain.* `SimParams` is settable at runtime, and a
+baked-in timestep would silently ignore the new value. The reciprocals stored per
+neuron — `inv_tau`, `inv_period` — are pure functions of the genome for the same reason.
 
 ## M6 — Sensors and effectors
 

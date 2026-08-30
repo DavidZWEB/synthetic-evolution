@@ -6,12 +6,14 @@
 //! innovation counter, which is a plain field (spec §7.2, CLAUDE.md invariant 3).
 //!
 //! Deliberately not here yet: the tick. `step()` arrives at M8 with the 11 phases of
-//! spec §2.4 in `tick.rs`; this module owns state and lifecycle only.
+//! spec §2.4 in `tick.rs`; this module owns state, lifecycle, and the thin wiring that
+//! hands a system the slices belonging to one agent.
 
 use glam::Vec3;
 
-use crate::agents::{Agents, SpawnSpec};
+use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
+use crate::brain::{self, Neuron, Synapse};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
@@ -33,8 +35,12 @@ pub struct World {
     next_innovation: u32,
     pool: SlotPool,
     agents: Agents,
-    /// Neuron activations, one block per agent.
-    brains: Arena<f32>,
+    /// Compiled neurons, one block per agent.
+    brains: Arena<Neuron>,
+    /// Compiled wiring, one block per agent. Separate from `brains` because a synapse
+    /// and a neuron are different element types, not because they have different
+    /// lifetimes — the two blocks are claimed and freed together.
+    synapses: Arena<Synapse>,
     /// Gene lists, one block per agent.
     genes: Arena<Gene>,
     /// The founding topology, whose innovation ids every founder in this world shares
@@ -43,6 +49,9 @@ pub struct World {
     /// Reusable buffer for building a genome before it is copied into the arena.
     /// Owned by the world and sized once, so a birth allocates nothing.
     genome_scratch: Vec<Gene>,
+    /// Per-neuron input `I` for the brain being stepped, reused across agents. Sized
+    /// once at the widest brain the world can hold, so a tick allocates nothing.
+    drive_scratch: Vec<f32>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
     parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
@@ -66,6 +75,7 @@ impl World {
             id
         });
         let brain_stride = plan.neuron_count() as u32;
+        let synapse_stride = brain::synapse_count(plan.genes()) as u32;
         let genome_stride = plan.len() as u32;
         Ok(Self {
             rng: Rng::from_seed(seed),
@@ -74,8 +84,10 @@ impl World {
             pool: SlotPool::with_capacity(capacity),
             agents: Agents::with_capacity(capacity),
             brains: Arena::with_capacity(capacity, brain_stride),
+            synapses: Arena::with_capacity(capacity, synapse_stride),
             genes: Arena::with_capacity(capacity, genome_stride),
             genome_scratch: vec![Gene::default(); plan.len()],
+            drive_scratch: vec![0.0; brain_stride as usize],
             plan,
             parts: Arena::with_capacity(capacity, PARTS_PER_AGENT),
             hash: SpatialHash::new(
@@ -87,33 +99,66 @@ impl World {
         })
     }
 
-    /// Claims a slot and its arena blocks. `None` when any pool is full — a normal
-    /// condition at the population ceiling, not an error.
+    /// Claims a slot and its arena blocks, and compiles the genome into a runnable
+    /// brain. `None` when any pool is full — a normal condition at the population
+    /// ceiling, not an error.
     pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Option<AgentId> {
         debug_assert!(
             genome::validate(genes).is_ok(),
             "spawning an incoherent genome"
         );
         let id = self.pool.alloc()?;
-        let Some(brain) = self.brains.alloc(self.brains.stride()) else {
+        let Some(handles) = self.claim_blocks(genes) else {
             self.pool.free(id);
             return None;
         };
-        let Some(parts) = self.parts.alloc(PARTS_PER_AGENT) else {
-            self.brains.free(brain);
-            self.pool.free(id);
-            return None;
-        };
-        let Some(genome) = self.genes.alloc(genes.len() as u32) else {
-            self.parts.free(parts);
-            self.brains.free(brain);
-            self.pool.free(id);
-            return None;
-        };
-        self.genes.get_mut(genome).copy_from_slice(genes);
-        self.agents.init(id, spec, brain, parts);
-        self.agents.genome[id.index()] = genome;
+        self.genes.get_mut(handles.genome).copy_from_slice(genes);
+        // Compiled once, here, and never read from the genome again during a tick
+        // — resolving an innovation id costs a binary search (`brain`).
+        brain::compile(
+            genes,
+            self.brains.get_mut(handles.brain),
+            self.synapses.get_mut(handles.synapses),
+        );
+        self.agents.init(id, spec, &handles);
         Some(id)
+    }
+
+    /// Claims one block from every per-agent arena, or none of them.
+    ///
+    /// Each arena holds `max_agents` blocks and they are claimed and freed in lockstep
+    /// with the pool, so a partial failure is unreachable. It is unwound rather than
+    /// asserted because a leaked block does not fail loudly — it shows up as a world
+    /// that quietly stops accepting births some hours into a run.
+    fn claim_blocks(&mut self, genes: &[Gene]) -> Option<Handles> {
+        let brain = self.brains.alloc(genome::neuron_count(genes) as u32);
+        let synapses = self.synapses.alloc(brain::synapse_count(genes) as u32);
+        let genome = self.genes.alloc(genes.len() as u32);
+        let parts = self.parts.alloc(PARTS_PER_AGENT);
+
+        match (brain, synapses, genome, parts) {
+            (Some(brain), Some(synapses), Some(genome), Some(parts)) => Some(Handles {
+                brain,
+                synapses,
+                genome,
+                parts,
+            }),
+            _ => {
+                if let Some(block) = brain {
+                    self.brains.free(block);
+                }
+                if let Some(block) = synapses {
+                    self.synapses.free(block);
+                }
+                if let Some(block) = genome {
+                    self.genes.free(block);
+                }
+                if let Some(block) = parts {
+                    self.parts.free(block);
+                }
+                None
+            }
+        }
     }
 
     /// Spawns a founder: the world's fixed topology with fresh random scalars.
@@ -162,16 +207,39 @@ impl World {
             return false;
         }
         let i = id.index();
-        let (brain, parts, genome) = (
-            self.agents.brain[i],
-            self.agents.parts[i],
-            self.agents.genome[i],
-        );
-        self.brains.free(brain);
-        self.parts.free(parts);
-        self.genes.free(genome);
+        self.brains.free(self.agents.brain[i]);
+        self.synapses.free(self.agents.synapses[i]);
+        self.genes.free(self.agents.genome[i]);
+        self.parts.free(self.agents.parts[i]);
         self.agents.clear(id);
         self.pool.free(id)
+    }
+
+    /// Advances every live brain one Euler step. Step 3 of the tick (spec §2.4).
+    ///
+    /// Lives here rather than in `brain` for the reason `rebuild_spatial_hash` does:
+    /// this is the only place that knows which blocks belong to which agent. The step
+    /// itself takes plain slices and is testable without a world.
+    ///
+    /// Agent-index order, so that nothing about the result depends on pool layout —
+    /// though with every brain reading only the previous step's outputs, the order is
+    /// belt as well as braces here.
+    pub fn step_brains(&mut self) {
+        let dt = self.params.world.dt;
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            let (brain, synapses) = (self.agents.brain[i], self.agents.synapses[i]);
+            // Zero until perception writes sensor input here at M6 (spec §2.2c), so
+            // for now a brain runs on its own recurrence and its oscillators.
+            let drive = &mut self.drive_scratch[..brain.len() as usize];
+            drive.fill(0.0);
+            brain::step(
+                self.brains.get_mut(brain),
+                self.synapses.get(synapses),
+                drive,
+                dt,
+            );
+        }
     }
 
     /// Rebuilds the neighbour grid from current positions. Step 1 of the tick.
@@ -235,10 +303,16 @@ impl World {
         &mut self.rng
     }
 
-    /// Activations of one agent's brain.
+    /// One agent's neurons, in slot order. What the M10 inspector reads.
     #[inline]
-    pub fn brain(&self, id: AgentId) -> &[f32] {
+    pub fn brain(&self, id: AgentId) -> &[Neuron] {
         self.brains.get(self.agents.brain[id.index()])
+    }
+
+    /// One agent's wiring, endpoints already resolved to slots in [`Self::brain`].
+    #[inline]
+    pub fn wiring(&self, id: AgentId) -> &[Synapse] {
+        self.synapses.get(self.agents.synapses[id.index()])
     }
 }
 
@@ -316,14 +390,149 @@ mod tests {
     fn a_recycled_slot_starts_with_a_blank_brain() {
         let mut w = small_world();
         let a = w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).unwrap();
-        let block = w.agents().brain[a.index()];
-        w.brains.get_mut(block).fill(0.75);
+        for _ in 0..50 {
+            w.step_brains();
+        }
+        assert!(
+            w.brain(a).iter().any(|n| n.output != 0.0),
+            "the brain never ran, so this proves nothing"
+        );
         w.despawn(a);
+
         let b = w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).unwrap();
         assert!(
-            w.brain(b).iter().all(|&x| x == 0.0),
+            w.brain(b).iter().all(|n| n.state == 0.0 && n.output == 0.0),
             "inherited the dead agent's activations"
         );
+    }
+
+    #[test]
+    fn a_degenerate_genome_does_not_exhaust_the_world() {
+        // An empty gene list passes `genome::validate` — it is vacuously coherent — so
+        // it reaches the arenas as a zero-length block for the brain, the wiring, and
+        // the genome. Freeing one used to be a no-op that never returned its slot, and
+        // eight cycles were enough to leave a world reporting a population of zero and
+        // refusing every birth.
+        let mut w = small_world();
+        let spec = SpawnSpec {
+            position: Vec3::ZERO,
+            yaw: 0.0,
+            energy: 1.0,
+            size: 1.0,
+            signature: Vec3::ZERO,
+            parent_a: AgentId::NULL,
+        };
+        for _ in 0..64 {
+            let id = w.spawn(&spec, &[]).expect("a free slot");
+            assert!(w.brain(id).is_empty() && w.wiring(id).is_empty());
+            w.despawn(id);
+        }
+        assert_eq!(w.population(), 0);
+        for i in 0..32 {
+            assert!(
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_some(),
+                "the world leaked its arena blocks"
+            );
+        }
+    }
+
+    #[test]
+    fn spawning_compiles_a_runnable_brain() {
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::ZERO).unwrap();
+        assert_eq!(w.brain(id).len(), w.founder_plan().neuron_count());
+        assert_eq!(w.wiring(id).len(), 240, "the founder is fully connected");
+        for synapse in w.wiring(id) {
+            assert!(
+                synapse.from.index() < w.brain(id).len() && synapse.to.index() < w.brain(id).len(),
+                "endpoint outside this agent's own brain: {synapse:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wiring_blocks_come_back_on_death() {
+        // The brain is two blocks now; leaking the second is invisible until the world
+        // stops accepting births hours into a run.
+        let mut w = small_world();
+        let ids: Vec<_> = (0..32)
+            .map(|i| w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap())
+            .collect();
+        assert_eq!(w.synapses.live_blocks(), 32);
+        for id in ids {
+            w.despawn(id);
+        }
+        assert_eq!(w.synapses.live_blocks(), 0, "a wiring block leaked");
+    }
+
+    #[test]
+    fn brains_advance_and_stay_finite() {
+        // With no perception yet a brain runs on its recurrence and its oscillators
+        // alone, which is enough to tell a live network from a dead one.
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::ZERO).unwrap();
+        let before: Vec<f32> = w.brain(id).iter().map(|n| n.output).collect();
+        for _ in 0..1_000 {
+            w.step_brains();
+        }
+        let after: Vec<f32> = w.brain(id).iter().map(|n| n.output).collect();
+        assert_ne!(before, after, "the brain did not move");
+        assert!(after.iter().all(|x| x.is_finite()), "{after:?}");
+    }
+
+    #[test]
+    fn stepping_brains_is_deterministic() {
+        let run = || {
+            let mut w = small_world();
+            for i in 0..8 {
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap();
+            }
+            for _ in 0..200 {
+                w.step_brains();
+            }
+            (0..8)
+                .map(|i| w.brain(AgentId::new(i)).to_vec())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn a_brain_runs_the_same_alone_as_in_a_crowd() {
+        // One drive buffer is reused for every agent in a tick. If it were ever left
+        // uncleared, one agent's synaptic sums would land on the next and behaviour
+        // would become an artifact of pool order (spec §2.4) — which no determinism
+        // test would catch, because it would be reproducibly wrong.
+        let trajectory = |population: u32| {
+            let mut w = small_world();
+            for i in 0..population {
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap();
+            }
+            for _ in 0..300 {
+                w.step_brains();
+            }
+            w.brain(AgentId::new(0)).to_vec()
+        };
+        // The first founder draws from the world RNG first either way, so it is the
+        // same agent in both worlds.
+        assert_eq!(trajectory(1), trajectory(16));
+    }
+
+    #[test]
+    fn a_dead_agent_does_not_get_stepped() {
+        // `step_brains` walks live slots; a stale block would otherwise keep ticking
+        // and show up in whatever reads the arena next.
+        let mut w = small_world();
+        let a = w.spawn_founder(Vec3::ZERO).unwrap();
+        let b = w.spawn_founder(Vec3::new(5.0, 0.0, 0.0)).unwrap();
+        let block = w.agents().brain[a.index()];
+        w.despawn(a);
+        let frozen = w.brains.get(block).to_vec();
+        for _ in 0..20 {
+            w.step_brains();
+        }
+        assert_eq!(w.brains.get(block), frozen.as_slice());
+        assert!(w.brain(b).iter().any(|n| n.output != 0.0));
     }
 
     #[test]

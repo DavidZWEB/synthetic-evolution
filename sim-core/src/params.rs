@@ -170,6 +170,22 @@ pub struct BrainParams {
     /// Inclusive range for an oscillator's period, in ticks.
     pub oscillator_period_min: f32,
     pub oscillator_period_max: f32,
+    /// Half-width of the range a founder's connection weights are drawn from, **before
+    /// division by the square root of the target neuron's fan-in** (`founder`).
+    ///
+    /// Deliberately not [`MutationParams::weight_limit`]. That is a *bound* on where
+    /// evolution may take a weight over a lineage; this is the scale one should start
+    /// at, and the two differ by the fan-in factor. Drawing from the full ±4 bound with
+    /// the default topology's 24 inputs per neuron sums to order ±20 before the sigmoid
+    /// sees it, so every founder saturates on tick one, cannot respond to its sensors,
+    /// and weight mutation cannot walk it back out in any useful time. It looks like a
+    /// tuning failure and is an initialisation bug — `brain`'s
+    /// `without_fan_in_scaling_a_founder_saturates` is the guard.
+    ///
+    /// At ±2 over √24 a founder's summed input lands near ±1, which is the band where
+    /// the sigmoid still has a gradient. Not from spec §5.5, which does not name a
+    /// weight-initialisation scale.
+    pub weight_init_scale: f32,
 }
 
 /// Asexual budding with spatial viscosity. Spec §5.4.
@@ -342,6 +358,9 @@ impl SimParams {
                 "brain.oscillator_period range must be positive and ordered",
             ));
         }
+        if !(self.brain.weight_init_scale > 0.0) || !self.brain.weight_init_scale.is_finite() {
+            return Err(ParamError("brain.weight_init_scale must be positive"));
+        }
         if !(self.reproduction.start_energy > 0.0) {
             return Err(ParamError("reproduction.start_energy must be positive"));
         }
@@ -443,6 +462,7 @@ impl Default for BrainParams {
             tau_max: 2.0,
             oscillator_period_min: 10.0,
             oscillator_period_max: 240.0,
+            weight_init_scale: 2.0,
         }
     }
 }
@@ -547,6 +567,9 @@ mod tests {
                 p.sensing.vision_range = 10_000.0
             }),
             ("inverted tau range", |p| p.brain.tau_max = 0.001),
+            ("zero weight init scale", |p| {
+                p.brain.weight_init_scale = 0.0
+            }),
             ("energy split above 1", |p| {
                 p.reproduction.energy_split = 1.5
             }),

@@ -158,6 +158,33 @@ fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
 }
 
 #[test]
+fn stepping_every_brain_never_allocates() {
+    // Step 3 of the tick, run for every agent every tick (spec §2.4). The scratch
+    // buffer the Euler step writes into is owned by the world and sized once; if it
+    // ever becomes a per-agent `Vec` this is what says so.
+    let mut params = SimParams::default();
+    params.world.max_agents = 2_000;
+    let mut world = World::new(11, params).expect("valid params");
+    for i in 0..2_000 {
+        world.spawn_founder(at(i)).expect("pool sized for 2k");
+    }
+
+    world.step_brains();
+
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            world.step_brains();
+        }
+        std::hint::black_box(&world);
+    });
+
+    assert_eq!(
+        observed, 0,
+        "stepping brains allocated {observed} times after warmup"
+    );
+}
+
+#[test]
 fn a_full_pool_refuses_without_allocating() {
     // The interesting case: at the population ceiling, every birth is a rejection.
     let mut params = SimParams::default();
