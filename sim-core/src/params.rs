@@ -348,7 +348,7 @@ impl Default for WorldParams {
     fn default() -> Self {
         Self {
             size: 1_000.0,
-            max_agents: 20_000,
+            max_agents: 5_000,
             dt: 1.0 / 60.0,
         }
     }
