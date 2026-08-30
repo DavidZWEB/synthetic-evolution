@@ -1,0 +1,9 @@
+{
+  "globalHeaders": {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp"
+  },
+  "mimeTypes": {
+    ".wasm": "application/wasm"
+  }
+}

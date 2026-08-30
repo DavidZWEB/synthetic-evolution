@@ -1,0 +1,35 @@
+[workspace]
+# Resolver 3 rather than 2: it is the edition-2024 default and is MSRV-aware, so a
+# dependency bump cannot silently pull in something newer than the pinned toolchain.
+resolver = "3"
+members = ["sim-core", "shells/native", "shells/wasm"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+# Declared once here; member crates write `glam.workspace = true`. The native and
+# wasm shells cannot drift onto different versions of a shared dependency.
+[workspace.dependencies]
+sim-core = { path = "sim-core" }
+
+# `default-features = false` disables glam's `std` math, and `libm` routes its
+# transcendentals through the software implementations instead. Both are load-bearing:
+# platform sin/cos differ between native and WASM, which is a silent determinism break
+# (spec §7.4). Leaving SIMD off also keeps Vec3 at 12 bytes, which `agents.rs` asserts
+# at compile time because the zero-copy snapshot views depend on it (spec §7.3).
+glam = { version = "0.30", default-features = false, features = ["libm", "serde"] }
+libm = "0.2"
+rand = { version = "0.9", default-features = false }
+# `serde` so RNG state can be checkpointed and resumed mid-run.
+rand_pcg = { version = "0.9", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# Cargo ignores this for test targets, so `cargo test --release` still works.
+panic = "abort"
