@@ -37,10 +37,12 @@ referenced in commit messages.
 Build-plan task 1.
 
 - Cargo workspace: `sim-core`, `shells/native`, `shells/wasm`.
-- Dependencies pinned: `glam`, `rand` + `rand_pcg`, `serde` + `postcard`, `libm`, `ts-rs`.
+- Dependencies pinned: `glam`, `rand` + `rand_pcg`, `serde` + `postcard`, `libm`. (`ts-rs`
+  arrives at M10 with the inspector that consumes it.)
 - Vite + Svelte 5 in `web/`.
-- `staticwebapp.config.json` with COOP/COEP `globalHeaders`, placed at `app_location` — a
-  repo-root config with a build subdirectory is silently ignored (spec §7.7).
+- `staticwebapp.config.json` with COOP/COEP `globalHeaders`, in `web/public/` so Vite copies it
+  into the `dist/` that Azure deploys — a repo-root config with a build subdirectory is silently
+  ignored (spec §7.7).
 - Guard test: greps `sim-core/src` for `thread_rng`, `std::time`, `std::fs`, `std::net`, and bare
   `.sin()` / `.cos()` / `.exp()` / `.powf()`. Invariants 1 and 2 fail silently weeks later;
   a short test is cheap insurance.
@@ -108,6 +110,29 @@ Build-plan task 4, first half.
 **Done when:** genome serde round-trips; property test confirms no mutation orphans a sensor's
 `target` neuron; crossover of two valid genomes yields a valid genome.
 
+**Decisions taken here.**
+
+*A sensor binds one target neuron per channel.* Spec §3.1 writes the binding as a single
+`target`, but §2.2c has modalities returning two to four values — a `vision_ray` writes
+distance plus signature RGB. Binding by id rather than by index is the principle that
+indirection exists to serve, and one id per channel is what that means when a modality is
+wide. `SensorGene::targets` is a fixed array; only the first `modality.channels()` entries
+are read.
+
+*`InnovationId::default()` is `NULL`, not 0.* A gene with a field left unset then fails
+validation as a dangling reference, rather than silently binding to whichever neuron
+happens to sort first.
+
+*The founding topology is fully connected.* Phase 1 has no add-connection operator, so any
+connection absent from the founder can never appear in any descendant. Dense means evolution
+can reach any wiring by tuning weights toward zero; sparse would forbid some permanently. It
+is also why a default genome is 284 genes, 240 of them connections.
+
+*`k_brain` charges neurons and connections, `k_sensor` charges sensors.* Spec §5.2 keeps the
+two coefficients apart so eyes can be made expensive without making brains expensive.
+`genome::brain_complexity` and `genome::sensor_load` are the two quantities; nothing may be
+counted by both.
+
 ## M5 — CTRNN
 
 Build-plan task 4, second half.
@@ -115,8 +140,23 @@ Build-plan task 4, second half.
 - Euler integration, one step per tick, evaluated from previous activations.
 - Evolvable `tau`; always-present oscillator neurons with evolvable period.
 
-**Done when:** a hand-built network produces known outputs, and an oscillator neuron oscillates at
-its specified period.
+**Scale founder weights by fan-in — check this first.** M4 draws initial connection weights
+uniform over ±`weight_limit` (±4), and the default topology gives every output and hidden
+neuron 24 incoming connections. Summed input is then order ±20 before the activation
+function ever sees it, so every sigmoid in every founder saturates on tick one and stays
+pinned at 0 or 1. A saturated brain does not respond to its sensors, and weight mutation
+moves it far too slowly to recover, so the population looks alive and evolves nothing —
+which reads as a tuning failure rather than an initialisation bug.
+
+The standard fix is to scale initial weights by fan-in (draw from roughly
+`±weight_limit / sqrt(fan_in)`, or normalise per neuron). Two things this needs: the
+initialisation range has to become a `SimParams` field rather than reusing `weight_limit`,
+which is a *bound* and not a starting scale; and there should be a test asserting that a
+freshly instantiated founder's activations are not all saturated. Do this before judging
+anything about M5's dynamics.
+
+**Done when:** a hand-built network produces known outputs, an oscillator neuron oscillates at
+its specified period, and a founder brain's activations are distributed rather than pinned.
 
 ## M6 — Sensors and effectors
 
@@ -182,6 +222,9 @@ Build-plan task 9.
 - Population and mean-energy time series, canvas or uPlot — never an SVG/DOM chart library.
 - Agent inspector: click an agent, see genome and live neuron activations, pulled on demand for the
   one selected agent (spec §2.2b).
+- `ts-rs` derives on the genome types, generating the TypeScript the inspector reads. Deferred
+  here from M4: the point of generating them is to stop the inspector drifting from the genome,
+  and until the inspector exists there is nothing to drift.
 - Seed URL encoding. Speed control including pause.
 
 **Done when:** you can watch a run, pause, click an agent, and read its brain.

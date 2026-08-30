@@ -149,6 +149,8 @@ These are separate loops and must stay separate.
 
 **Never optimize toward a scalar objective.** Report a vector of metrics with the random-brain control alongside. Don't rank configurations or pick a winner; produce a shortlist for a human to watch. Every metric here is Goodhart-able — maximizing species count just means lowering the speciation threshold until noise counts as speciation.
 
+**Where a default departs from spec §5.5, the reason lives on the field.** `k_brain` is 0.00005 rather than 0.001 because §5.5's own two statements about it contradict each other; the arithmetic is in the doc comment on `MetabolismParams::k_brain`. The metabolic budget does not yet meet §5.5's "~2000 idle ticks" relationship, and the remaining gap is recorded on `MetabolismParams::base`. Read those before tuning either — and add to them rather than replacing them when the numbers move.
+
 ## Working style
 
 - Behavior changes require updating the golden hash deliberately, in the same commit, with a note on why the behavior changed. An unexplained hash update is a red flag.
