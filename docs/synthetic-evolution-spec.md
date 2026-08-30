@@ -548,6 +548,14 @@ Plus `RUSTFLAGS="-C target-feature=+simd128"` and a `wasm-opt -O3` pass. Keep `d
 
 Build both targets and measure your own gap rather than trusting these numbers.
 
+**Memory is the constraint on the 50k target, not speed.** Measured at Phase 1 M4: an agent costs ~11.3 KB, of which the **genome is 98%** — everything else, the SoA arrays, the brain arena, the pool and hash, comes to 233 bytes between them. Pools are pre-allocated at `max_agents` and never grown (§7.3), so that cost is committed up front: 55 MB at 5k agents, **553 MB at 50k**.
+
+Two things follow, and the order matters.
+
+The first lever is **not** lazy allocation. A full world is a full world, and 50k *is* the full world — growing on demand only buys headroom for the common case where population sits below the ceiling. The first lever is the genome arena's layout: `Gene` is an enum sized by its widest variant, so the ~85% of genes that are connections pay 40 bytes for a 20-byte payload. Splitting the arena by gene class roughly halves genome memory and needs no new machinery. Lazy growth composes on top of that, and can be made behaviourally invisible — keep `max_agents` as the ceiling the simulation sees and let allocation track live population underneath, so allocation strategy never reaches the golden hash.
+
+And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **57 bytes per agent** — 0.5% of per-agent state, 2.7 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the 99.5% that is expensive is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
+
 ### 7.6 Tuning discipline
 
 This is the standing cost of choosing Rust, and it needs an explicit mitigation. Every failure mode in §10 is a *tuning* problem — attack cost versus prey energy, pheromone decay rate, metabolic constants. You will iterate on those numbers hundreds of times, and Rust's edit-compile loop against Vite's instant HMR is a real tax.
