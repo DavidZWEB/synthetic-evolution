@@ -1,0 +1,7 @@
+# Pinned exactly, not "stable". A compiler bump is unlikely to change simulation
+# output, but the golden-hash test rests on that "unlikely" — bump this deliberately,
+# in its own commit, and re-run the hash tests. See docs/development.md.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
