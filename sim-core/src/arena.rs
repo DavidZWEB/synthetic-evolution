@@ -9,6 +9,23 @@
 //! is a free-list pop. The handle carries `len` anyway, so Phase 2's variable-length
 //! genomes change this allocator and nothing that calls it.
 //!
+//! # This is where the simulation's memory is
+//!
+//! Measured at M4, an agent costs ~11.3 KB and the **genome arena is 98% of it**. The
+//! SoA state arrays, the brain arena, the pool and the spatial hash come to 233 bytes
+//! between them. Arenas are allocated at `max_agents` and never grown, so the cost is
+//! committed at `World::new`: 55 MB at 5k agents, 553 MB at the Phase 7 target of 50k.
+//! Anything that changes gene count or gene size moves that number quadratically with
+//! the pool, so it is worth knowing before adding a field.
+//!
+//! Roughly 42% of the genome arena is padding. `Gene` is an enum sized by its widest
+//! variant — `SensorGene` at 40 bytes — while ~85% of genes are connections with a
+//! 20-byte payload. Splitting the arena by gene class recovers about half the genome
+//! arena and needs no new machinery; it is the first lever if this ever has to come
+//! down, ahead of allocating lazily. Growth is otherwise cheap to add whenever it is
+//! wanted, because handles are indices: a `Vec` realloc leaves every existing handle
+//! valid. See spec §7.5.
+//!
 //! Deliberately not here: what the elements mean. This module stores blocks.
 
 use serde::{Deserialize, Serialize};

@@ -242,6 +242,18 @@ Build-plan task 8.
   hold 5k agents with the sim at 100×, and would be discarded at Phase 5 regardless. Built to be
   presentable — sharing starts at Phase 2 (spec §8).
 
+**Keep the snapshot's sizing separate from the world's.** These two look like one decision and
+are not. The snapshot is 57 bytes per agent — 0.5% of per-agent state, 0.27 MB at the default
+5k and 2.7 MB even at Phase 7's 50k. World state is ~11.3 KB per agent, almost all of it
+genome. Pre-allocating the snapshot at capacity is therefore free and should just be done.
+
+The reason that matters: §7.3's detach hazard is the argument for pre-allocating *everything*,
+but it only bites what JS actually views, which is the snapshot alone — inspector data is
+pulled for one agent on demand through the command queue (§2.2b), and nothing else crosses the
+boundary. Wiring the transport so it reads the world arenas directly would couple the cheap
+buffer to the expensive one and make the pool impossible to grow later without breaking every
+view. Spec §7.5 has the measurements.
+
 **Done when:** 5k agents render at 60fps with the sim at 1× and at 100×.
 
 ## M10 — Instrumentation
