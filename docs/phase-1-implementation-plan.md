@@ -16,8 +16,9 @@ referenced in commit messages.
 | M1 Foundations | done |
 | M2 Pools and arenas | done |
 | M3 Spatial hash | done |
-| M4 Genome, mutation, crossover | next |
-| M5–M12 | not started |
+| M4 Genome, mutation, crossover | done |
+| M5 CTRNN | next |
+| M6–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -94,7 +95,9 @@ to tell apart from evolved anti-predator behaviour later. The choice is containe
 
 Build-plan task 4, first half.
 
-- Typed-gene list per spec §3.1, serde, `ts-rs` export.
+- Typed-gene list per spec §3.1, serde. (`ts-rs` moved to M10: nothing consumes the
+  generated TypeScript until the inspector exists, and derives with no consumer are
+  exactly the pre-building CLAUDE.md warns against.)
 - Innovation counter as a field on `World`, never a `static`.
 - Fixed-topology builder: sensor→input neurons, hidden, oscillators, effector-source neurons.
 - Mutation operators: weight perturbation and weight reset only.

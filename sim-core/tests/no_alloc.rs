@@ -13,7 +13,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use glam::Vec3;
-use sim_core::agents::SpawnSpec;
 use sim_core::ids::AgentId;
 use sim_core::params::SimParams;
 use sim_core::world::World;
@@ -65,15 +64,8 @@ fn count_allocations(body: impl FnOnce()) -> u64 {
     ALLOCATIONS.with(|n| n.get())
 }
 
-fn spec(i: u32) -> SpawnSpec {
-    SpawnSpec {
-        position: Vec3::new(i as f32 % 500.0, (i / 500) as f32, 0.0),
-        yaw: 0.0,
-        energy: 100.0,
-        size: 3.0,
-        signature: Vec3::splat(0.5),
-        parent_a: AgentId::NULL,
-    }
+fn at(i: u32) -> Vec3 {
+    Vec3::new(i as f32 % 500.0, (i / 500) as f32, 0.0)
 }
 
 #[test]
@@ -99,7 +91,7 @@ fn spawn_and_despawn_never_allocate() {
     // allocates by design — the pools are sized once, up front.
     let mut ids: Vec<AgentId> = Vec::with_capacity(10_000);
     for i in 0..10_000 {
-        ids.push(world.spawn(&spec(i)).expect("pool sized for 10k"));
+        ids.push(world.spawn_founder(at(i)).expect("pool sized for 10k"));
     }
     for id in ids.drain(..) {
         world.despawn(id);
@@ -109,7 +101,7 @@ fn spawn_and_despawn_never_allocate() {
         for round in 0..5 {
             for i in 0..10_000u32 {
                 let id = world
-                    .spawn(&spec(i + round * 10_000))
+                    .spawn_founder(at(i + round * 10_000))
                     .expect("pool has room");
                 ids.push(id);
             }
@@ -135,7 +127,7 @@ fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
     params.world.max_agents = 5_000;
     let mut world = World::new(9, params).expect("valid params");
     for i in 0..5_000 {
-        world.spawn(&spec(i)).expect("pool sized for 5k");
+        world.spawn_founder(at(i)).expect("pool sized for 5k");
     }
 
     // Warmup: first rebuild touches every bucket and cursor.
@@ -172,11 +164,11 @@ fn a_full_pool_refuses_without_allocating() {
     params.world.max_agents = 64;
     let mut world = World::new(1, params).expect("valid params");
     for i in 0..64 {
-        world.spawn(&spec(i)).expect("pool sized for 64");
+        world.spawn_founder(at(i)).expect("pool sized for 64");
     }
     let observed = count_allocations(|| {
         for i in 0..10_000 {
-            assert!(world.spawn(&spec(i)).is_none());
+            assert!(world.spawn_founder(at(i)).is_none());
         }
     });
     assert_eq!(observed, 0, "rejecting a birth allocated {observed} times");
