@@ -10,6 +10,7 @@
 
 pub mod agents;
 pub mod arena;
+pub mod brain;
 pub mod crossover;
 pub mod founder;
 pub mod genome;
@@ -24,6 +25,7 @@ pub mod world;
 
 pub use agents::{Agents, SpawnSpec};
 pub use arena::{Arena, Block};
+pub use brain::{Neuron, Synapse};
 pub use ids::{AgentId, InnovationId, NULL_ID, NeuronId, PartId};
 pub use params::{ParamError, SimParams};
 pub use pool::SlotPool;

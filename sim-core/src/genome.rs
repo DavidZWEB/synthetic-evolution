@@ -16,7 +16,7 @@
 //!    connection's endpoints all name neurons that exist in the same genome.
 //!
 //! Deliberately not here: mutation (`mutate`), recombination (`crossover`), the
-//! founding topology (`founder`), and evaluation (`brain`, at M5). This module is the
+//! founding topology (`founder`), and evaluation (`brain`). This module is the
 //! representation and its rules.
 
 use serde::{Deserialize, Serialize};
@@ -253,16 +253,25 @@ fn neuron_ids(genes: &[Gene]) -> impl Iterator<Item = InnovationId> + '_ {
         .filter_map(|g| g.innovation())
 }
 
-/// Whether `id` names a neuron in this genome.
+/// Position of `id` within the genome's leading neuron run, or `None` if it names no
+/// neuron here.
 ///
-/// Binary search over the leading neuron run rather than a set lookup: a `HashMap`
-/// would be faster to write and its iteration order would be a determinism bug waiting
-/// to happen (spec §2.4).
-fn has_neuron(genes: &[Gene], id: InnovationId) -> bool {
+/// That position is also the neuron's slot in a brain compiled from this genome — the
+/// two orderings are the same by construction, which is what lets `brain::compile`
+/// resolve a connection endpoint with a binary search and no lookup table at all.
+///
+/// Binary search rather than a set: a `HashMap` would be faster to write and its
+/// iteration order would be a determinism bug waiting to happen (spec §2.4).
+pub fn neuron_index(genes: &[Gene], id: InnovationId) -> Option<usize> {
     let neurons = genes.partition_point(|g| matches!(g, Gene::Neuron(_)));
     genes[..neurons]
         .binary_search_by_key(&id.raw(), |g| g.sort_key().1)
-        .is_ok()
+        .ok()
+}
+
+/// Whether `id` names a neuron in this genome.
+fn has_neuron(genes: &[Gene], id: InnovationId) -> bool {
+    neuron_index(genes, id).is_some()
 }
 
 /// Checks both genome invariants. Cheap enough for a `debug_assert!` after mutation

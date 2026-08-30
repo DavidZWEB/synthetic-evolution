@@ -14,10 +14,11 @@
 //! point and nothing else.
 
 use crate::genome::{
-    Action, Activation, BodyGene, BodyTrait, ConnectionGene, EffectorGene, Gene, MetaGene,
+    self, Action, Activation, BodyGene, BodyTrait, ConnectionGene, EffectorGene, Gene, MetaGene,
     MetaTrait, Modality, NeuronGene, SENSOR_CHANNELS, SensorGene,
 };
 use crate::ids::InnovationId;
+use crate::math;
 use crate::params::SimParams;
 use crate::rng::Rng;
 
@@ -29,6 +30,13 @@ use crate::rng::Rng;
 pub struct FounderPlan {
     genes: Vec<Gene>,
     neurons: usize,
+    /// `1/√fan_in` for each connection gene, in gene order.
+    ///
+    /// A property of the topology, which every founder in a world shares, so it is
+    /// computed once here — and only the topology half: the scale itself comes from
+    /// [`SimParams`] at instantiation, so changing it at runtime takes effect without
+    /// rebuilding the plan.
+    fan_in_scale: Vec<f32>,
 }
 
 impl FounderPlan {
@@ -140,7 +148,30 @@ impl FounderPlan {
         }
 
         genes.sort_by_key(Gene::sort_key);
-        Self { genes, neurons }
+
+        // Fan-in per neuron slot: how many connections land on it. Initial weights are
+        // divided by its square root so that a neuron's summed input does not grow with
+        // the number of things wired into it — see `BrainParams::weight_init_scale`.
+        let mut fan_in = vec![0u32; neurons];
+        let mut targets: Vec<usize> = Vec::with_capacity(genes.len());
+        for gene in &genes {
+            if let Gene::Connection(c) = gene {
+                let slot = genome::neuron_index(&genes, c.to).expect("plan wired a real neuron");
+                fan_in[slot] += 1;
+                targets.push(slot);
+            }
+        }
+        // Every target counted itself above, so no divisor here is zero.
+        let fan_in_scale = targets
+            .iter()
+            .map(|&slot| 1.0 / math::sqrt(fan_in[slot] as f32))
+            .collect();
+
+        Self {
+            genes,
+            neurons,
+            fan_in_scale,
+        }
     }
 
     /// Phase 1's hardcoded sensor set: `vision_rays` eyes, a nose, and one
@@ -174,12 +205,16 @@ impl FounderPlan {
     /// Structure comes from the plan and is identical across founders; weights, biases,
     /// taus, oscillator periods, and the signature colour are drawn fresh. Writes into
     /// a caller-owned slice so a birth allocates nothing.
+    ///
+    /// One draw per gene, in gene order, whatever the gene holds. A draw made
+    /// conditionally on a gene's contents would make the RNG stream depend on genome
+    /// state, and two structurally identical lineages would desynchronise (spec §7.4).
     pub fn instantiate(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
         debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
         out.copy_from_slice(&self.genes);
 
         let brain = &params.brain;
-        let limit = params.mutation.weight_limit;
+        let mut connection = 0usize;
         for gene in out.iter_mut() {
             match gene {
                 Gene::Neuron(n) => {
@@ -190,7 +225,14 @@ impl FounderPlan {
                             rng.range(brain.oscillator_period_min, brain.oscillator_period_max);
                     }
                 }
-                Gene::Connection(c) => c.weight = rng.range(-limit, limit),
+                Gene::Connection(c) => {
+                    // Scaled by fan-in, not drawn from `weight_limit`: at 24 inputs per
+                    // neuron the full bound saturates every sigmoid on tick one and the
+                    // brain never responds to a sensor again.
+                    let scale = brain.weight_init_scale * self.fan_in_scale[connection];
+                    connection += 1;
+                    c.weight = rng.range(-scale, scale);
+                }
                 Gene::Sensor(s) => {
                     if s.modality == Modality::VisionRay {
                         // Azimuth spread around the facing direction; elevation stays
@@ -224,10 +266,12 @@ impl FounderPlan {
                 Gene::Effector(_) => {}
             }
         }
-        debug_assert!(
-            crate::genome::validate(out).is_ok(),
-            "founder is not coherent"
+        debug_assert_eq!(
+            connection,
+            self.fan_in_scale.len(),
+            "fan-in scales are out of step with the connection genes"
         );
+        debug_assert!(genome::validate(out).is_ok(), "founder is not coherent");
     }
 }
 
@@ -421,6 +465,61 @@ mod tests {
             let v = crate::genome::body_trait(&genes, t).expect("signature channel present");
             assert!((0.0..=1.0).contains(&v), "signature out of range: {v}");
         }
+    }
+
+    #[test]
+    fn initial_weights_are_scaled_down_by_fan_in() {
+        // The bound in `MutationParams::weight_limit` is where evolution may take a
+        // weight; it is not where one should start. With 24 inputs per neuron the full
+        // bound sums to order ±20 and every sigmoid saturates on tick one.
+        let params = SimParams::default();
+        let genes = instantiate(&plan(&params), &params, 5);
+        let fan_in = 24.0;
+        let expected = params.brain.weight_init_scale / crate::math::sqrt(fan_in);
+
+        let weights: Vec<f32> = genes
+            .iter()
+            .filter_map(|g| match g {
+                Gene::Connection(c) => Some(c.weight),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            weights.len(),
+            240,
+            "the default topology is fully connected"
+        );
+        for w in &weights {
+            assert!(
+                w.abs() <= expected + 1e-6,
+                "weight {w} exceeds the fan-in-scaled draw of ±{expected}"
+            );
+        }
+        assert!(
+            weights.iter().any(|w| w.abs() > expected * 0.9),
+            "the draw is not using its whole range"
+        );
+    }
+
+    #[test]
+    fn the_init_scale_is_a_live_parameter() {
+        // Only the topology half is baked into the plan, so a runtime change to
+        // `weight_init_scale` takes effect without rebuilding it (spec §7.6).
+        let params = SimParams::default();
+        let p = plan(&params);
+        let mut wider = params.clone();
+        wider.brain.weight_init_scale = params.brain.weight_init_scale * 10.0;
+
+        let spread = |ps: &SimParams| {
+            instantiate(&p, ps, 6)
+                .iter()
+                .filter_map(|g| match g {
+                    Gene::Connection(c) => Some(c.weight.abs()),
+                    _ => None,
+                })
+                .fold(0.0f32, f32::max)
+        };
+        assert!(spread(&wider) > spread(&params) * 5.0);
     }
 
     #[test]

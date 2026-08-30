@@ -11,20 +11,28 @@
 //!
 //! # This is where the simulation's memory is
 //!
-//! Measured at M4, an agent costs ~11.3 KB and the **genome arena is 98% of it**. The
-//! SoA state arrays, the brain arena, the pool and the spatial hash come to 233 bytes
-//! between them. Arenas are allocated at `max_agents` and never grown, so the cost is
-//! committed at `World::new`: 55 MB at 5k agents, 553 MB at the Phase 7 target of 50k.
-//! Anything that changes gene count or gene size moves that number quadratically with
-//! the pool, so it is worth knowing before adding a field.
+//! Measured at M5, an agent costs ~14.8 KB at the default topology:
 //!
-//! Roughly 42% of the genome arena is padding. `Gene` is an enum sized by its widest
-//! variant — `SensorGene` at 40 bytes — while ~85% of genes are connections with a
-//! 20-byte payload. Splitting the arena by gene class recovers about half the genome
-//! arena and needs no new machinery; it is the first lever if this ever has to come
-//! down, ahead of allocating lazily. Growth is otherwise cheap to add whenever it is
-//! wanted, because handles are indices: a `Vec` realloc leaves every existing handle
-//! valid. See spec §7.5.
+//! | arena | per agent | share |
+//! |---|---:|---:|
+//! | genome (284 genes × 40 B) | 11.4 KB | 75% |
+//! | synapses (240 × 12 B) | 2.9 KB | 19% |
+//! | neurons (28 × 24 B) | 0.7 KB | 4% |
+//! | SoA arrays, pool, hash, parts | 0.2 KB | 2% |
+//!
+//! Arenas are allocated at `max_agents` and never grown, so the cost is committed at
+//! `World::new`: 71 MB at the default 5k agents, and ~710 MB at the Phase 7 target of
+//! 50k. Anything that changes gene count, gene size, or brain width moves that number
+//! by the whole pool, so it is worth knowing before adding a field.
+//!
+//! Two levers, in the order they should be pulled. Roughly 42% of the genome arena is
+//! padding: `Gene` is an enum sized by its widest variant — `SensorGene` at 40 bytes —
+//! while ~85% of genes are connections with a 20-byte payload, so splitting the arena
+//! by gene class recovers about half of it and needs no new machinery. After that, a
+//! synapse could drop its `to` field by grouping the wiring by target neuron, which
+//! saves a further 0.9 KB per agent at the cost of a subtler compile step. Growth is
+//! otherwise cheap to add whenever it is wanted, because handles are indices: a `Vec`
+//! realloc leaves every existing handle valid. See spec §7.5.
 //!
 //! Deliberately not here: what the elements mean. This module stores blocks.
 
