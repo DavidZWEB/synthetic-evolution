@@ -267,8 +267,17 @@ pub struct ChemoParams {
     /// Retained fraction per tick, per channel. Per-channel on purpose: a trail and an
     /// alarm want different half-lives (spec §5.5).
     pub decay: Vec<f32>,
-    /// Fraction of a cell's concentration spread to its neighbours per tick. Too high
-    /// and every gradient flattens to zero.
+    /// Fraction of the way each cell moves toward the average of its neighbours per
+    /// tick. Too high and every gradient flattens to zero.
+    ///
+    /// **0.5 is the useful ceiling, not the 1.0 validation allows.** This is an explicit
+    /// scheme, so it carries the stability limit every explicit scheme does: the
+    /// checkerboard mode is scaled by `1 - 2·diffuse` each tick, which damps fastest at
+    /// 0.5, damps more slowly above it, and at exactly 1.0 flips sign forever without
+    /// shrinking. A point deposit is full of that mode, so at 1.0 the field keeps a
+    /// permanent grid artefact that reads as noise a nose will chase. Validation stops
+    /// at [0, 1] because that is where the arithmetic stays bounded; going above 0.5 is
+    /// a tuning mistake rather than an unsafe value.
     pub diffuse: f32,
 }
 

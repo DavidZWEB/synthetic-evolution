@@ -12,7 +12,8 @@
 //!
 //! It has fired once already, in the sense that matters: M5's compiled brains took the
 //! default world from 57 MB to 71 MB, which is a quarter more for something that reads
-//! like an implementation detail. The breakdown lives on `arena`'s module doc.
+//! like an implementation detail, and M6's compiled organs added 2 MB more. The
+//! breakdown lives on `arena`'s module doc.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -57,7 +58,7 @@ unsafe impl GlobalAlloc for Tally {
 static ALLOCATOR: Tally = Tally;
 
 const MEGABYTE: usize = 1_048_576;
-/// Comfortably above today's ~71 MB and well under what a phone will tolerate.
+/// Comfortably above today's ~73 MB and well under what a phone will tolerate.
 const CEILING_MB: usize = 96;
 
 #[test]

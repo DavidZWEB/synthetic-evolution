@@ -14,10 +14,12 @@ use glam::Vec3;
 use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
+use crate::chemo::ChemoField;
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::params::{ParamError, SimParams};
+use crate::perceive::{self, SelfView, Sensor, WorldView};
 use crate::pool::SlotPool;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
@@ -41,6 +43,9 @@ pub struct World {
     /// and a neuron are different element types, not because they have different
     /// lifetimes — the two blocks are claimed and freed together.
     synapses: Arena<Synapse>,
+    /// Compiled sensors, one block per agent: an organ's parameters and the brain slots
+    /// it writes to, resolved at birth (spec §2.2c).
+    sensors: Arena<Sensor>,
     /// Gene lists, one block per agent.
     genes: Arena<Gene>,
     /// The founding topology, whose innovation ids every founder in this world shares
@@ -49,13 +54,13 @@ pub struct World {
     /// Reusable buffer for building a genome before it is copied into the arena.
     /// Owned by the world and sized once, so a birth allocates nothing.
     genome_scratch: Vec<Gene>,
-    /// Per-neuron input `I` for the brain being stepped, reused across agents. Sized
-    /// once at the widest brain the world can hold, so a tick allocates nothing.
-    drive_scratch: Vec<f32>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
     parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
     hash: SpatialHash,
+    /// Pheromone concentrations. What plants scent and what the chemo sensor reads;
+    /// nothing deposits into it until M7 wires the economy.
+    field: ChemoField,
 }
 
 impl World {
@@ -76,6 +81,7 @@ impl World {
         });
         let brain_stride = plan.neuron_count() as u32;
         let synapse_stride = brain::synapse_count(plan.genes()) as u32;
+        let sensor_stride = perceive::sensor_count(plan.genes()) as u32;
         let genome_stride = plan.len() as u32;
         Ok(Self {
             rng: Rng::from_seed(seed),
@@ -85,9 +91,9 @@ impl World {
             agents: Agents::with_capacity(capacity),
             brains: Arena::with_capacity(capacity, brain_stride),
             synapses: Arena::with_capacity(capacity, synapse_stride),
+            sensors: Arena::with_capacity(capacity, sensor_stride),
             genes: Arena::with_capacity(capacity, genome_stride),
             genome_scratch: vec![Gene::default(); plan.len()],
-            drive_scratch: vec![0.0; brain_stride as usize],
             plan,
             parts: Arena::with_capacity(capacity, PARTS_PER_AGENT),
             hash: SpatialHash::new(
@@ -95,6 +101,7 @@ impl World {
                 params.sensing.max_sense_radius(),
                 capacity,
             ),
+            field: ChemoField::new(&params.chemo, params.world.size),
             params,
         })
     }
@@ -114,12 +121,13 @@ impl World {
         };
         self.genes.get_mut(handles.genome).copy_from_slice(genes);
         // Compiled once, here, and never read from the genome again during a tick
-        // — resolving an innovation id costs a binary search (`brain`).
+        // — resolving an innovation id costs a binary search (`brain`, `perceive`).
         brain::compile(
             genes,
             self.brains.get_mut(handles.brain),
             self.synapses.get_mut(handles.synapses),
         );
+        perceive::compile(genes, self.sensors.get_mut(handles.sensors));
         self.agents.init(id, spec, &handles);
         Some(id)
     }
@@ -133,22 +141,29 @@ impl World {
     fn claim_blocks(&mut self, genes: &[Gene]) -> Option<Handles> {
         let brain = self.brains.alloc(genome::neuron_count(genes) as u32);
         let synapses = self.synapses.alloc(brain::synapse_count(genes) as u32);
+        let sensors = self.sensors.alloc(perceive::sensor_count(genes) as u32);
         let genome = self.genes.alloc(genes.len() as u32);
         let parts = self.parts.alloc(PARTS_PER_AGENT);
 
-        match (brain, synapses, genome, parts) {
-            (Some(brain), Some(synapses), Some(genome), Some(parts)) => Some(Handles {
-                brain,
-                synapses,
-                genome,
-                parts,
-            }),
+        match (brain, synapses, sensors, genome, parts) {
+            (Some(brain), Some(synapses), Some(sensors), Some(genome), Some(parts)) => {
+                Some(Handles {
+                    brain,
+                    synapses,
+                    sensors,
+                    genome,
+                    parts,
+                })
+            }
             _ => {
                 if let Some(block) = brain {
                     self.brains.free(block);
                 }
                 if let Some(block) = synapses {
                     self.synapses.free(block);
+                }
+                if let Some(block) = sensors {
+                    self.sensors.free(block);
                 }
                 if let Some(block) = genome {
                     self.genes.free(block);
@@ -209,10 +224,42 @@ impl World {
         let i = id.index();
         self.brains.free(self.agents.brain[i]);
         self.synapses.free(self.agents.synapses[i]);
+        self.sensors.free(self.agents.sensors[i]);
         self.genes.free(self.agents.genome[i]);
         self.parts.free(self.agents.parts[i]);
         self.agents.clear(id);
         self.pool.free(id)
+    }
+
+    /// Runs every live agent's sensors and writes what they return into its brain.
+    /// Step 2 of the tick (spec §2.4).
+    ///
+    /// A whole pass before [`Self::step_brains`], not fused with it: every agent must
+    /// perceive the same world, and a fused loop would let agent 0's decision reach
+    /// agent 1's eye within the same tick.
+    pub fn perceive_all(&mut self) {
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            let agent = SelfView {
+                index: id.raw(),
+                position: self.agents.position[i],
+                orientation: self.agents.orientation[i],
+                energy: self.agents.energy[i],
+            };
+            let world = WorldView {
+                positions: &self.agents.position,
+                signatures: &self.agents.signature,
+                sizes: &self.agents.size,
+                hash: &self.hash,
+                field: &self.field,
+            };
+            perceive::perceive(
+                self.sensors.get(self.agents.sensors[i]),
+                &agent,
+                &world,
+                self.brains.get_mut(self.agents.brain[i]),
+            );
+        }
     }
 
     /// Advances every live brain one Euler step. Step 3 of the tick (spec §2.4).
@@ -229,16 +276,7 @@ impl World {
         for id in self.pool.iter_live() {
             let i = id.index();
             let (brain, synapses) = (self.agents.brain[i], self.agents.synapses[i]);
-            // Zero until perception writes sensor input here at M6 (spec §2.2c), so
-            // for now a brain runs on its own recurrence and its oscillators.
-            let drive = &mut self.drive_scratch[..brain.len() as usize];
-            drive.fill(0.0);
-            brain::step(
-                self.brains.get_mut(brain),
-                self.synapses.get(synapses),
-                drive,
-                dt,
-            );
+            brain::step(self.brains.get_mut(brain), self.synapses.get(synapses), dt);
         }
     }
 
@@ -258,6 +296,21 @@ impl World {
     #[inline]
     pub fn spatial_hash(&self) -> &SpatialHash {
         &self.hash
+    }
+
+    #[inline]
+    pub fn chemo(&self) -> &ChemoField {
+        &self.field
+    }
+
+    /// Adds to a chemo channel at a world position.
+    ///
+    /// Narrow rather than a `&mut ChemoField`: from M7 the field is written by plants
+    /// and by the `emit_chemo` effector, both inside the tick and both through the
+    /// intent buffer. Handing out the whole field would make "who wrote this trail" a
+    /// question with no answer.
+    pub fn deposit_chemo(&mut self, channel: usize, position: Vec3, amount: f32) {
+        self.field.deposit(channel, position, amount);
     }
 
     /// Draws the next innovation id and advances the counter.
@@ -466,6 +519,91 @@ mod tests {
     }
 
     #[test]
+    fn spawning_compiles_the_agents_organs() {
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::ZERO).unwrap();
+        let sensors = w.sensors.get(w.agents().sensors[id.index()]);
+        assert_eq!(
+            sensors.len(),
+            w.params().sensing.vision_rays as usize + 2,
+            "the founding set is n eyes, a nose, and an interoceptor"
+        );
+        for sensor in sensors {
+            for target in &sensor.targets[..sensor.modality.channels()] {
+                assert!(
+                    target.index() < w.brain(id).len(),
+                    "a sensor points outside its own brain: {sensor:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sensor_blocks_come_back_on_death() {
+        let mut w = small_world();
+        let ids: Vec<_> = (0..32)
+            .map(|i| w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap())
+            .collect();
+        assert_eq!(w.sensors.live_blocks(), 32);
+        for id in ids {
+            w.despawn(id);
+        }
+        assert_eq!(w.sensors.live_blocks(), 0, "a sensor block leaked");
+    }
+
+    #[test]
+    fn perception_reaches_the_brain() {
+        // The end-to-end claim of M6's first half: something in the world shows up as
+        // input on a neuron, without the agent ever touching a world array.
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        w.rebuild_spatial_hash();
+
+        w.perceive_all();
+        let quiet: f32 = w.brain(id).iter().map(|n| n.input.abs()).sum();
+
+        // An interoceptor always reports energy, so a "silent" world is not silent —
+        // but adding food to smell has to move the total.
+        w.step_brains();
+        w.deposit_chemo(0, Vec3::new(500.0, 500.0, 0.0), 250.0);
+        w.perceive_all();
+        let smelling: f32 = w.brain(id).iter().map(|n| n.input.abs()).sum();
+        assert!(
+            smelling > quiet,
+            "depositing food changed nothing: {quiet} -> {smelling}"
+        );
+    }
+
+    #[test]
+    fn perception_is_consumed_by_the_brain_not_accumulated() {
+        // `Neuron::input` persists between step 2 and step 3 by design. If step 3 did
+        // not clear it, every tick would add to the last and the brain would saturate
+        // within seconds while looking like a runaway weight problem.
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        w.deposit_chemo(0, Vec3::new(500.0, 500.0, 0.0), 250.0);
+        w.rebuild_spatial_hash();
+
+        let mut previous = 0.0f32;
+        for tick in 0..50 {
+            w.perceive_all();
+            let charged: f32 = w.brain(id).iter().map(|n| n.input.abs()).sum();
+            w.step_brains();
+            assert!(
+                w.brain(id).iter().all(|n| n.input == 0.0),
+                "step {tick} left input on a neuron"
+            );
+            if tick > 0 {
+                assert!(
+                    (charged - previous).abs() < previous.max(1.0) * 0.5,
+                    "input is growing tick over tick: {previous} -> {charged}"
+                );
+            }
+            previous = charged;
+        }
+    }
+
+    #[test]
     fn brains_advance_and_stay_finite() {
         // With no perception yet a brain runs on its recurrence and its oscillators
         // alone, which is enough to tell a live network from a dead one.
@@ -499,10 +637,10 @@ mod tests {
 
     #[test]
     fn a_brain_runs_the_same_alone_as_in_a_crowd() {
-        // One drive buffer is reused for every agent in a tick. If it were ever left
-        // uncleared, one agent's synaptic sums would land on the next and behaviour
-        // would become an artifact of pool order (spec §2.4) — which no determinism
-        // test would catch, because it would be reproducibly wrong.
+        // Every agent's input, state, and wiring must stay its own. A handle that
+        // aliased, or per-tick input parked somewhere shared, would make behaviour an
+        // artifact of pool order (spec §2.4) — which no determinism test would catch,
+        // because it would be reproducibly wrong.
         let trajectory = |population: u32| {
             let mut w = small_world();
             for i in 0..population {

@@ -42,6 +42,14 @@ pub struct Neuron {
     /// before it began. That is the whole of the "evaluate from previous activations"
     /// rule in spec §2.4.
     pub output: f32,
+    /// External input `I` for the tick in progress: what perception wrote here in step
+    /// 2, waiting for step 3 to consume it (spec §2.4).
+    ///
+    /// Per neuron rather than one scratch buffer shared across agents, because those
+    /// are two separate passes — every agent perceives before any agent thinks — so the
+    /// value has to survive in between. `step` clears it as it consumes it, which is
+    /// what stops a tick's input from being added twice.
+    pub input: f32,
     pub bias: f32,
     /// `1 / tau`. Small tau reacts, large tau integrates (spec §3.2).
     pub inv_tau: f32,
@@ -133,6 +141,7 @@ pub fn compile(genes: &[Gene], neurons: &mut [Neuron], synapses: &mut [Synapse])
         *slot = Neuron {
             state: 0.0,
             output: 0.0,
+            input: 0.0,
             bias: gene.bias,
             // `validate` rejects a non-positive tau, and an oscillator's period with
             // it, so neither reciprocal can be an infinity here.
@@ -151,30 +160,25 @@ pub fn compile(genes: &[Gene], neurons: &mut [Neuron], synapses: &mut [Synapse])
     }
 }
 
-/// Advances every neuron one Euler step.
-///
-/// `drive` arrives holding each neuron's external input `I_i` — what perception put
-/// there — and leaves holding the total input the neuron saw, synapses included. It is
-/// the caller's scratch buffer, which is what keeps the step allocation-free, and it
-/// **must arrive cleared** wherever there is no input: one buffer is reused across
-/// every agent in a tick, and a stale entry would carry one agent's synaptic sums into
-/// the next, making behaviour depend on pool order (spec §2.4).
+/// Advances every neuron one Euler step, consuming whatever perception left in
+/// [`Neuron::input`] and clearing it for the next tick.
 ///
 /// Synapses are summed in genome order. Float addition does not reassociate, so the
 /// order is part of the result and has to be the same on every platform and every run
 /// (spec §7.4).
-pub fn step(neurons: &mut [Neuron], synapses: &[Synapse], drive: &mut [f32], dt: f32) {
-    debug_assert_eq!(
-        neurons.len(),
-        drive.len(),
-        "drive buffer is the wrong width"
-    );
-
+pub fn step(neurons: &mut [Neuron], synapses: &[Synapse], dt: f32) {
     for synapse in synapses {
-        drive[synapse.to.index()] += synapse.weight * neurons[synapse.from.index()].output;
+        // Read and write in separate statements: `neurons` cannot be borrowed shared
+        // and unique at once, and the source's output is the *previous* step's either
+        // way, so lifting it into a local changes nothing but the borrow.
+        let source = neurons[synapse.from.index()].output;
+        neurons[synapse.to.index()].input += synapse.weight * source;
     }
 
-    for (neuron, &input) in neurons.iter_mut().zip(drive.iter()) {
+    for neuron in neurons.iter_mut() {
+        // Reads the accumulated input and leaves 0.0 behind in one move, so a tick's
+        // input cannot be counted twice and the next one starts from a clean slate.
+        let input = core::mem::take(&mut neuron.input);
         if neuron.activation == Activation::Oscillator {
             // Free-running: it ignores `input` entirely and advances its phase instead
             // (spec §3.2). Wrapped every step, or the phase loses f32 precision after
@@ -260,13 +264,12 @@ mod tests {
         }
     }
 
-    /// Compiles `genes` and returns the brain, its wiring, and a zeroed drive buffer.
-    fn build(genes: &[Gene]) -> (Vec<Neuron>, Vec<Synapse>, Vec<f32>) {
+    /// Compiles `genes` into a brain and its wiring.
+    fn build(genes: &[Gene]) -> (Vec<Neuron>, Vec<Synapse>) {
         let mut neurons = vec![Neuron::default(); genome::neuron_count(genes)];
         let mut synapses = vec![Synapse::default(); synapse_count(genes)];
         compile(genes, &mut neurons, &mut synapses);
-        let drive = vec![0.0; neurons.len()];
-        (neurons, synapses, drive)
+        (neurons, synapses)
     }
 
     #[test]
@@ -274,16 +277,16 @@ mod tests {
         // One sigmoid neuron, no wiring: y' = (1/tau)(-y + I) integrated at dt.
         // dt/tau = 0.5, so y goes 0 → 0.5·2 = 1.0 → 1.0 + 0.5·(2.0 - 1.0) = 1.5.
         let genes = net(&[neuron(0, 0.0, 1.0)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
         let dt = 0.5;
 
-        drive[0] = 2.0;
-        step(&mut neurons, &synapses, &mut drive, dt);
+        neurons[0].input = 2.0;
+        step(&mut neurons, &synapses, dt);
         assert!((neurons[0].state - 1.0).abs() < 1e-6, "{:?}", neurons[0]);
         assert!((neurons[0].output - math::sigmoid(1.0)).abs() < 1e-6);
 
-        drive[0] = 2.0;
-        step(&mut neurons, &synapses, &mut drive, dt);
+        neurons[0].input = 2.0;
+        step(&mut neurons, &synapses, dt);
         assert!((neurons[0].state - 1.5).abs() < 1e-6, "{:?}", neurons[0]);
         assert!((neurons[0].output - math::sigmoid(1.5)).abs() < 1e-6);
     }
@@ -291,8 +294,8 @@ mod tests {
     #[test]
     fn bias_shifts_the_output_without_shifting_the_state() {
         let genes = net(&[neuron(0, 0.75, 1.0)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
-        step(&mut neurons, &synapses, &mut drive, 1.0);
+        let (mut neurons, synapses) = build(&genes);
+        step(&mut neurons, &synapses, 1.0);
         assert_eq!(neurons[0].state, 0.0, "no input, so no potential");
         assert!((neurons[0].output - math::sigmoid(0.75)).abs() < 1e-6);
     }
@@ -304,16 +307,12 @@ mod tests {
         // output reach it. Without that, behaviour would depend on slot order
         // (spec §2.4).
         let genes = net(&[neuron(0, 0.0, 1.0), neuron(1, 0.0, 1.0)], &[(0, 1, 4.0)]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
-
-        drive.fill(0.0);
-        drive[0] = 1.0;
-        step(&mut neurons, &synapses, &mut drive, 1.0);
+        let (mut neurons, synapses) = build(&genes);
+        neurons[0].input = 1.0;
+        step(&mut neurons, &synapses, 1.0);
         assert_eq!(neurons[1].state, 0.0, "B saw A's output in the same step");
         let a_output = neurons[0].output;
-
-        drive.fill(0.0);
-        step(&mut neurons, &synapses, &mut drive, 1.0);
+        step(&mut neurons, &synapses, 1.0);
         assert!(
             (neurons[1].state - 4.0 * a_output).abs() < 1e-6,
             "B did not receive A's previous output"
@@ -326,11 +325,13 @@ mod tests {
         // what gives it a memory of any length (spec §3.2).
         let dt = 1.0 / 60.0;
         let genes = net(&[neuron(0, 0.0, dt), neuron(1, 0.0, 100.0 * dt)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
 
         for _ in 0..10 {
-            drive.fill(1.0);
-            step(&mut neurons, &synapses, &mut drive, dt);
+            for n in neurons.iter_mut() {
+                n.input = 1.0;
+            }
+            step(&mut neurons, &synapses, dt);
         }
         assert!(
             (neurons[0].state - 1.0).abs() < 1e-5,
@@ -350,10 +351,12 @@ mod tests {
         // unclamped Euler gain of 16 makes the state alternate and grow without bound,
         // and the NaN that follows reaches every downstream neuron in one tick.
         let genes = net(&[neuron(0, 0.0, 1e-3)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
         for _ in 0..1_000 {
-            drive.fill(1.0);
-            step(&mut neurons, &synapses, &mut drive, 1.0 / 60.0);
+            for n in neurons.iter_mut() {
+                n.input = 1.0;
+            }
+            step(&mut neurons, &synapses, 1.0 / 60.0);
         }
         assert!(neurons[0].state.is_finite(), "{}", neurons[0].state);
         assert!(
@@ -367,12 +370,11 @@ mod tests {
     fn an_oscillator_runs_at_its_period() {
         const PERIOD: usize = 40;
         let genes = net(&[oscillator(0, PERIOD as f32)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
 
         let mut trace = Vec::new();
         for _ in 0..PERIOD * 4 {
-            drive.fill(0.0);
-            step(&mut neurons, &synapses, &mut drive, 1.0 / 60.0);
+            step(&mut neurons, &synapses, 1.0 / 60.0);
             trace.push(neurons[0].output);
         }
 
@@ -393,20 +395,18 @@ mod tests {
         // "Free-running" is the whole reason oscillators are a useful scaffold: a
         // neuron whose rhythm can be shouted down is not a clock (spec §3.2).
         let genes = net(&[oscillator(0, 25.0), neuron(1, 0.0, 1.0)], &[(1, 0, 4.0)]);
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
         let mut driven = Vec::new();
         for _ in 0..100 {
-            drive.fill(0.0);
-            drive[1] = 50.0;
-            step(&mut neurons, &synapses, &mut drive, 1.0 / 60.0);
+            neurons[1].input = 50.0;
+            step(&mut neurons, &synapses, 1.0 / 60.0);
             driven.push(neurons[0].output);
         }
 
         let alone = net(&[oscillator(0, 25.0)], &[]);
-        let (mut neurons, synapses, mut drive) = build(&alone);
+        let (mut neurons, synapses) = build(&alone);
         for (t, expected) in driven.iter().enumerate() {
-            drive.fill(0.0);
-            step(&mut neurons, &synapses, &mut drive, 1.0 / 60.0);
+            step(&mut neurons, &synapses, 1.0 / 60.0);
             assert!(
                 (neurons[0].output - expected).abs() < 1e-6,
                 "input moved the oscillator at tick {t}"
@@ -426,7 +426,7 @@ mod tests {
             ],
             &[(11, 3, 1.0)],
         );
-        let (_, synapses, _) = build(&genes);
+        let (_, synapses) = build(&genes);
         // Sorted by id: slot 0 is neuron 3, slot 1 is neuron 7, slot 2 is neuron 11.
         assert_eq!(synapses.len(), 1);
         assert_eq!(synapses[0].from, NeuronId::new(2));
@@ -452,11 +452,10 @@ mod tests {
             "a disabled connection was compiled"
         );
 
-        let (mut neurons, synapses, mut drive) = build(&genes);
+        let (mut neurons, synapses) = build(&genes);
         for _ in 0..10 {
-            drive.fill(0.0);
-            drive[0] = 4.0;
-            step(&mut neurons, &synapses, &mut drive, 1.0);
+            neurons[0].input = 4.0;
+            step(&mut neurons, &synapses, 1.0);
         }
         assert_eq!(
             neurons[1].state, 0.0,
@@ -486,15 +485,14 @@ mod tests {
 
         for seed in 0..seeds {
             plan.instantiate(&mut Rng::from_seed(seed), params, &mut genes);
-            let (mut neurons, synapses, mut drive) = build(&genes);
+            let (mut neurons, synapses) = build(&genes);
             let mut wired = vec![false; neurons.len()];
             for synapse in &synapses {
                 wired[synapse.to.index()] = true;
             }
             // Long enough for the slowest tau in the default range to settle.
             for _ in 0..600 {
-                drive.fill(0.0);
-                step(&mut neurons, &synapses, &mut drive, params.world.dt);
+                step(&mut neurons, &synapses, params.world.dt);
             }
             for (n, &is_wired) in neurons.iter().zip(wired.iter()) {
                 if !is_wired || n.activation == Activation::Oscillator {
@@ -557,8 +555,8 @@ mod tests {
         });
         let mut genes = vec![Gene::default(); plan.len()];
         plan.instantiate(&mut Rng::from_seed(4), &params, &mut genes);
-        let (a_neurons, a_synapses, _) = build(&genes);
-        let (b_neurons, b_synapses, _) = build(&genes);
+        let (a_neurons, a_synapses) = build(&genes);
+        let (b_neurons, b_synapses) = build(&genes);
         assert_eq!(a_neurons, b_neurons);
         assert_eq!(a_synapses, b_synapses);
     }
@@ -568,7 +566,13 @@ mod tests {
         // Both arenas are allocated at `max_agents` and never grow, so every byte here
         // is multiplied by the pool: the default topology's 240 synapses are 19% of an
         // agent's whole footprint. See the memory note in `arena`.
-        assert!(size_of::<Neuron>() <= 24, "{}", size_of::<Neuron>());
+        //
+        // 28 rather than 24 since M6. `Neuron::input` is the one field bought
+        // deliberately: perception and evaluation are separate passes over every agent,
+        // so a tick's sensor input has to survive between them, and the alternative — a
+        // second arena of one f32 per neuron — costs the same 0.6 MB while adding an
+        // allocator, a handle, and a buffer whose clearing is the caller's problem.
+        assert!(size_of::<Neuron>() <= 28, "{}", size_of::<Neuron>());
         assert!(size_of::<Synapse>() <= 12, "{}", size_of::<Synapse>());
     }
 
@@ -577,9 +581,9 @@ mod tests {
         // The arena hands out blocks reset to Default, and a NULL slot index would be
         // an out-of-range panic in the hot loop rather than a quiet no-op.
         let genes = net(&[neuron(0, 0.0, 1.0)], &[]);
-        let (mut neurons, _, mut drive) = build(&genes);
+        let (mut neurons, _) = build(&genes);
         let synapses = [Synapse::default()];
-        step(&mut neurons, &synapses, &mut drive, 1.0);
+        step(&mut neurons, &synapses, 1.0);
         assert_eq!(neurons[0].state, 0.0);
     }
 }

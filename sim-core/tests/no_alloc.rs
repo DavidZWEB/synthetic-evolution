@@ -158,6 +158,37 @@ fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
 }
 
 #[test]
+fn perceiving_never_allocates() {
+    // Step 2 of the tick, and the phase the spec expects to be 60–80% of tick cost once
+    // vision is real (spec §2.2c). It runs a spatial-hash query per eye per agent per
+    // tick; an allocation anywhere in there is the most expensive one in the project.
+    let mut params = SimParams::default();
+    params.world.max_agents = 2_000;
+    let mut world = World::new(13, params).expect("valid params");
+    for i in 0..2_000 {
+        world.spawn_founder(at(i)).expect("pool sized for 2k");
+    }
+    // Something to smell and something to see, or the sensors take their cheapest path.
+    world.deposit_chemo(0, Vec3::new(250.0, 250.0, 0.0), 500.0);
+    world.rebuild_spatial_hash();
+    world.perceive_all();
+
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            world.rebuild_spatial_hash();
+            world.perceive_all();
+            world.step_brains();
+        }
+        std::hint::black_box(&world);
+    });
+
+    assert_eq!(
+        observed, 0,
+        "perceive/step allocated {observed} times after warmup"
+    );
+}
+
+#[test]
 fn stepping_every_brain_never_allocates() {
     // Step 3 of the tick, run for every agent every tick (spec §2.4). The scratch
     // buffer the Euler step writes into is owned by the world and sized once; if it

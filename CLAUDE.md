@@ -103,6 +103,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   genome.rs      the typed-gene list and the rules that make one coherent
   founder.rs     Phase 1's fixed topology, instantiated with random scalars
   brain.rs       CTRNN: compiling a genome to a runnable network, and the Euler step
+  perceive.rs    sensors: running an agent's organs against the world, into its brain
+  chemo.rs       the pheromone field — sample, gradient, deposit, diffuse, decay
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands
@@ -112,8 +114,8 @@ shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
 web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never committed
 ```
 
-Still to come, one concept each: `tick.rs` (the 11 steps, order normative),
-`perceive.rs`, and the systems that write the intent buffer.
+Still to come, one concept each: `tick.rs` (the 11 steps, order normative), and the
+effector and movement systems that write and drain the intent buffer.
 
 ## Commands
 

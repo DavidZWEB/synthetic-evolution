@@ -18,7 +18,7 @@ referenced in commit messages.
 | M3 Spatial hash | done |
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
-| M6 Sensors and effectors | next |
+| M6 Sensors and effectors | perception done; effectors next |
 | M7–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -204,6 +204,44 @@ Build-plan task 5.
   All write to an intent buffer; none mutate the world.
 
 **Done when:** an agent with hand-written weights demonstrably climbs a food gradient.
+
+**Scope: this milestone is wider than its bullet list.** The acceptance criterion needs
+three things the bullets do not name — a field to carry a gradient, a way to sample it,
+and movement to climb with. So M6 also lands the chemo field and the movement
+integrator. Both are *systems*; M8 still owns assembling systems into the normative
+11-step tick, along with the `Command` enum and the state hash. That is the seam M5 set:
+`brain::step` and `World::step_brains` exist, `tick.rs` does not.
+
+Split across two changes, because it is four modules: **perception** (compiled sensors,
+`chemo.rs`, `perceive.rs`) and then **action** (intent buffer, effectors, movement, and
+the gradient-climbing test).
+
+**Decisions taken in the perception half.**
+
+*Diffusion is part of the sensor working, not part of the economy.* A deposit lands in
+one cell, so with no spreading the gradient is zero everywhere except inside that cell —
+an agent one cell away smells nothing and there is no slope to climb. Diffusion is the
+mechanism that turns food into a signal, so it lands here rather than at M7. M7 keeps
+what it was actually for: plants as the deposit source, the `emit_chemo` effector, and
+the conservation ledger.
+
+*Explicit diffusion carries a stability limit, and 1.0 is past the useful part of it.*
+The checkerboard mode is scaled by `1 - 2·diffuse` per tick: damped hardest at 0.5,
+damped less above it, and at exactly 1.0 it flips sign forever without shrinking, so a
+point deposit leaves a permanent grid artefact a nose would chase as if it were food.
+Validation still allows [0, 1] — that is where the arithmetic stays bounded — and the
+reasoning lives on `ChemoParams::diffuse`, where the next person tuning it will be.
+
+*`Neuron` grew a fourth state field, and M5's shared scratch buffer is gone.* Perception
+runs for every agent before any brain steps, so a tick's sensor input has to survive
+between two passes; a single buffer cannot hold it. Per-neuron `input` costs 0.6 MB,
+which is what a second arena would have cost, and removes a buffer whose clearing was
+the caller's problem. `brain::step` consumes and clears it in one move.
+
+*An eye reports nearness, not distance.* 1 at the eye, 0 at the limit of range, and 0
+for an empty view. A raw distance would make "nothing there" and "something 60 units
+away" different numbers, and would saturate any neuron it reached before the fan-in
+scaling of M5 ever got a say.
 
 ## M7 — World and economy
 
