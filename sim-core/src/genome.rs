@@ -331,11 +331,35 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
     Ok(())
 }
 
-/// Number of genes, which is what the metabolic brain-complexity term charges for
-/// (spec §5.2). Counting genes rather than neurons plus connections is the same
-/// quantity by a different name, and it stays correct as new gene kinds appear.
-pub fn complexity(genes: &[Gene]) -> u32 {
-    genes.len() as u32
+/// Neurons plus connections: what the metabolic `k_brain` term charges for (spec §5.2).
+///
+/// Deliberately **not** the gene count. Sensors are charged separately by `k_sensor`,
+/// at ten times the rate, because eyes are meant to be expensive — counting sensor
+/// genes here too would bill them twice and collapse the one knob that decides whether
+/// evolution grows more eyes or bigger brains. Body and meta genes are not brain at
+/// all. The difference is invisible while every genome is identical, and becomes a
+/// real distortion in Phase 2 when they stop being.
+pub fn brain_complexity(genes: &[Gene]) -> u32 {
+    genes
+        .iter()
+        .filter(|g| matches!(g, Gene::Neuron(_) | Gene::Connection(_)))
+        .count() as u32
+}
+
+/// Number of sensor genes, weighted by modality: what `k_sensor` charges for.
+///
+/// Weighting is by channel count as a stand-in for the real cost of an organ — an eye
+/// returning distance and colour costs four times a chemoreceptor's single scalar.
+/// Perception is 60–80% of tick time, and metering rays as a metabolic cost is what
+/// makes evolution pay for its own compute (spec §2.2c, §5.2).
+pub fn sensor_load(genes: &[Gene]) -> f32 {
+    genes
+        .iter()
+        .filter_map(|g| match g {
+            Gene::Sensor(s) => Some(s.modality.channels() as f32),
+            _ => None,
+        })
+        .sum()
 }
 
 /// The value of a body trait, or `None` if the genome does not carry it.
@@ -582,8 +606,40 @@ mod tests {
     fn helpers_read_what_they_claim() {
         let genes = tiny();
         assert_eq!(neuron_count(&genes), 2);
-        assert_eq!(complexity(&genes), genes.len() as u32);
         assert_eq!(body_trait(&genes, BodyTrait::Size), Some(3.0));
         assert_eq!(body_trait(&genes, BodyTrait::SignatureR), None);
+    }
+
+    #[test]
+    fn the_two_metabolic_terms_do_not_overlap() {
+        // k_brain charges neurons and connections; k_sensor charges sensors, at ten
+        // times the rate. A gene counted by both would be billed twice and the two
+        // coefficients would stop being independent knobs (spec §5.2).
+        let genes = tiny();
+        assert_eq!(brain_complexity(&genes), 3, "2 neurons + 1 connection");
+
+        let counted_by_brain = genes
+            .iter()
+            .filter(|g| matches!(g, Gene::Neuron(_) | Gene::Connection(_)))
+            .count();
+        let counted_by_sensor = genes
+            .iter()
+            .filter(|g| matches!(g, Gene::Sensor(_)))
+            .count();
+        assert_eq!(counted_by_brain + counted_by_sensor, 4);
+        assert!(
+            counted_by_brain + counted_by_sensor < genes.len(),
+            "body and meta are not metered"
+        );
+    }
+
+    #[test]
+    fn sensor_load_weights_wide_organs_more() {
+        // An eye returning distance and colour should cost more than a nose.
+        let eye = Modality::VisionRay.channels() as f32;
+        let nose = Modality::Chemo.channels() as f32;
+        assert!(eye > nose);
+        // `tiny` carries one interoceptor, the narrowest sensor there is.
+        assert_eq!(sensor_load(&tiny()), 1.0);
     }
 }

@@ -62,10 +62,24 @@ pub struct MetabolismParams {
     pub base: f32,
     /// Cost coefficient on size². Doubling radius should roughly quadruple upkeep.
     pub k_size: f32,
-    /// Cost per gene. A 200-gene brain should cost ~20% of base — noticeable, not
-    /// crippling. This term is what stops genomes bloating without limit.
+    /// Cost per neuron and per connection — see `genome::brain_complexity`, and note
+    /// it is *not* per gene: sensors are billed by `k_sensor` instead.
+    ///
+    /// The term that stops genomes bloating without limit. It does no selective work
+    /// until Phase 2, because every Phase 1 genome is the same size, so today it only
+    /// adds to `base`.
+    ///
+    /// **Miscalibrated as shipped.** Spec §5.5 wants a 200-gene brain at ~20% of base,
+    /// which at `base = 0.05` means the term should land near 0.01 — but 200 × 0.001 is
+    /// 0.2, four times base rather than a fifth of it. At the default topology's 268
+    /// neurons and connections it is 5.4× base and kills an idle agent in ~310 ticks,
+    /// against the ~2000 §5.5 asks for. Changing it alters selection pressure, so it is
+    /// left as the spec states it, flagged, and awaiting a human call before M7 wires
+    /// metabolism up.
     pub k_brain: f32,
-    /// Cost per sensor gene, weighted by modality. Eyes are meant to be expensive.
+    /// Cost per sensor, weighted by modality — see `genome::sensor_load`. Ten times
+    /// `k_brain`, because an eye should cost more than a chemoreceptor, and because
+    /// metering perception is what makes evolution pay for its own compute (spec §2.2c).
     pub k_sensor: f32,
     /// Cost coefficient on |force|². Sprinting should drain a full tank in ~200 ticks.
     pub k_move: f32,
