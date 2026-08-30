@@ -1,0 +1,145 @@
+//! Asserts the sim allocates nothing once it is warm.
+//!
+//! An allocation in the hot loop does not fail a functional test — it shows up as
+//! frame-time jitter in the browser and as a slow drift in an overnight headless run,
+//! which is exactly the kind of thing nobody traces back to a `Vec::push`. So it is
+//! measured directly (CLAUDE.md invariant 4, spec §7.8 tier 2).
+//!
+//! Counting is per-thread rather than global: this binary's test harness allocates on
+//! its own thread while the measured region runs, and a global counter would fold that
+//! noise in and flake.
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
+use glam::Vec3;
+use sim_core::agents::SpawnSpec;
+use sim_core::ids::AgentId;
+use sim_core::params::SimParams;
+use sim_core::world::World;
+
+thread_local! {
+    static ALLOCATIONS: Cell<u64> = const { Cell::new(0) };
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
+struct CountingAllocator;
+
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        note_allocation();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // A realloc is a growing collection, which is the failure this test exists to
+        // catch — count it like a fresh allocation.
+        note_allocation();
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+fn note_allocation() {
+    // `try_with` because TLS is unavailable during thread teardown, and panicking
+    // inside the allocator would abort the process rather than fail the test.
+    let _ = COUNTING.try_with(|counting| {
+        if counting.get() {
+            let _ = ALLOCATIONS.try_with(|n| n.set(n.get() + 1));
+        }
+    });
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+/// Runs `body` with allocation counting on, and reports how many it made.
+fn count_allocations(body: impl FnOnce()) -> u64 {
+    ALLOCATIONS.with(|n| n.set(0));
+    COUNTING.with(|c| c.set(true));
+    body();
+    COUNTING.with(|c| c.set(false));
+    ALLOCATIONS.with(|n| n.get())
+}
+
+fn spec(i: u32) -> SpawnSpec {
+    SpawnSpec {
+        position: Vec3::new(i as f32 % 500.0, (i / 500) as f32, 0.0),
+        yaw: 0.0,
+        energy: 100.0,
+        size: 3.0,
+        signature: Vec3::splat(0.5),
+        parent_a: AgentId::NULL,
+    }
+}
+
+#[test]
+fn the_counter_actually_counts() {
+    // Without this, a broken counter makes every other assertion in the file vacuous.
+    let observed = count_allocations(|| {
+        let v: Vec<u64> = (0..1_000).collect();
+        std::hint::black_box(&v);
+    });
+    assert!(
+        observed > 0,
+        "the counting allocator is not observing allocations"
+    );
+}
+
+#[test]
+fn spawn_and_despawn_never_allocate() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 10_000;
+    let mut world = World::new(42, params).expect("valid params");
+
+    // Warmup: the first pass touches every free-list and arena path. Construction
+    // allocates by design — the pools are sized once, up front.
+    let mut ids: Vec<AgentId> = Vec::with_capacity(10_000);
+    for i in 0..10_000 {
+        ids.push(world.spawn(&spec(i)).expect("pool sized for 10k"));
+    }
+    for id in ids.drain(..) {
+        world.despawn(id);
+    }
+
+    let observed = count_allocations(|| {
+        for round in 0..5 {
+            for i in 0..10_000u32 {
+                let id = world
+                    .spawn(&spec(i + round * 10_000))
+                    .expect("pool has room");
+                ids.push(id);
+            }
+            // Churn in reverse, so the free list is exercised rather than replayed.
+            while let Some(id) = ids.pop() {
+                world.despawn(id);
+            }
+        }
+        std::hint::black_box(&world);
+    });
+
+    assert_eq!(
+        observed, 0,
+        "spawn/despawn allocated {observed} times after warmup"
+    );
+}
+
+#[test]
+fn a_full_pool_refuses_without_allocating() {
+    // The interesting case: at the population ceiling, every birth is a rejection.
+    let mut params = SimParams::default();
+    params.world.max_agents = 64;
+    let mut world = World::new(1, params).expect("valid params");
+    for i in 0..64 {
+        world.spawn(&spec(i)).expect("pool sized for 64");
+    }
+    let observed = count_allocations(|| {
+        for i in 0..10_000 {
+            assert!(world.spawn(&spec(i)).is_none());
+        }
+    });
+    assert_eq!(observed, 0, "rejecting a birth allocated {observed} times");
+}
