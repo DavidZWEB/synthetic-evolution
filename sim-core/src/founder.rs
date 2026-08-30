@@ -206,9 +206,10 @@ impl FounderPlan {
     /// taus, oscillator periods, and the signature colour are drawn fresh. Writes into
     /// a caller-owned slice so a birth allocates nothing.
     ///
-    /// One draw per gene, in gene order, whatever the gene holds. A draw made
-    /// conditionally on a gene's contents would make the RNG stream depend on genome
-    /// state, and two structurally identical lineages would desynchronise (spec §7.4).
+    /// Draws happen in gene order, and which of them happen is decided entirely by the
+    /// plan's template — a gene's *kind*, a neuron's activation, a body gene's trait.
+    /// Nothing here may key a draw off a value it has just written, or the RNG stream
+    /// would depend on genome state and two founders would desynchronise (spec §7.4).
     pub fn instantiate(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
         debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
         out.copy_from_slice(&self.genes);

@@ -96,12 +96,21 @@ impl<T: Clone + Default> Arena<T> {
     }
 
     /// Claims a block of `len` elements, zeroed. `None` when the arena is full.
+    ///
+    /// A zero-length request is [`Block::EMPTY`] and consumes nothing. It has to be,
+    /// because [`Self::free`] cannot tell a zero-length block from `Block::EMPTY` and
+    /// no-ops on both: taking a slot off the free list here would lose it for the life
+    /// of the world, and a world whose agents carry an empty genome or a brainless body
+    /// would run out of blocks while reporting a population of zero.
     pub fn alloc(&mut self, len: u32) -> Option<Block> {
         debug_assert!(
             len <= self.stride,
             "block of {len} exceeds stride {}; Phase 1 topology is fixed",
             self.stride
         );
+        if len == 0 {
+            return Some(Block::EMPTY);
+        }
         let offset = self.free.pop()?;
         let block = Block { offset, len };
         // Reset rather than trusting the previous tenant: a brain must not inherit the
@@ -237,6 +246,22 @@ mod tests {
         let next = arena.alloc(8).unwrap();
         assert_ne!(next.offset(), live.offset(), "aliased a live block");
         assert_eq!(arena.live_blocks(), 2);
+    }
+
+    #[test]
+    fn a_zero_length_block_costs_nothing_and_can_be_freed() {
+        // `free` no-ops on anything empty, so if `alloc` took a slot for one it would
+        // never come back. An agent with an empty genome is enough to reach this, and
+        // the world would exhaust its arenas while reporting a population of zero.
+        let mut arena: Arena<f32> = Arena::with_capacity(2, 4);
+        for _ in 0..100 {
+            let empty = arena.alloc(0).expect("a zero-length block always fits");
+            assert!(empty.is_empty());
+            assert_eq!(arena.live_blocks(), 0, "an empty block claimed a slot");
+            arena.free(empty);
+        }
+        assert!(arena.alloc(4).is_some());
+        assert!(arena.alloc(4).is_some(), "the arena leaked its slots");
     }
 
     #[test]

@@ -520,7 +520,7 @@ mod tests {
         // an initialisation bug.
         //
         // Measured over 64 founders: 0% pinned, mean slope 0.217 of a possible 0.25.
-        let (pinned, slope) = settled_founders(&SimParams::default(), 32);
+        let (pinned, slope) = settled_founders(&SimParams::default(), 64);
         assert!(
             pinned < 0.02,
             "{:.0}% of a founder's wired neurons are against a rail",
@@ -538,7 +538,7 @@ mod tests {
         let mut params = SimParams::default();
         let fan_in = 24.0; // sources feeding each sink in the default topology
         params.brain.weight_init_scale = params.mutation.weight_limit * math::sqrt(fan_in);
-        let (pinned, slope) = settled_founders(&params, 32);
+        let (pinned, slope) = settled_founders(&params, 64);
         assert!(
             pinned > 0.4,
             "only {:.0}% pinned; the acceptance check above may be vacuous",

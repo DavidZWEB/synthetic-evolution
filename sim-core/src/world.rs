@@ -12,7 +12,7 @@
 use glam::Vec3;
 
 use crate::agents::{Agents, Handles, SpawnSpec};
-use crate::arena::{Arena, Block};
+use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
@@ -132,14 +132,7 @@ impl World {
     /// that quietly stops accepting births some hours into a run.
     fn claim_blocks(&mut self, genes: &[Gene]) -> Option<Handles> {
         let brain = self.brains.alloc(genome::neuron_count(genes) as u32);
-        let wiring = brain::synapse_count(genes) as u32;
-        // A brain with no wiring holds no block at all: `Arena::free` cannot tell a
-        // zero-length block from `Block::EMPTY` and would leak the allocation.
-        let synapses = if wiring == 0 {
-            Some(Block::EMPTY)
-        } else {
-            self.synapses.alloc(wiring)
-        };
+        let synapses = self.synapses.alloc(brain::synapse_count(genes) as u32);
         let genome = self.genes.alloc(genes.len() as u32);
         let parts = self.parts.alloc(PARTS_PER_AGENT);
 
@@ -411,6 +404,36 @@ mod tests {
             w.brain(b).iter().all(|n| n.state == 0.0 && n.output == 0.0),
             "inherited the dead agent's activations"
         );
+    }
+
+    #[test]
+    fn a_degenerate_genome_does_not_exhaust_the_world() {
+        // An empty gene list passes `genome::validate` — it is vacuously coherent — so
+        // it reaches the arenas as a zero-length block for the brain, the wiring, and
+        // the genome. Freeing one used to be a no-op that never returned its slot, and
+        // eight cycles were enough to leave a world reporting a population of zero and
+        // refusing every birth.
+        let mut w = small_world();
+        let spec = SpawnSpec {
+            position: Vec3::ZERO,
+            yaw: 0.0,
+            energy: 1.0,
+            size: 1.0,
+            signature: Vec3::ZERO,
+            parent_a: AgentId::NULL,
+        };
+        for _ in 0..64 {
+            let id = w.spawn(&spec, &[]).expect("a free slot");
+            assert!(w.brain(id).is_empty() && w.wiring(id).is_empty());
+            w.despawn(id);
+        }
+        assert_eq!(w.population(), 0);
+        for i in 0..32 {
+            assert!(
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_some(),
+                "the world leaked its arena blocks"
+            );
+        }
     }
 
     #[test]
