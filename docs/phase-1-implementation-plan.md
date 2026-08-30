@@ -131,7 +131,7 @@ is also why a default genome is 284 genes, 240 of them connections.
 *`k_brain` charges neurons and connections, `k_sensor` charges sensors.* Spec §5.2 keeps the
 two coefficients apart so eyes can be made expensive without making brains expensive.
 `genome::brain_complexity` and `genome::sensor_load` are the two quantities; nothing may be
-counted by both.
+counted by both. Their *values* are an M7 problem — see the budget note there.
 
 ## M5 — CTRNN
 
@@ -183,6 +183,35 @@ Build-plan task 6.
   split (spec §5.4).
 - Explicit `input` / `dissipated` ledger accumulators, so conservation is measured rather than
   inferred.
+
+**The metabolic budget needs a pass here — it is the first point at which it is measurable.**
+Two of the constants were left deliberately unresolved at M4, because guessing at three at
+once, with no running population to check against, makes the result unfalsifiable.
+
+`k_brain` was settled: 0.00005 rather than spec §5.5's 0.001, because that table's two
+statements about it cannot both hold — a 200-unit brain at "~20% of base" wants the term near
+0.01 when `base` is 0.05, but 200 × 0.001 is 0.2. At 0.00005 the default topology's 268
+neurons and connections cost 0.013/tick, 0.27× base, which is where §5.5 asks for it.
+
+What remains, at the default topology and body:
+
+| term | per tick | vs base |
+|---|---:|---:|
+| `base` | 0.050 | 1.0× |
+| `k_brain` × 268 units | 0.013 | 0.27× |
+| `k_sensor` × 16 units | 0.160 | 3.2× |
+| `k_size` × size² | 0.180 | 3.6× |
+| total | 0.403 | ~250 idle ticks |
+
+§5.5 wants ~2000 idle ticks on a full tank. Both overshooting terms come from defaults chosen
+in this repo rather than from the spec: `k_size` is quadratic in `body.size`, which defaults
+to 3 (at size 1 that term is 0.4× base), and `k_sensor` is multiplied by channel count rather
+than sensor count — this codebase's reading of "0.01 each, weighted by modality", which makes
+the default sensor set 16 weighted units instead of 5.
+
+Change these against a running population and several seeds, not by arithmetic. The live
+values and their reasoning are on `MetabolismParams::base` and `::k_brain`; update those
+comments in the same commit.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon.
 
