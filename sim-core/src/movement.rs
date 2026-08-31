@@ -115,8 +115,21 @@ mod tests {
             east.step(params.movement.max_thrust, 0.0, &params);
             north.step(params.movement.max_thrust, 0.0, &params);
         }
-        assert!(east.position.x > 500.0 && east.position.y.abs() - 500.0 < 1e-3);
-        assert!(north.position.y > 500.0);
+        assert!(east.position.x > 500.0, "did not travel east");
+        assert!(north.position.y > 500.0, "did not travel north");
+        // The error is what gets the `abs`, not the coordinate. Written the other way
+        // round this reads as "y is below 500.001" and passes for an agent a hundred
+        // units off course, which is the whole class of bug it exists to catch.
+        assert!(
+            (east.position.y - 500.0).abs() < 1e-3,
+            "drifted sideways to y = {}",
+            east.position.y
+        );
+        assert!(
+            (north.position.x - 500.0).abs() < 1e-3,
+            "drifted sideways to x = {}",
+            north.position.x
+        );
         assert!(
             (east.position.x - 500.0 - (north.position.y - 500.0)).abs() < 1e-3,
             "heading changed the distance travelled, not just the direction"

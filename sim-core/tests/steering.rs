@@ -113,11 +113,15 @@ fn steering_genome(turn_gain: f32) -> Vec<Gene> {
 fn params() -> SimParams {
     SimParams {
         chemo: ChemoParams {
+            // Coarser than the default 128². Seventeen runs of four thousand ticks each
+            // spend nearly all their time diffusing cells, and at a 40-unit sensing
+            // radius a 64² grid resolves the same gradient — this is the one knob here
+            // that costs minutes of everybody's `cargo test` and buys nothing.
+            cells: [64, 64, 1],
             // A slow leak rather than none, so the field is one a running world could
             // hold: it is being replenished and lost at the same time, not frozen.
             decay: vec![0.999],
             diffuse: 0.5,
-            ..ChemoParams::default()
         },
         ..SimParams::default()
     }
