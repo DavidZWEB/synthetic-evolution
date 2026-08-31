@@ -348,6 +348,18 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
 /// evolution grows more eyes or bigger brains. Body and meta genes are not brain at
 /// all. The difference is invisible while every genome is identical, and becomes a
 /// real distortion in Phase 2 when they stop being.
+///
+/// **Open decision for Phase 2: this counts disabled connections too.** Nothing in
+/// Phase 1 disables one, so today the choice is invisible — but spec §3.3's
+/// disable/enable operator is how a connection is ever pruned (the gene stays, so its
+/// innovation id survives crossover alignment), and this filter does not look at
+/// `enabled`. Charging for them means disabling buys behaviour and no energy back, so
+/// nothing selects for tidying a brain up; not charging makes disable the pruning
+/// mechanism with a real payoff. Neither is obviously right — a disabled gene still
+/// costs memory and is still copied on every birth — and there is no remove-neuron
+/// operator in §3.3 at all, so `k_brain` is the *only* thing bounding brain size
+/// (CLAUDE.md). Settle it deliberately when the operator lands, not by leaving this
+/// pattern as it is.
 pub fn brain_complexity(genes: &[Gene]) -> u32 {
     genes
         .iter()

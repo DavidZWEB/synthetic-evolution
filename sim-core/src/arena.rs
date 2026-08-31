@@ -11,19 +11,22 @@
 //!
 //! # This is where the simulation's memory is
 //!
-//! Measured at M5, an agent costs ~14.8 KB at the default topology:
+//! Measured at M6, an agent costs ~15.1 KB at the default topology:
 //!
 //! | arena | per agent | share |
 //! |---|---:|---:|
 //! | genome (284 genes × 40 B) | 11.4 KB | 75% |
 //! | synapses (240 × 12 B) | 2.9 KB | 19% |
-//! | neurons (28 × 24 B) | 0.7 KB | 4% |
-//! | SoA arrays, pool, hash, parts | 0.2 KB | 2% |
+//! | neurons (28 × 28 B) | 0.8 KB | 5% |
+//! | sensors (5 × 36 B) | 0.2 KB | 1% |
+//! | SoA arrays, pool, hash, parts | 0.2 KB | 1% |
 //!
 //! Arenas are allocated at `max_agents` and never grown, so the cost is committed at
-//! `World::new`: 71 MB at the default 5k agents, and ~710 MB at the Phase 7 target of
+//! `World::new`: 73 MB at the default 5k agents, and ~730 MB at the Phase 7 target of
 //! 50k. Anything that changes gene count, gene size, or brain width moves that number
-//! by the whole pool, so it is worth knowing before adding a field.
+//! by the whole pool, so it is worth knowing before adding a field. The chemo field is
+//! not in the table because it does not scale with the pool at all — it is 131 KB at
+//! the default grid however many agents there are.
 //!
 //! Two levers, in the order they should be pulled. Roughly 42% of the genome arena is
 //! padding: `Gene` is an enum sized by its widest variant — `SensorGene` at 40 bytes —
