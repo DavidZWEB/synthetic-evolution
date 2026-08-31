@@ -26,7 +26,8 @@
 //! 50k. Anything that changes gene count, gene size, or brain width moves that number
 //! by the whole pool, so it is worth knowing before adding a field. The chemo field is
 //! not in the table because it does not scale with the pool at all — it is 131 KB at
-//! the default grid however many agents there are.
+//! the default grid however many agents there are, and neither do the plants, which are
+//! 68 KB at the default 4,000 sites.
 //!
 //! Two levers, in the order they should be pulled. Roughly 42% of the genome arena is
 //! padding: `Gene` is an enum sized by its widest variant — `SensorGene` at 40 bytes —

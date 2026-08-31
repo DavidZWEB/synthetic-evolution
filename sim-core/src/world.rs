@@ -22,6 +22,7 @@ use crate::ids::{AgentId, InnovationId};
 use crate::movement;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, SelfView, Sensor, WorldView};
+use crate::plants::Plants;
 use crate::pool::SlotPool;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
@@ -65,9 +66,10 @@ pub struct World {
     parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
     hash: SpatialHash,
-    /// Pheromone concentrations. What plants scent and what the chemo sensor reads;
-    /// nothing deposits into it until M7 wires the economy.
+    /// Pheromone concentrations: what plants scent and what the chemo sensor reads.
     field: ChemoField,
+    /// The autotrophs. Every joule in the world enters through them (spec §5.1).
+    plants: Plants,
 }
 
 impl World {
@@ -112,6 +114,12 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
+            plants: {
+                // Seeded from the world's own stream, before any agent draws from it,
+                // so a world's plants are as reproducible as its agents.
+                let mut seeding = Rng::from_seed(seed);
+                Plants::new(&params, &mut seeding)
+            },
             params,
         })
     }
@@ -276,6 +284,9 @@ impl World {
                 sizes: &self.agents.size,
                 hash: &self.hash,
                 field: &self.field,
+                plants: &self.plants,
+                plant_radius: self.params.plants.radius,
+                plant_signature: Vec3::from(self.params.plants.signature),
             };
             perceive::perceive(
                 self.sensors.get(self.agents.sensors[i]),
@@ -382,6 +393,23 @@ impl World {
     #[inline]
     pub fn chemo(&self) -> &ChemoField {
         &self.field
+    }
+
+    #[inline]
+    pub fn plants(&self) -> &Plants {
+        &self.plants
+    }
+
+    /// Grows the plants by one tick and scents the field. Part of steps 8 and 9 of the
+    /// tick, and the only place energy enters the world (spec §5.1).
+    ///
+    /// Returns what the plants actually absorbed, which is what the ledger records —
+    /// at carrying capacity that is less than the nominal input rate.
+    pub fn grow_plants(&mut self) -> f32 {
+        let dt = self.params.world.dt;
+        let absorbed = self.plants.grow(&self.params.plants, dt);
+        self.plants.scent(&mut self.field, &self.params.plants, dt);
+        absorbed
     }
 
     /// Adds to a chemo channel at a world position.
