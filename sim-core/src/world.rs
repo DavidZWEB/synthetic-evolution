@@ -283,11 +283,26 @@ impl World {
 
     /// Returns a slot and its arena blocks. Despawning a dead agent is a no-op, so a
     /// double death cannot free the same block twice.
+    ///
+    /// **Whatever the agent still holds is dissipated here**, so removing one can never
+    /// delete energy the world was accounting for (spec §5.1). Starvation already
+    /// drained it to zero and dissipates nothing; anything else — a culled agent, a
+    /// Phase 3 corpse that has already transferred its share — has its remainder
+    /// charged to the ledger on the way out.
+    ///
+    /// Unlike [`Self::spawn`], this can own its accounting: creation genuinely differs
+    /// between a founder and an offspring, while removal has one correct rule. Leaving
+    /// it to callers meant a public method that silently destroyed energy, which is
+    /// invisible until a conservation test happens to cover that path.
     pub fn despawn(&mut self, id: AgentId) -> bool {
         if !self.pool.is_alive(id) {
             return false;
         }
         let i = id.index();
+        let remaining = self.agents.energy[i].max(0.0);
+        if remaining > 0.0 {
+            self.ledger.record_dissipated(remaining);
+        }
         self.brains.free(self.agents.brain[i]);
         self.synapses.free(self.agents.synapses[i]);
         self.sensors.free(self.agents.sensors[i]);
@@ -485,16 +500,18 @@ impl World {
     /// `dying`. Deaths resolved in any other order would hand the free list back in a
     /// different sequence and the next births would land in different slots.
     ///
-    /// A dying agent holds no energy — `charge_metabolism` took exactly what was left —
-    /// so nothing is dissipated here and nothing is lost. Corpses that return part of
-    /// an agent to the world arrive with predation in Phase 3.
+    /// A starving agent holds no energy by the time it gets here — `charge_metabolism`
+    /// took exactly what was left — so `despawn` finds nothing to dissipate. It would
+    /// dissipate a remainder if there were one, which is what makes any *other* route
+    /// to removal safe too. Corpses that return part of an agent to the world arrive
+    /// with predation in Phase 3.
     pub fn resolve_deaths(&mut self) -> usize {
         let dying = core::mem::take(&mut self.dying);
         let mut removed = 0;
         for &id in &dying {
             debug_assert!(
                 self.agents.energy[id.index()] <= 0.0,
-                "despawning an agent that still holds energy"
+                "starvation should have drained this agent before step 10"
             );
             if self.despawn(id) {
                 removed += 1;
@@ -608,6 +625,26 @@ mod tests {
         let mut params = SimParams::default();
         params.world.dt = 0.0;
         assert!(World::new(1, params).is_err());
+    }
+
+    #[test]
+    fn removing_a_living_agent_dissipates_what_it_held() {
+        // `despawn` is public and starvation is not its only caller: Phase 3 corpses
+        // despawn agents that still hold energy, and a cull would too. Deleting those
+        // joules instead of dissipating them breaks §5.1 in the one way no functional
+        // test notices.
+        let mut w = small_world();
+        let id = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        let held = w.agents().energy[id.index()];
+        assert!(held > 0.0);
+        assert_eq!(w.energy_drift(), 0.0);
+
+        w.despawn(id);
+        assert!(
+            w.energy_drift().abs() < 1e-3,
+            "despawn destroyed {held} joules without dissipating them"
+        );
+        assert!((w.ledger().dissipated() - held as f64).abs() < 1e-3);
     }
 
     #[test]
