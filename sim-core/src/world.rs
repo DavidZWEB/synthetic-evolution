@@ -19,6 +19,8 @@ use crate::effectors::{self, AgentIntents, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
+use crate::ledger::EnergyLedger;
+use crate::metabolism;
 use crate::movement;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, SelfView, Sensor, WorldView};
@@ -70,6 +72,12 @@ pub struct World {
     field: ChemoField,
     /// The autotrophs. Every joule in the world enters through them (spec §5.1).
     plants: Plants,
+    /// Every joule that entered and left. The acceptance criterion for M7 is that this
+    /// agrees with the stock actually present (spec §5.1).
+    ledger: EnergyLedger,
+    /// Slots that reached zero energy this tick, resolved at step 10 in agent-index
+    /// order. Owned by the world and sized once, so a death allocates nothing.
+    dying: Vec<AgentId>,
 }
 
 impl World {
@@ -122,6 +130,10 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
+            // Opened against an empty world: plants start bare and no agent exists yet,
+            // so every joule that ever appears has to arrive through `grow_plants`.
+            ledger: EnergyLedger::opening(0.0),
+            dying: Vec::with_capacity(capacity as usize),
             plants,
             params,
         })
@@ -130,6 +142,14 @@ impl World {
     /// Claims a slot and its arena blocks, and compiles the genome into a runnable
     /// brain. `None` when any pool is full — a normal condition at the population
     /// ceiling, not an error.
+    ///
+    /// **The caller owns the energy accounting.** This hands the new agent
+    /// `spec.energy` and tells the ledger nothing, because the two ways an agent comes
+    /// into existence account for it differently: a founder's tank is energy entering
+    /// the world and is recorded as input by [`Self::spawn_founder`], while an
+    /// offspring's is taken from its parent and is a transfer that must *not* be
+    /// recorded at all. Getting this wrong is invisible until the conservation test
+    /// runs, which is exactly why that test exists (spec §5.1).
     pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Option<AgentId> {
         debug_assert!(
             genome::validate(genes).is_ok(),
@@ -151,6 +171,10 @@ impl World {
         perceive::compile(genes, self.sensors.get_mut(handles.sensors));
         effectors::compile(genes, self.effectors.get_mut(handles.effectors));
         self.agents.init(id, spec, &handles);
+        // Derived from the genome rather than the caller, and cached because metabolism
+        // charges for them every tick and they cannot change while the agent lives.
+        self.agents.brain_units[id.index()] = genome::brain_complexity(genes);
+        self.agents.sensor_load[id.index()] = genome::sensor_load(genes);
         Some(id)
     }
 
@@ -240,6 +264,14 @@ impl World {
         };
         let spawned = self.spawn(&spec, &scratch);
         self.genome_scratch = scratch;
+        if spawned.is_some() {
+            // A founder's tank is the one energy source that is not a plant. It is a
+            // boundary condition — the experimenter seeding a world — not an ongoing
+            // leak, and recording it as input is what keeps §5.1's books balanced
+            // without pretending the agent arrived empty. An *offspring* is different:
+            // its energy comes out of its parent, so reproduction records nothing.
+            self.ledger.record_input(spec.energy);
+        }
         spawned
     }
 
@@ -403,16 +435,95 @@ impl World {
         &self.plants
     }
 
-    /// Grows the plants by one tick and scents the field. Part of steps 8 and 9 of the
-    /// tick, and the only place energy enters the world (spec §5.1).
+    /// Grows the plants by one tick and scents the field. Part of step 8, and the only
+    /// place energy enters the world (spec §5.1).
     ///
-    /// Returns what the plants actually absorbed, which is what the ledger records —
-    /// at carrying capacity that is less than the nominal input rate.
+    /// What the plants *actually* absorbed goes into the ledger, not the nominal input
+    /// rate: at carrying capacity the surplus never enters, and conservation has to be
+    /// measured rather than inferred.
     pub fn grow_plants(&mut self) -> f32 {
         let dt = self.params.world.dt;
         let absorbed = self.plants.grow(&self.params.plants, dt);
+        self.ledger.record_input(absorbed);
         self.plants.scent(&mut self.field, &self.params.plants, dt);
         absorbed
+    }
+
+    /// Charges every live agent its upkeep and notes who ran out. Step 9 of the tick
+    /// (spec §2.4).
+    ///
+    /// An agent is charged only what it has left, so energy never goes negative and the
+    /// amount dissipated is exactly the amount that existed. The death itself is
+    /// deferred to step 10: mutating the pool here would make free-list allocation
+    /// depend on iteration order, which is the fastest way to lose determinism.
+    pub fn charge_metabolism(&mut self) {
+        self.dying.clear();
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            let cost = metabolism::cost_per_tick(
+                self.agents.size[i],
+                self.agents.brain_units[i],
+                self.agents.sensor_load[i],
+                self.intents.thrust[i],
+                &self.params.metabolism,
+            );
+            // Only what is there. Charging past zero would dissipate energy the world
+            // never held, and the ledger would report a leak that is really an
+            // overdraft.
+            let charged = cost.min(self.agents.energy[i]).max(0.0);
+            self.agents.energy[i] -= charged;
+            self.ledger.record_dissipated(charged);
+            if self.agents.energy[i] <= 0.0 {
+                self.dying.push(id);
+            }
+        }
+    }
+
+    /// Removes the agents that ran out of energy. Part of step 10 (spec §2.4).
+    ///
+    /// Agent-index order, because `iter_live` is ascending and that is what fills
+    /// `dying`. Deaths resolved in any other order would hand the free list back in a
+    /// different sequence and the next births would land in different slots.
+    ///
+    /// A dying agent holds no energy — `charge_metabolism` took exactly what was left —
+    /// so nothing is dissipated here and nothing is lost. Corpses that return part of
+    /// an agent to the world arrive with predation in Phase 3.
+    pub fn resolve_deaths(&mut self) -> usize {
+        let dying = core::mem::take(&mut self.dying);
+        let mut removed = 0;
+        for &id in &dying {
+            debug_assert!(
+                self.agents.energy[id.index()] <= 0.0,
+                "despawning an agent that still holds energy"
+            );
+            if self.despawn(id) {
+                removed += 1;
+            }
+        }
+        self.dying = dying;
+        self.dying.clear();
+        removed
+    }
+
+    /// Every joule the world currently holds, in plants and in agents.
+    pub fn total_energy(&self) -> f32 {
+        let agents: f32 = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.energy[id.index()])
+            .sum();
+        self.plants.total_energy() + agents
+    }
+
+    #[inline]
+    pub fn ledger(&self) -> &EnergyLedger {
+        &self.ledger
+    }
+
+    /// How far the world's energy has drifted from what the ledger accounts for. Zero
+    /// is the invariant; the sign says which mistake to look for (spec §5.1).
+    pub fn energy_drift(&self) -> f64 {
+        self.ledger.drift(self.total_energy())
     }
 
     /// Adds to a chemo channel at a world position.

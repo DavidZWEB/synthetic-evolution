@@ -175,7 +175,12 @@ fn a_whole_tick_of_systems_never_allocates() {
     world.perceive_all();
     world.drive_effectors();
     world.integrate_movement();
+    world.grow_plants();
     world.update_chemo();
+    // Warm the death path too: `dying` is sized at capacity up front, and a `Vec::push`
+    // that reallocated would be an allocation inside step 10.
+    world.charge_metabolism();
+    world.resolve_deaths();
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
@@ -184,7 +189,10 @@ fn a_whole_tick_of_systems_never_allocates() {
             world.step_brains();
             world.drive_effectors();
             world.integrate_movement();
+            world.grow_plants();
             world.update_chemo();
+            world.charge_metabolism();
+            world.resolve_deaths();
         }
         std::hint::black_box(&world);
     });

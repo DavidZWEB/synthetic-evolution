@@ -68,6 +68,14 @@ pub struct Agents {
     pub parent_b: Vec<u32>,
     /// Spatial hash bucket, rebuilt every tick.
     pub grid_cell: Vec<u32>,
+    /// Neurons plus connections in this agent's genome, cached at birth.
+    ///
+    /// Metabolism charges for it every tick, and recomputing it would mean walking an
+    /// 11 KB genome per agent per tick — 55 MB of memory scanned every tick at the
+    /// default pool, for a number that cannot change while the agent lives.
+    pub brain_units: Vec<u32>,
+    /// Sensor channels weighted by modality, cached at birth for the same reason.
+    pub sensor_load: Vec<f32>,
     /// Handle into the brain arena: this agent's neurons and their state.
     ///
     /// Spec §2.2a writes a single `brainOffset` because it does not say how a brain is
@@ -138,6 +146,8 @@ impl Agents {
             parent_a: vec![NULL_ID; n],
             parent_b: vec![NULL_ID; n],
             grid_cell: vec![0; n],
+            brain_units: vec![0; n],
+            sensor_load: vec![0.0; n],
             brain: vec![Block::EMPTY; n],
             synapses: vec![Block::EMPTY; n],
             sensors: vec![Block::EMPTY; n],
@@ -170,6 +180,10 @@ impl Agents {
         // Always NULL in V1. The field is the hedge, not a placeholder to fill in.
         self.parent_b[i] = NULL_ID;
         self.grid_cell[i] = 0;
+        // Overwritten by `spawn` from the genome; zeroed here so a slot whose caller
+        // forgets cannot inherit the dead tenant's upkeep.
+        self.brain_units[i] = 0;
+        self.sensor_load[i] = 0.0;
         self.brain[i] = handles.brain;
         self.synapses[i] = handles.synapses;
         self.sensors[i] = handles.sensors;

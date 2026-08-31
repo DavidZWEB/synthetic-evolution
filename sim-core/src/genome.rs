@@ -349,17 +349,24 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
 /// all. The difference is invisible while every genome is identical, and becomes a
 /// real distortion in Phase 2 when they stop being.
 ///
-/// **Open decision for Phase 2: this counts disabled connections too.** Nothing in
-/// Phase 1 disables one, so today the choice is invisible — but spec §3.3's
-/// disable/enable operator is how a connection is ever pruned (the gene stays, so its
-/// innovation id survives crossover alignment), and this filter does not look at
-/// `enabled`. Charging for them means disabling buys behaviour and no energy back, so
-/// nothing selects for tidying a brain up; not charging makes disable the pruning
-/// mechanism with a real payoff. Neither is obviously right — a disabled gene still
-/// costs memory and is still copied on every birth — and there is no remove-neuron
-/// operator in §3.3 at all, so `k_brain` is the *only* thing bounding brain size
-/// (CLAUDE.md). Settle it deliberately when the operator lands, not by leaving this
-/// pattern as it is.
+/// **Disabled connections are counted, decided at M7.** Spec §3.3's disable/enable
+/// operator is how a connection is ever pruned — the gene stays so its innovation id
+/// survives crossover alignment — so this is a real choice rather than an oversight in
+/// the pattern.
+///
+/// Counted, because what this term exists to bound is *genome* growth, not tick cost.
+/// CLAUDE.md's reason for it is that "genomes bloat without limit and the sim slows to
+/// a crawl over hours", and the thing that actually crawls is the 11 KB copied on every
+/// birth and held for every living agent. A disabled gene costs all of that; it saves
+/// only a multiply-add. Charging only for enabled connections would let a lineage
+/// accumulate thousands of disabled ones for free, which is precisely the bloat the
+/// term is here to prevent.
+///
+/// The cost is that disabling buys behaviour and no energy back, so nothing selects for
+/// tidying a brain up for its own sake. That is the right trade while §3.3 has no
+/// remove-neuron or remove-connection operator at all: with nothing able to shrink a
+/// genome, `k_brain` is the only brake there is, and it should be charged against
+/// everything the genome carries.
 pub fn brain_complexity(genes: &[Gene]) -> u32 {
     genes
         .iter()

@@ -108,6 +108,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   effectors.rs   brain outputs into the intent buffer; changes nothing itself
   movement.rs    draining the thrust and turn intents into velocity and position
   plants.rs      the autotrophs: where every joule enters the world
+  metabolism.rs  spec §5.2's cost function; what it costs to be alive for a tick
+  ledger.rs      every joule in and out, so conservation is measured not assumed
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands

@@ -19,7 +19,7 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | plants done; economy next |
+| M7 World and economy | plants, metabolism, death done; feeding and reproduction next |
 | M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -352,7 +352,42 @@ stored anywhere. That is the honest behaviour of a saturated ecosystem, and it i
 ledger records what `Plants::grow` returns rather than `energy_input_rate * dt` —
 conservation has to be measured, not inferred.
 
-**Done when:** energy conservation holds over 10k ticks within epsilon.
+**Decisions taken in the metabolism half.**
+
+*The §5.2 constants are charged per tick, not per second.* §5.5 writes them that way
+("0.05 /tick") and states its one relationship in ticks: idling fatal within ~2000, which
+is exactly `start_energy / base`. Read per second instead, every lifetime in that table
+is out by a factor of sixty. It does leave metabolism as the one system whose rate is per
+tick while `movement`'s drag is per second, so changing `world.dt` rescales lifetimes but
+not coasting — that is the spec's calibration rather than a preference, and re-deriving
+the table onto a per-second footing is not something to do by arithmetic.
+
+*`k_brain` charges for disabled connections too.* Settled on `genome::brain_complexity`.
+What the term bounds is *genome* growth, not tick cost: CLAUDE.md's reason for it is that
+genomes bloat and the sim crawls, and what crawls is the 11 KB copied on every birth. A
+disabled gene costs all of that and saves only a multiply-add, so charging only for
+enabled ones would let a lineage accumulate thousands for free. The cost is that
+disabling buys behaviour and no energy back — the right trade while §3.3 has no
+remove-neuron or remove-connection operator at all and `k_brain` is the only brake.
+
+*A founder's tank is input; an offspring's is a transfer.* The conservation test caught
+this on tick 0 — 200 founders appearing with 20,000 joules the ledger knew nothing about.
+Seeding a world is a boundary condition, not an ongoing source, so `spawn_founder`
+records it as input. Reproduction will record nothing, because the offspring's energy
+comes out of its parent. `World::spawn` itself records neither and says so, since the two
+callers account differently.
+
+*The budget still overshoots, and is pinned rather than fixed.* At the default body and
+topology an idle agent lasts ~250 ticks against §5.5's ~2000, for the two reasons already
+recorded: `k_size` is quadratic in a `body.size` defaulting to 3, and `k_sensor` is
+charged per channel. `metabolism`'s `the_default_budget_is_still_the_known_overshoot`
+pins the figure so a change is deliberate. It is not fixed here because the plan is
+explicit that these move against a running population and several seeds, and reproduction
+does not exist yet — that is the next change.
+
+**Done when:** energy conservation holds over 10k ticks within epsilon. Met —
+`sim-core/tests/conservation.rs`, which also holds it across four seeds, through a
+population starving to nothing, and at carrying capacity.
 
 ## M8 — The tick
 
