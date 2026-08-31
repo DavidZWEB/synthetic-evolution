@@ -158,10 +158,11 @@ fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
 }
 
 #[test]
-fn perceiving_never_allocates() {
-    // Step 2 of the tick, and the phase the spec expects to be 60–80% of tick cost once
-    // vision is real (spec §2.2c). It runs a spatial-hash query per eye per agent per
-    // tick; an allocation anywhere in there is the most expensive one in the project.
+fn a_whole_tick_of_systems_never_allocates() {
+    // Every step of spec §2.4 that exists: rebuild, perceive, think, decide, move, and
+    // the field update. Perception alone is expected to be 60–80% of tick cost once
+    // vision is real (spec §2.2c) — it runs a spatial-hash query per eye per agent per
+    // tick — so an allocation anywhere in here is the most expensive one in the project.
     let mut params = SimParams::default();
     params.world.max_agents = 2_000;
     let mut world = World::new(13, params).expect("valid params");
@@ -172,19 +173,25 @@ fn perceiving_never_allocates() {
     world.deposit_chemo(0, Vec3::new(250.0, 250.0, 0.0), 500.0);
     world.rebuild_spatial_hash();
     world.perceive_all();
+    world.drive_effectors();
+    world.integrate_movement();
+    world.update_chemo();
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
             world.rebuild_spatial_hash();
             world.perceive_all();
             world.step_brains();
+            world.drive_effectors();
+            world.integrate_movement();
+            world.update_chemo();
         }
         std::hint::black_box(&world);
     });
 
     assert_eq!(
         observed, 0,
-        "perceive/step allocated {observed} times after warmup"
+        "a tick allocated {observed} times after warmup"
     );
 }
 

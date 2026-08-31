@@ -71,10 +71,10 @@ pub struct Agents {
     /// Handle into the brain arena: this agent's neurons and their state.
     ///
     /// Spec §2.2a writes a single `brainOffset` because it does not say how a brain is
-    /// laid out. A compiled one is three blocks — neurons here, wiring in
-    /// [`Self::synapses`], organs in [`Self::sensors`] — because they are different
-    /// element types, not because they have different lifetimes. All three are claimed
-    /// and freed together.
+    /// laid out. A compiled one is four blocks — neurons here, wiring in
+    /// [`Self::synapses`], and the organs that read and write it in [`Self::sensors`]
+    /// and [`Self::effectors`] — because they are different element types, not because
+    /// they have different lifetimes. All four are claimed and freed together.
     pub brain: Vec<Block>,
     /// Handle into the synapse arena: this agent's wiring, endpoints already resolved
     /// to slots in [`Self::brain`].
@@ -82,6 +82,9 @@ pub struct Agents {
     /// Handle into the sensor arena: this agent's organs, targets already resolved to
     /// slots in [`Self::brain`].
     pub sensors: Vec<Block>,
+    /// Handle into the effector arena: what this agent can do, each bound to the brain
+    /// slot that drives it.
+    pub effectors: Vec<Block>,
     /// Handle into the genome arena.
     pub genome: Vec<Block>,
     /// Handle into the parts arena. Exactly one part at the agent's origin in V1;
@@ -114,6 +117,7 @@ pub struct Handles {
     pub brain: Block,
     pub synapses: Block,
     pub sensors: Block,
+    pub effectors: Block,
     pub genome: Block,
     pub parts: Block,
 }
@@ -137,6 +141,7 @@ impl Agents {
             brain: vec![Block::EMPTY; n],
             synapses: vec![Block::EMPTY; n],
             sensors: vec![Block::EMPTY; n],
+            effectors: vec![Block::EMPTY; n],
             genome: vec![Block::EMPTY; n],
             parts: vec![Block::EMPTY; n],
         }
@@ -168,6 +173,7 @@ impl Agents {
         self.brain[i] = handles.brain;
         self.synapses[i] = handles.synapses;
         self.sensors[i] = handles.sensors;
+        self.effectors[i] = handles.effectors;
         self.genome[i] = handles.genome;
         self.parts[i] = handles.parts;
     }
@@ -179,6 +185,7 @@ impl Agents {
         self.brain[i] = Block::EMPTY;
         self.synapses[i] = Block::EMPTY;
         self.sensors[i] = Block::EMPTY;
+        self.effectors[i] = Block::EMPTY;
         self.genome[i] = Block::EMPTY;
         self.parts[i] = Block::EMPTY;
         self.energy[i] = 0.0;

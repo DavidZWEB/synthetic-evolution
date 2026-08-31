@@ -73,7 +73,13 @@ pub struct SelfView {
     pub index: u32,
     pub position: Vec3,
     pub orientation: Quat,
-    pub energy: f32,
+    /// Energy in units of a full starting tank, not raw joules.
+    ///
+    /// Bounded like every other channel: a raw 100 would saturate the neuron it
+    /// reaches and report the same "very full" whatever the agent's actual state. In
+    /// tanks it sits near 1 at birth and 1.5 at the reproduction threshold, which is
+    /// the band a sigmoid can still tell apart.
+    pub energy_tanks: f32,
 }
 
 /// Compiles the sensor genes of `genes` into `out`, resolving every target to a slot.
@@ -136,7 +142,7 @@ pub fn perceive(sensors: &[Sensor], agent: &SelfView, world: &WorldView, neurons
             // there is a life-history strategy to spend it on. The param slot stays,
             // and the branch on it arrives with the second thing to report.
             Modality::Interoception => {
-                channels[0] = agent.energy;
+                channels[0] = agent.energy_tanks;
                 1
             }
         };
@@ -215,7 +221,21 @@ fn vision_ray(
     4
 }
 
-/// Samples the pheromone field: `[concentration, gradient x, gradient y]`.
+/// Samples the pheromone field: `[strength, uphill ahead, uphill left]`.
+///
+/// The direction is a **unit vector in the agent's own frame** — `+x` is straight
+/// ahead, `+y` is to its left — and that is the whole difference between a sensor an
+/// organism can act on and a fact about the world it has no way to use. A world-frame
+/// vector would need to be combined with the agent's own heading to mean anything, and
+/// Phase 1 has no proprioceptor to combine it with; it would also be a global truth
+/// handed to a local organ, which is the omniscience spec §2.2c exists to prevent.
+/// Spec §4.1 asks for "gradient **direction**", and a direction is what this returns.
+///
+/// Both scalars are bounded, for the reason `vision_ray` reports nearness rather than
+/// distance: a raw gradient is a spatial derivative of order 0.01 and would never move
+/// a neuron, while a raw concentration accumulates without limit and would saturate one
+/// permanently. Strength saturates as `c / (1 + c)`, which is also how a real
+/// chemoreceptor behaves — it reports *some / lots*, not an absolute count.
 fn chemo(
     sensor: &Sensor,
     agent: &SelfView,
@@ -224,10 +244,18 @@ fn chemo(
 ) -> usize {
     let channel = sensor.params[0].max(0.0) as usize;
     let radius = sensor.params[1];
+    let concentration = world.field.sample(channel, agent.position);
     let gradient = world.field.gradient(channel, agent.position, radius);
-    out[0] = world.field.sample(channel, agent.position);
-    out[1] = gradient.x;
-    out[2] = gradient.y;
+
+    // Rotating the world-frame gradient into the agent's frame, so `+x` is ahead.
+    // Through the quaternion rather than a sin/cos pair: it costs no transcendentals
+    // and cannot disagree with `math::forward` about which way the agent is pointing.
+    let local = agent.orientation.inverse() * gradient;
+    let uphill = local.normalize_or_zero();
+
+    out[0] = concentration / (1.0 + concentration);
+    out[1] = uphill.x;
+    out[2] = uphill.y;
     3
 }
 
@@ -332,7 +360,7 @@ mod tests {
                 index,
                 position: self.positions[index as usize],
                 orientation: math::yaw_quat(yaw),
-                energy: 100.0,
+                energy_tanks: 1.0,
             }
         }
     }
@@ -363,7 +391,7 @@ mod tests {
             &fixture.view(),
             &mut neurons,
         );
-        assert_eq!(neurons[0].input, 100.0, "energy should reach channel 0");
+        assert_eq!(neurons[0].input, 1.0, "energy should reach channel 0");
         assert!(
             neurons[1..].iter().all(|n| n.input == 0.0),
             "a spare channel wrote into a neuron"
@@ -533,15 +561,20 @@ mod tests {
         let mut neurons = neurons_for(&genes);
         let agent = fixture.agent(0, 0.0);
         perceive(&sensors, &agent, &fixture.view(), &mut neurons);
-        assert_eq!(
-            neurons[0].input,
-            fixture.field.sample(0, agent.position),
-            "concentration is what the field holds where the agent stands"
+        let raw = fixture.field.sample(0, agent.position);
+        assert!(raw > 0.0, "the fixture laid down nothing to smell");
+        assert!(
+            (neurons[0].input - raw / (1.0 + raw)).abs() < 1e-6,
+            "strength should saturate rather than report a raw concentration"
         );
-        assert!(neurons[0].input > 0.0, "smelled nothing at all");
+        assert!(
+            neurons[0].input < 1.0,
+            "strength must stay bounded: {}",
+            neurons[0].input
+        );
         assert!(
             neurons[1].input > 0.0,
-            "gradient should point east toward the source: {}",
+            "uphill should read straight ahead toward the source: {}",
             neurons[1].input
         );
         // Not zero, and it should not be: the gradient is a difference of two grid
@@ -563,10 +596,10 @@ mod tests {
         let sensors = compile_sensors(&genes);
         let fixture = Fixture::new(vec![Vec3::new(500.0, 500.0, 0.0)]);
         let mut agent = fixture.agent(0, 0.0);
-        agent.energy = 42.0;
+        agent.energy_tanks = 0.42;
         let mut neurons = neurons_for(&genes);
         perceive(&sensors, &agent, &fixture.view(), &mut neurons);
-        assert_eq!(neurons[0].input, 42.0);
+        assert_eq!(neurons[0].input, 0.42);
     }
 
     #[test]
@@ -584,7 +617,7 @@ mod tests {
             &fixture.view(),
             &mut neurons,
         );
-        assert_eq!(neurons[0].input, 105.0);
+        assert_eq!(neurons[0].input, 6.0);
     }
 
     #[test]

@@ -15,9 +15,11 @@ use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
+use crate::effectors::{self, AgentIntents, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
+use crate::movement;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, SelfView, Sensor, WorldView};
 use crate::pool::SlotPool;
@@ -46,6 +48,11 @@ pub struct World {
     /// Compiled sensors, one block per agent: an organ's parameters and the brain slots
     /// it writes to, resolved at birth (spec §2.2c).
     sensors: Arena<Sensor>,
+    /// Compiled effectors, one block per agent: the brain slot that drives each one.
+    effectors: Arena<Effector>,
+    /// What every agent's effectors asked for this tick. Written at step 4, drained by
+    /// the systems that follow it (spec §2.4).
+    intents: Intents,
     /// Gene lists, one block per agent.
     genes: Arena<Gene>,
     /// The founding topology, whose innovation ids every founder in this world shares
@@ -82,6 +89,7 @@ impl World {
         let brain_stride = plan.neuron_count() as u32;
         let synapse_stride = brain::synapse_count(plan.genes()) as u32;
         let sensor_stride = perceive::sensor_count(plan.genes()) as u32;
+        let effector_stride = effectors::effector_count(plan.genes()) as u32;
         let genome_stride = plan.len() as u32;
         Ok(Self {
             rng: Rng::from_seed(seed),
@@ -92,6 +100,8 @@ impl World {
             brains: Arena::with_capacity(capacity, brain_stride),
             synapses: Arena::with_capacity(capacity, synapse_stride),
             sensors: Arena::with_capacity(capacity, sensor_stride),
+            effectors: Arena::with_capacity(capacity, effector_stride),
+            intents: Intents::with_capacity(capacity),
             genes: Arena::with_capacity(capacity, genome_stride),
             genome_scratch: vec![Gene::default(); plan.len()],
             plan,
@@ -128,6 +138,7 @@ impl World {
             self.synapses.get_mut(handles.synapses),
         );
         perceive::compile(genes, self.sensors.get_mut(handles.sensors));
+        effectors::compile(genes, self.effectors.get_mut(handles.effectors));
         self.agents.init(id, spec, &handles);
         Some(id)
     }
@@ -142,19 +153,28 @@ impl World {
         let brain = self.brains.alloc(genome::neuron_count(genes) as u32);
         let synapses = self.synapses.alloc(brain::synapse_count(genes) as u32);
         let sensors = self.sensors.alloc(perceive::sensor_count(genes) as u32);
+        let effectors = self
+            .effectors
+            .alloc(effectors::effector_count(genes) as u32);
         let genome = self.genes.alloc(genes.len() as u32);
         let parts = self.parts.alloc(PARTS_PER_AGENT);
 
-        match (brain, synapses, sensors, genome, parts) {
-            (Some(brain), Some(synapses), Some(sensors), Some(genome), Some(parts)) => {
-                Some(Handles {
-                    brain,
-                    synapses,
-                    sensors,
-                    genome,
-                    parts,
-                })
-            }
+        match (brain, synapses, sensors, effectors, genome, parts) {
+            (
+                Some(brain),
+                Some(synapses),
+                Some(sensors),
+                Some(effectors),
+                Some(genome),
+                Some(parts),
+            ) => Some(Handles {
+                brain,
+                synapses,
+                sensors,
+                effectors,
+                genome,
+                parts,
+            }),
             _ => {
                 if let Some(block) = brain {
                     self.brains.free(block);
@@ -164,6 +184,9 @@ impl World {
                 }
                 if let Some(block) = sensors {
                     self.sensors.free(block);
+                }
+                if let Some(block) = effectors {
+                    self.effectors.free(block);
                 }
                 if let Some(block) = genome {
                     self.genes.free(block);
@@ -225,6 +248,7 @@ impl World {
         self.brains.free(self.agents.brain[i]);
         self.synapses.free(self.agents.synapses[i]);
         self.sensors.free(self.agents.sensors[i]);
+        self.effectors.free(self.agents.effectors[i]);
         self.genes.free(self.agents.genome[i]);
         self.parts.free(self.agents.parts[i]);
         self.agents.clear(id);
@@ -244,7 +268,7 @@ impl World {
                 index: id.raw(),
                 position: self.agents.position[i],
                 orientation: self.agents.orientation[i],
-                energy: self.agents.energy[i],
+                energy_tanks: self.agents.energy[i] / self.params.reproduction.start_energy,
             };
             let world = WorldView {
                 positions: &self.agents.position,
@@ -278,6 +302,63 @@ impl World {
             let (brain, synapses) = (self.agents.brain[i], self.agents.synapses[i]);
             brain::step(self.brains.get_mut(brain), self.synapses.get(synapses), dt);
         }
+    }
+
+    /// Reads every live agent's effectors into the intent buffer. Step 4 of the tick
+    /// (spec §2.4).
+    ///
+    /// Nothing here changes the world. The buffer is cleared first, so an agent that
+    /// lost an effector coasts rather than repeating its last request forever.
+    pub fn drive_effectors(&mut self) {
+        self.intents.clear();
+        let movement = &self.params.movement;
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            effectors::drive(
+                self.effectors.get(self.agents.effectors[i]),
+                self.brains.get(self.agents.brain[i]),
+                movement,
+                &mut AgentIntents {
+                    thrust: &mut self.intents.thrust[i],
+                    turn: &mut self.intents.turn[i],
+                    ingest: &mut self.intents.ingest[i],
+                    reproduce: &mut self.intents.reproduce[i],
+                },
+            );
+        }
+    }
+
+    /// Applies the movement intents. Step 5 of the tick (spec §2.4).
+    ///
+    /// Split from [`Self::drive_effectors`] rather than fused with it because every
+    /// agent must decide against the same world: an agent early in the pool moving
+    /// before a later one has chosen is exactly what the intent buffer exists to
+    /// prevent.
+    pub fn integrate_movement(&mut self) {
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            movement::integrate(
+                &mut self.agents.position[i],
+                &mut self.agents.velocity[i],
+                &mut self.agents.orientation[i],
+                self.intents.thrust[i],
+                self.intents.turn[i],
+                &self.params.movement,
+                &self.params.world,
+            );
+        }
+    }
+
+    /// What every agent's effectors asked for on the most recent step 4.
+    #[inline]
+    pub fn intents(&self) -> &Intents {
+        &self.intents
+    }
+
+    /// Diffuses and decays the pheromone field by one tick. Step 8 of the tick
+    /// (spec §2.4), after whatever deposited into it.
+    pub fn update_chemo(&mut self) {
+        self.field.update(&self.params.chemo);
     }
 
     /// Rebuilds the neighbour grid from current positions. Step 1 of the tick.
