@@ -18,8 +18,9 @@ referenced in commit messages.
 | M3 Spatial hash | done |
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
-| M6 Sensors and effectors | perception done; effectors next |
-| M7–M12 | not started |
+| M6 Sensors and effectors | done |
+| M7 World and economy | next |
+| M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -204,6 +205,13 @@ Build-plan task 5.
   All write to an intent buffer; none mutate the world.
 
 **Done when:** an agent with hand-written weights demonstrably climbs a food gradient.
+Met — `sim-core/tests/steering.rs`. Read that file's header before treating it as more
+than it is: the weights are hand-written, so it is a **wiring** test. It says the
+sensorimotor chain closes with every sign convention agreeing, and says nothing about
+whether food-seeking *evolves*, which is spec §8's criterion and M12's job. What it
+measures is closest approach from eight starting headings including the one pointing
+directly away, against a field that diffuses and decays every tick, with a control agent
+whose single steering connection is cut.
 
 **Scope: this milestone is wider than its bullet list.** The acceptance criterion needs
 three things the bullets do not name — a field to carry a gradient, a way to sample it,
@@ -242,6 +250,36 @@ the caller's problem. `brain::step` consumes and clears it in one move.
 for an empty view. A raw distance would make "nothing there" and "something 60 units
 away" different numbers, and would saturate any neuron it reached before the fan-in
 scaling of M5 ever got a say.
+
+**Decisions taken in the action half.**
+
+*Every sensor channel is bounded, and directional ones are egocentric.* Designing the
+acceptance test found the chemo sensor unusable: it returned a gradient in **world**
+coordinates, which an agent cannot act on without knowing its own heading, and Phase 1
+has no proprioceptor to tell it. It is also a global fact handed to a local organ, which
+is the omniscience spec §2.2c exists to prevent. The gradient is now a unit vector in the
+agent's own frame — `+x` ahead, `+y` left — which is what spec §4.1's "gradient
+*direction*" asks for anyway. Magnitude went the same way: a raw gradient is a spatial
+derivative of order 0.01 and would never move a neuron, a raw concentration accumulates
+without limit and would saturate one permanently, and raw energy of 100 saturates on the
+first tick. Strength now saturates as `c / (1 + c)` and energy is reported in tanks. The
+rule is the one `vision_ray` already followed: **a sensor returns a value in the range
+the brain can use**, because the fan-in scaling of M5 is calibrated for inputs near ±1
+and an unbounded channel walks straight through it.
+
+*Thrust is unsigned, turn is signed.* Spec §4.2 says thrust is a forward force, and an
+agent that can reverse has less reason to evolve a turn. An angular velocity that can
+only go one way is a permanent circle, so turn maps a sigmoid's neutral 0.5 to straight
+ahead and swings either side of it.
+
+*Intents are struct-of-arrays, not a queue.* All four Phase 1 effectors are
+self-directed, so one slot per agent is the whole story and agent-index order is free
+rather than something a sort has to restore. `bite` and `grab` name another agent and
+will need a real queue; they can have one when they arrive.
+
+*Turn is applied before thrust within a tick.* Either order is deterministic, but this
+one makes a turn take effect immediately — otherwise a tick of sensing buys nothing and
+steering always lags the thing it is steering at.
 
 ## M7 — World and economy
 

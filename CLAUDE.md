@@ -105,6 +105,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   brain.rs       CTRNN: compiling a genome to a runnable network, and the Euler step
   perceive.rs    sensors: running an agent's organs against the world, into its brain
   chemo.rs       the pheromone field — sample, gradient, deposit, diffuse, decay
+  effectors.rs   brain outputs into the intent buffer; changes nothing itself
+  movement.rs    draining the thrust and turn intents into velocity and position
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands
@@ -115,7 +117,7 @@ web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never co
 ```
 
 Still to come, one concept each: `tick.rs` (the 11 steps, order normative), and the
-effector and movement systems that write and drain the intent buffer.
+plants, metabolism, and reproduction that close the energy economy.
 
 ## Commands
 
