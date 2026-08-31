@@ -42,10 +42,12 @@ pub struct ChemoField {
     dims: [u32; 3],
     channels: usize,
     world_size: f32,
-    /// World units per cell on x and y. Derived from `dims`, kept so sampling is a
-    /// multiply rather than a divide.
-    inv_cell: f32,
-    cell_size: f32,
+    /// World units per cell, **per axis**. The grid may be coarser on one axis than the
+    /// other — `ChemoParams::cells` is three independent numbers — and sharing one
+    /// scale between x and y silently folds most of the finer axis onto its last row.
+    cell: [f32; 3],
+    /// Reciprocals of [`Self::cell`], so sampling is a multiply rather than a divide.
+    inv_cell: [f32; 3],
 }
 
 impl ChemoField {
@@ -55,15 +57,20 @@ impl ChemoField {
         let dims = params.cells;
         let channels = params.channels();
         let per_channel = dims[0] as usize * dims[1] as usize * dims[2] as usize;
-        let cell_size = world_size / dims[0] as f32;
+        let mut cell = [0.0f32; 3];
+        let mut inv_cell = [0.0f32; 3];
+        for axis in 0..3 {
+            cell[axis] = world_size / dims[axis].max(1) as f32;
+            inv_cell[axis] = 1.0 / cell[axis];
+        }
         Self {
             cells: vec![0.0; per_channel * channels],
             scratch: vec![0.0; per_channel * channels],
             dims,
             channels,
             world_size,
-            inv_cell: 1.0 / cell_size,
-            cell_size,
+            cell,
+            inv_cell,
         }
     }
 
@@ -77,16 +84,31 @@ impl ChemoField {
         self.dims
     }
 
+    /// World units per cell on each axis.
+    #[inline]
+    pub fn cell(&self) -> [f32; 3] {
+        self.cell
+    }
+
+    /// The widest cell, which is the shortest baseline a gradient can be read over.
     #[inline]
     pub fn cell_size(&self) -> f32 {
-        self.cell_size
+        self.cell[0].max(self.cell[1])
     }
 
     /// Grid coordinates of a world position, wrapped onto the torus.
     #[inline]
     fn coords(&self, position: Vec3) -> [u32; 3] {
-        let x = wrap_scalar(position.x, self.world_size) * self.inv_cell;
-        let y = wrap_scalar(position.y, self.world_size) * self.inv_cell;
+        // A non-finite coordinate casts to cell 0 rather than trapping, so without this
+        // the whole population would deposit into and smell one cell at the wrap seam,
+        // with the cause nowhere near the symptom. `SpatialHash::rebuild` guards the
+        // other entry point positions have, for the same reason.
+        debug_assert!(
+            position.x.is_finite() && position.y.is_finite(),
+            "non-finite position reached the chemo field: {position:?}"
+        );
+        let x = wrap_scalar(position.x, self.world_size) * self.inv_cell[0];
+        let y = wrap_scalar(position.y, self.world_size) * self.inv_cell[1];
         [
             (x as u32).min(self.dims[0] - 1),
             (y as u32).min(self.dims[1] - 1),
@@ -136,15 +158,16 @@ impl ChemoField {
         if channel >= self.channels {
             return Vec3::ZERO;
         }
-        // At least one cell, or both samples land in the same cell and every gradient
-        // in the world reads as exactly zero.
-        let step = radius.max(self.cell_size);
-        let along = |axis: Vec3| {
-            let ahead = self.sample(channel, position + axis * step);
-            let behind = self.sample(channel, position - axis * step);
+        // At least one cell *on that axis*, or both samples land in the same cell and
+        // the gradient reads as exactly zero. Per-axis because the grid may be coarser
+        // on one axis than the other.
+        let along = |axis: usize, direction: Vec3| {
+            let step = radius.max(self.cell[axis]);
+            let ahead = self.sample(channel, position + direction * step);
+            let behind = self.sample(channel, position - direction * step);
             (ahead - behind) / (2.0 * step)
         };
-        Vec3::new(along(Vec3::X), along(Vec3::Y), 0.0)
+        Vec3::new(along(0, Vec3::X), along(1, Vec3::Y), 0.0)
     }
 
     /// Adds `amount` to the cell containing `position`. A no-op for a channel that does
@@ -263,6 +286,7 @@ fn neighbour_sum(cells: &[f32], dims: [u32; 3], at: [u32; 3]) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::params::SimParams;
 
     fn field() -> ChemoField {
         ChemoField::new(&ChemoParams::default(), 1_000.0)
@@ -497,6 +521,61 @@ mod tests {
         f.deposit(99, Vec3::ZERO, 5.0);
         assert_eq!(f.sample(99, Vec3::ZERO), 0.0);
         assert_eq!(f.gradient(99, Vec3::ZERO, 10.0), Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_grid_coarser_on_one_axis_still_resolves_that_axis() {
+        // `cells` is three independent numbers and validation only asks that x and y be
+        // non-zero. Deriving one cell size from the x resolution and using it for y
+        // folded everything above `dims[1] * cell_x` onto the last row — three quarters
+        // of the world smelling one cell, on a parameter set that validates.
+        let params = ChemoParams {
+            cells: [256, 64, 1],
+            decay: vec![1.0],
+            diffuse: 0.0,
+        };
+        let sim = SimParams {
+            chemo: params.clone(),
+            ..SimParams::default()
+        };
+        assert_eq!(sim.validate(), Ok(()), "the shape under test must be legal");
+
+        let mut f = ChemoField::new(&params, 1_000.0);
+        for (i, y) in [100.0f32, 300.0, 600.0, 900.0].iter().enumerate() {
+            f.deposit(0, Vec3::new(500.0, *y, 0.0), (i + 1) as f32);
+        }
+        for (i, y) in [100.0f32, 300.0, 600.0, 900.0].iter().enumerate() {
+            assert_eq!(
+                f.sample(0, Vec3::new(500.0, *y, 0.0)),
+                (i + 1) as f32,
+                "y = {y} did not keep its own cell"
+            );
+        }
+        assert_eq!(
+            f.channel(0).iter().filter(|c| **c != 0.0).count(),
+            4,
+            "deposits collapsed onto each other"
+        );
+    }
+
+    #[test]
+    fn a_gradient_uses_each_axis_own_cell_as_its_floor() {
+        // The minimum baseline is per-axis for the same reason: on a grid that is
+        // coarse in y, a radius under one y-cell samples the same row twice and the
+        // north/south component reads as a flat zero.
+        let params = ChemoParams {
+            cells: [256, 32, 1],
+            decay: vec![1.0],
+            diffuse: 0.0,
+        };
+        let mut f = ChemoField::new(&params, 1_000.0);
+        let source = Vec3::new(500.0, 500.0, 0.0);
+        f.deposit(0, source, 10.0);
+        let south = source - Vec3::Y * f.cell()[1];
+        assert!(
+            f.gradient(0, south, 0.0).y > 0.0,
+            "a zero radius went blind along the coarse axis"
+        );
     }
 
     #[test]
