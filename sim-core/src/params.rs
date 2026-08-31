@@ -405,6 +405,14 @@ impl SimParams {
         if self.reproduction.spawn_radius < 0.0 {
             return Err(ParamError("reproduction.spawn_radius must be non-negative"));
         }
+        if self
+            .plants
+            .signature
+            .iter()
+            .any(|c| !(0.0..=1.0).contains(c))
+        {
+            return Err(ParamError("plants.signature must be in [0, 1] per channel"));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -618,6 +626,11 @@ mod tests {
                 p.reproduction.threshold = 50.0
             }),
             ("no chemo channels", |p| p.chemo.decay.clear()),
+            // A colour is copied straight into a neuron's input, so an out-of-range one
+            // pins every neuron an eye feeds — the unbounded-channel class M6 closed.
+            ("a plant colour outside [0, 1]", |p| {
+                p.plants.signature = [1.0e6, -50.0, f32::MAX]
+            }),
             ("decay above 1", |p| p.chemo.decay = vec![1.4]),
         ];
         for (name, break_it) in cases {

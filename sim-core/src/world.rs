@@ -93,8 +93,16 @@ impl World {
         let sensor_stride = perceive::sensor_count(plan.genes()) as u32;
         let effector_stride = effectors::effector_count(plan.genes()) as u32;
         let genome_stride = plan.len() as u32;
+
+        // One generator, drawn from in order: the plants are seeded first and agents
+        // continue after them. A second `Rng::from_seed(seed)` would be the *same*
+        // stream, making every plant coordinate bit-identical to the genome scalar
+        // drawn at the same position — two processes that look independent and are not.
+        let mut rng = Rng::from_seed(seed);
+        let plants = Plants::new(&params, &mut rng);
+
         Ok(Self {
-            rng: Rng::from_seed(seed),
+            rng,
             tick: 0,
             next_innovation,
             pool: SlotPool::with_capacity(capacity),
@@ -114,12 +122,7 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
-            plants: {
-                // Seeded from the world's own stream, before any agent draws from it,
-                // so a world's plants are as reproducible as its agents.
-                let mut seeding = Rng::from_seed(seed);
-                Plants::new(&params, &mut seeding)
-            },
+            plants,
             params,
         })
     }
