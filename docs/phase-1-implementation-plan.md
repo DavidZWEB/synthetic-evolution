@@ -19,7 +19,7 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | next |
+| M7 World and economy | plants done; economy next |
 | M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -323,37 +323,34 @@ Change these against a running population and several seeds, not by arithmetic. 
 values and their reasoning are on `MetabolismParams::base` and `::k_brain`; update those
 comments in the same commit.
 
-**Open decision: can agents *see* plants, or only smell them?** Decide this deliberately.
-It is the kind of question that otherwise gets answered by whichever way the code happens
-to fall, and the falling-by-default answer is the wrong one.
+**Decided: agents can see plants as well as smell them.** Recorded on
+`PlantParams::signature`, where the next person asking will be looking.
 
-Smell is already settled and wired: `PlantParams::scent_rate` deposits into chemo channel
-0, and M6's field, diffusion, and chemo sensor consume exactly that. Sight is not.
-`perceive::vision_ray` walks the *agent* spatial hash and reads the agent position, size,
-and signature arrays. Plants are a separate pool (`PlantParams::max_plants`; spec §5.1 is
-explicit that they are "the substrate, not agents"), so unless M7 gives vision a second
-query against them, plants are invisible and nobody will have chosen that.
+Smell was already settled — `scent_rate` deposits into chemo channel 0, and M6's field
+and chemo sensor consume it. Sight was not, and the falling-by-default answer was the
+expensive one: `perceive::vision_ray` walked only the *agent* grid, and plants are a
+separate pool. `k_sensor` charges by channel, so the default sensor set is 12 units of
+eye against 4 of everything else; there is no predation until Phase 3 to make seeing
+another agent worth anything, and Phase 1 has no remove-sensor operator, so selection
+could not have shed the useless organs for the whole of the phase §8's criterion is
+judged in. It would have surfaced during the tuning pass above looking like a `k_sensor`
+problem rather than a missing query.
 
-The cost of leaving them invisible is not neutral. `k_sensor` charges by channel, so the
-default sensor set is 12 units of eye against 4 of everything else — three quarters of a
-term that is already the second largest in the table above. There is no predation until
-Phase 3, so seeing another agent buys almost nothing, and Phase 1 has no add/remove-sensor
-operator, so **selection cannot delete the useless eyes**. Spec §3.3 does have `remove
-sensor` at 0.02, so the escape hatch exists — but it arrives with Phase 2's structural
-operators, and Phase 1 is exactly where §8's success criterion is judged. For the whole of
-the phase this milestone belongs to, every agent pays for three eyes it cannot use and
-cannot shed, and the symptom would surface during the tuning pass above looking like a
-`k_sensor` problem rather than a missing query.
+An emptied plant stays visible: the site persists and regrows, so blinking it out would
+be stranger than leaving it, and telling a fat plant from a bare one now needs the nose —
+a selective pressure worth having rather than a defect.
 
-Making them visible inverts it: two independent routes to food, so the M12 acceptance run
-shows which one evolution finds first, and the `vision_ray` signature channel becomes
-meaningful on day one — "green means food" is learnable immediately, on the same machinery
-spec §4.2 wants for aposematism in Phase 4.
+**Plants are fixed sites that regrow in place.** Spec §5.1's "get eaten, and reseed" is
+read as regrowth, the weaker of the two meanings and the one Phase 1 needs. Positions
+never change, so the plant neighbour grid is built once rather than every tick. The risk
+is a static food map that rewards camping over foraging; if an M12 run shows that,
+relocating a depleted site is a small change, and `plants.rs` names it.
 
-Cheaper than it looks, too. Plants are static between growth and reseeding, so a plant
-spatial hash is rebuilt when the plant pool changes rather than every tick, unlike the
-agent hash. Whichever way this goes, record it on `PlantParams` next to `scent_rate`,
-where the next person asking will be looking.
+**At carrying capacity the world absorbs less than its input rate.** The nominal rate is
+shared evenly and each plant is capped, so the surplus never enters rather than being
+stored anywhere. That is the honest behaviour of a saturated ecosystem, and it is why the
+ledger records what `Plants::grow` returns rather than `energy_input_rate * dt` —
+conservation has to be measured, not inferred.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon.
 

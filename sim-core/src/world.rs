@@ -22,6 +22,7 @@ use crate::ids::{AgentId, InnovationId};
 use crate::movement;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, SelfView, Sensor, WorldView};
+use crate::plants::Plants;
 use crate::pool::SlotPool;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
@@ -65,9 +66,10 @@ pub struct World {
     parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
     hash: SpatialHash,
-    /// Pheromone concentrations. What plants scent and what the chemo sensor reads;
-    /// nothing deposits into it until M7 wires the economy.
+    /// Pheromone concentrations: what plants scent and what the chemo sensor reads.
     field: ChemoField,
+    /// The autotrophs. Every joule in the world enters through them (spec §5.1).
+    plants: Plants,
 }
 
 impl World {
@@ -91,8 +93,16 @@ impl World {
         let sensor_stride = perceive::sensor_count(plan.genes()) as u32;
         let effector_stride = effectors::effector_count(plan.genes()) as u32;
         let genome_stride = plan.len() as u32;
+
+        // One generator, drawn from in order: the plants are seeded first and agents
+        // continue after them. A second `Rng::from_seed(seed)` would be the *same*
+        // stream, making every plant coordinate bit-identical to the genome scalar
+        // drawn at the same position — two processes that look independent and are not.
+        let mut rng = Rng::from_seed(seed);
+        let plants = Plants::new(&params, &mut rng);
+
         Ok(Self {
-            rng: Rng::from_seed(seed),
+            rng,
             tick: 0,
             next_innovation,
             pool: SlotPool::with_capacity(capacity),
@@ -112,6 +122,7 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
+            plants,
             params,
         })
     }
@@ -276,6 +287,9 @@ impl World {
                 sizes: &self.agents.size,
                 hash: &self.hash,
                 field: &self.field,
+                plants: &self.plants,
+                plant_radius: self.params.plants.radius,
+                plant_signature: Vec3::from(self.params.plants.signature),
             };
             perceive::perceive(
                 self.sensors.get(self.agents.sensors[i]),
@@ -382,6 +396,23 @@ impl World {
     #[inline]
     pub fn chemo(&self) -> &ChemoField {
         &self.field
+    }
+
+    #[inline]
+    pub fn plants(&self) -> &Plants {
+        &self.plants
+    }
+
+    /// Grows the plants by one tick and scents the field. Part of steps 8 and 9 of the
+    /// tick, and the only place energy enters the world (spec §5.1).
+    ///
+    /// Returns what the plants actually absorbed, which is what the ledger records —
+    /// at carrying capacity that is less than the nominal input rate.
+    pub fn grow_plants(&mut self) -> f32 {
+        let dt = self.params.world.dt;
+        let absorbed = self.plants.grow(&self.params.plants, dt);
+        self.plants.scent(&mut self.field, &self.params.plants, dt);
+        absorbed
     }
 
     /// Adds to a chemo channel at a world position.

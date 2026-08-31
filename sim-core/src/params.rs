@@ -256,6 +256,27 @@ pub struct PlantParams {
     /// second. This is what gives the chemo sensor a food gradient to climb in
     /// Phase 1, before any agent can emit anything.
     pub scent_rate: f32,
+    /// The colour a `vision_ray` reports when it hits a plant.
+    ///
+    /// **Plants are visible as well as smellable — decided here, at M7.** The
+    /// alternative was not neutral. `k_sensor` charges by channel, so the default
+    /// sensor set is 12 units of eye against 4 of everything else; there is no
+    /// predation until Phase 3 to make seeing another agent worth anything, and Phase 1
+    /// has no remove-sensor operator, so selection could not have shed the useless eyes
+    /// for the whole of the phase §8's criterion is judged in. Every agent would have
+    /// paid for three organs that see nothing, and it would have surfaced during the
+    /// metabolic tuning pass looking like a `k_sensor` problem rather than a missing
+    /// query — the kind of symptom CLAUDE.md warns gets "fixed" by weakening a cost.
+    ///
+    /// Visible gives two independent routes to food, so an M12 run shows which one
+    /// evolution finds first, and makes the signature channel meaningful immediately:
+    /// green means food is learnable on day one, on the same machinery spec §4.2 wants
+    /// for aposematism in Phase 4.
+    ///
+    /// An emptied plant stays visible — the site persists and regrows, so blinking it
+    /// out would be stranger than leaving it. Telling a fat plant from a bare one needs
+    /// the nose, which is a selective pressure worth having rather than a defect.
+    pub signature: [f32; 3],
 }
 
 /// Pheromone field. A 3D grid of depth 1 in V1 (spec §9.1).
@@ -384,6 +405,14 @@ impl SimParams {
         if self.reproduction.spawn_radius < 0.0 {
             return Err(ParamError("reproduction.spawn_radius must be non-negative"));
         }
+        if self
+            .plants
+            .signature
+            .iter()
+            .any(|c| !(0.0..=1.0).contains(c))
+        {
+            return Err(ParamError("plants.signature must be in [0, 1] per channel"));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -511,6 +540,7 @@ impl Default for PlantParams {
             max_energy: 60.0,
             radius: 2.0,
             scent_rate: 0.02,
+            signature: [0.2, 0.8, 0.25],
         }
     }
 }
@@ -596,6 +626,11 @@ mod tests {
                 p.reproduction.threshold = 50.0
             }),
             ("no chemo channels", |p| p.chemo.decay.clear()),
+            // A colour is copied straight into a neuron's input, so an out-of-range one
+            // pins every neuron an eye feeds — the unbounded-channel class M6 closed.
+            ("a plant colour outside [0, 1]", |p| {
+                p.plants.signature = [1.0e6, -50.0, f32::MAX]
+            }),
             ("decay above 1", |p| p.chemo.decay = vec![1.4]),
         ];
         for (name, break_it) in cases {

@@ -29,6 +29,7 @@ use crate::chemo::ChemoField;
 use crate::genome::{GENE_PARAMS, Gene, Modality, SENSOR_CHANNELS};
 use crate::ids::NeuronId;
 use crate::math;
+use crate::plants::Plants;
 use crate::spatial::SpatialHash;
 
 /// One sensor of a compiled agent: its modality, its parameters, and the brain slots
@@ -63,6 +64,11 @@ pub struct WorldView<'a> {
     pub sizes: &'a [f32],
     pub hash: &'a SpatialHash,
     pub field: &'a ChemoField,
+    /// Plants are visible, not only smellable — see `PlantParams::signature` for why
+    /// that was a decision rather than an omission.
+    pub plants: &'a Plants,
+    pub plant_radius: f32,
+    pub plant_signature: Vec3,
 }
 
 /// The sensing agent's own state — what an interoceptor reads and what every
@@ -177,48 +183,100 @@ fn vision_ray(
     // Ray direction: the agent's facing, turned by the gene's azimuth. Elevation is
     // pinned to the plane for all of V1 (spec §4.1).
     let heading = math::yaw_of(agent.orientation) + azimuth;
-    let direction = Vec3::new(math::cos(heading), math::sin(heading), 0.0);
-    // `fov` is the full cone width, so a hit has to lie within half of it.
-    let cos_limit = math::cos((fov * 0.5).clamp(0.0, core::f32::consts::PI));
-
-    let mut nearest = f32::INFINITY;
-    let mut hit = None;
-    world.hash.for_each_within(
-        world.positions,
-        agent.position,
+    let ray = Ray {
+        origin: agent.position,
+        direction: Vec3::new(math::cos(heading), math::sin(heading), 0.0),
         range,
-        |index, offset, d2| {
-            if index == agent.index {
-                return;
-            }
-            // A body has width: a sphere counts as hit if the ray passes within its
-            // radius, which is what stops an eye from threading between two neighbours.
-            let distance = math::sqrt(d2);
-            if distance >= nearest {
-                return;
-            }
-            let radius = world.sizes[index as usize];
-            let along = offset.dot(direction);
-            if along <= 0.0 {
-                return; // behind the eye
-            }
-            let within_cone = along >= distance * cos_limit;
-            let within_radius = (offset - direction * along).length() <= radius;
-            if within_cone || within_radius {
-                nearest = distance;
-                hit = Some(index);
-            }
-        },
+        // `fov` is the full cone width, so a hit has to lie within half of it.
+        cos_limit: math::cos((fov * 0.5).clamp(0.0, core::f32::consts::PI)),
+    };
+
+    // Both populations, nearest wins. Agents and plants live in separate pools with
+    // separate grids, so an eye that queried only one would be blind to the other —
+    // which for plants would mean paying for three organs that never see food.
+    let mut seen: Option<Sighting> = None;
+    cast(
+        &ray,
+        world.hash,
+        world.positions,
+        agent.index,
+        |i| world.sizes[i],
+        |i| world.signatures[i],
+        &mut seen,
+    );
+    cast(
+        &ray,
+        world.plants.hash(),
+        world.plants.position(),
+        u32::MAX,
+        |_| world.plant_radius,
+        |_| world.plant_signature,
+        &mut seen,
     );
 
-    if let Some(index) = hit {
-        let signature = world.signatures[index as usize];
-        out[0] = 1.0 - (nearest / range).clamp(0.0, 1.0);
-        out[1] = signature.x;
-        out[2] = signature.y;
-        out[3] = signature.z;
+    if let Some(hit) = seen {
+        out[0] = 1.0 - (hit.distance / range).clamp(0.0, 1.0);
+        out[1] = hit.signature.x;
+        out[2] = hit.signature.y;
+        out[3] = hit.signature.z;
     }
     4
+}
+
+/// One ray, in world space.
+struct Ray {
+    origin: Vec3,
+    direction: Vec3,
+    range: f32,
+    cos_limit: f32,
+}
+
+/// The nearest thing the ray has met so far.
+struct Sighting {
+    distance: f32,
+    signature: Vec3,
+}
+
+/// Scans one population and keeps `best` pointed at the nearest hit found anywhere.
+///
+/// Generic over how a population reports its radius and colour rather than taking two
+/// more slices, because plants share one of each between them while agents carry their
+/// own. Monomorphised, so the tick still costs no indirect call (spec §7.5).
+fn cast(
+    ray: &Ray,
+    hash: &SpatialHash,
+    positions: &[Vec3],
+    skip: u32,
+    radius_of: impl Fn(usize) -> f32,
+    signature_of: impl Fn(usize) -> Vec3,
+    best: &mut Option<Sighting>,
+) {
+    hash.for_each_within(positions, ray.origin, ray.range, |index, offset, d2| {
+        // An agent's own body sits at distance zero and would be a permanent hit,
+        // blinding the eye to everything else.
+        if index == skip {
+            return;
+        }
+        let distance = math::sqrt(d2);
+        if best.as_ref().is_some_and(|hit| distance >= hit.distance) {
+            return;
+        }
+        let along = offset.dot(ray.direction);
+        if along <= 0.0 {
+            return; // behind the eye
+        }
+        // A body has width: it counts as hit if it falls inside the cone *or* the ray
+        // passes within its radius, which is what stops a narrow eye threading between
+        // two neighbours.
+        let within_cone = along >= distance * ray.cos_limit;
+        let within_radius = (offset - ray.direction * along).length() <= radius_of(index as usize);
+        if within_cone || within_radius {
+            *best = Some(Sighting {
+                distance,
+                signature: signature_of(index as usize),
+            });
+        }
+    });
 }
 
 /// Samples the pheromone field: `[strength, uphill ahead, uphill left]`.
@@ -318,6 +376,9 @@ mod tests {
         hash: SpatialHash,
         field: ChemoField,
         pool: SlotPool,
+        plants: Plants,
+        plant_radius: f32,
+        plant_signature: Vec3,
     }
 
     impl Fixture {
@@ -335,10 +396,22 @@ mod tests {
             );
             let mut grid_cell = vec![0u32; positions.len()];
             hash.rebuild(&positions, pool.alive_flags(), &mut grid_cell);
+            // No plants unless a test asks for them, so a fixture measuring what an
+            // eye makes of *agents* is not quietly seeing scenery as well.
+            let empty = SimParams {
+                plants: crate::params::PlantParams {
+                    max_plants: 0,
+                    ..params.plants.clone()
+                },
+                ..params.clone()
+            };
             Self {
                 signatures: vec![Vec3::new(0.25, 0.5, 0.75); positions.len()],
                 sizes: vec![params.body.size; positions.len()],
                 field: ChemoField::new(&ChemoParams::default(), params.world.size),
+                plants: Plants::new(&empty, &mut crate::rng::Rng::from_seed(1)),
+                plant_radius: params.plants.radius,
+                plant_signature: Vec3::from(params.plants.signature),
                 positions,
                 hash,
                 pool,
@@ -352,6 +425,9 @@ mod tests {
                 sizes: &self.sizes,
                 hash: &self.hash,
                 field: &self.field,
+                plants: &self.plants,
+                plant_radius: self.plant_radius,
+                plant_signature: self.plant_signature,
             }
         }
 
@@ -536,6 +612,97 @@ mod tests {
             &mut neurons,
         );
         assert!(neurons[0].input > 0.0, "did not see across the seam");
+    }
+
+    /// A fixture whose plants sit exactly where asked, rather than scattered at random.
+    fn with_plants(agent_at: Vec3, plants_at: &[Vec3]) -> Fixture {
+        let mut fixture = Fixture::new(vec![agent_at]);
+        let mut params = SimParams::default();
+        params.plants.max_plants = plants_at.len() as u32;
+        let mut grown = Plants::new(&params, &mut crate::rng::Rng::from_seed(1));
+        grown.place_for_test(plants_at);
+        fixture.plants = grown;
+        fixture
+    }
+
+    #[test]
+    fn an_eye_sees_plants_and_not_only_agents() {
+        // The M7 decision, made explicit. If an eye queried only the agent grid, three
+        // quarters of the sensor budget would buy nothing for the whole of Phase 1 and
+        // no operator exists to shed it — see `PlantParams::signature`.
+        let genes = one_sensor(Modality::VisionRay, [0.0, 0.0, 60.0, 0.5]);
+        let sensors = compile_sensors(&genes);
+        let fixture = with_plants(
+            Vec3::new(500.0, 500.0, 0.0),
+            &[Vec3::new(525.0, 500.0, 0.0)],
+        );
+        let mut neurons = neurons_for(&genes);
+        perceive(
+            &sensors,
+            &fixture.agent(0, 0.0),
+            &fixture.view(),
+            &mut neurons,
+        );
+
+        assert!(neurons[0].input > 0.0, "the eye did not see the plant");
+        let green = Vec3::from(SimParams::default().plants.signature);
+        assert!((neurons[1].input - green.x).abs() < 1e-6, "plant red");
+        assert!((neurons[2].input - green.y).abs() < 1e-6, "plant green");
+        assert!((neurons[3].input - green.z).abs() < 1e-6, "plant blue");
+    }
+
+    #[test]
+    fn the_nearest_hit_wins_across_both_populations() {
+        // Agents and plants live in separate grids. Taking the nearest within each and
+        // then whichever was queried last would make what an agent sees depend on the
+        // order the two queries happen to run in.
+        let genes = one_sensor(Modality::VisionRay, [0.0, 0.0, 60.0, 0.5]);
+        let sensors = compile_sensors(&genes);
+
+        // Plant nearer than the other agent: the plant should win.
+        let mut near_plant = Fixture::new(vec![
+            Vec3::new(500.0, 500.0, 0.0),
+            Vec3::new(540.0, 500.0, 0.0),
+        ]);
+        let mut params = SimParams::default();
+        params.plants.max_plants = 1;
+        let mut grown = Plants::new(&params, &mut crate::rng::Rng::from_seed(1));
+        grown.place_for_test(&[Vec3::new(515.0, 500.0, 0.0)]);
+        near_plant.plants = grown;
+
+        let mut neurons = neurons_for(&genes);
+        perceive(
+            &sensors,
+            &near_plant.agent(0, 0.0),
+            &near_plant.view(),
+            &mut neurons,
+        );
+        let green = Vec3::from(params.plants.signature);
+        assert!(
+            (neurons[2].input - green.y).abs() < 1e-6,
+            "reported the farther agent instead of the nearer plant"
+        );
+
+        // Agent nearer than the plant: the agent should win.
+        let mut near_agent = Fixture::new(vec![
+            Vec3::new(500.0, 500.0, 0.0),
+            Vec3::new(510.0, 500.0, 0.0),
+        ]);
+        let mut grown = Plants::new(&params, &mut crate::rng::Rng::from_seed(1));
+        grown.place_for_test(&[Vec3::new(540.0, 500.0, 0.0)]);
+        near_agent.plants = grown;
+
+        let mut neurons = neurons_for(&genes);
+        perceive(
+            &sensors,
+            &near_agent.agent(0, 0.0),
+            &near_agent.view(),
+            &mut neurons,
+        );
+        assert!(
+            (neurons[2].input - 0.5).abs() < 1e-6,
+            "reported the farther plant instead of the nearer agent"
+        );
     }
 
     #[test]
