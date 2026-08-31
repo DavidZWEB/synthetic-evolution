@@ -300,8 +300,11 @@ The cost of leaving them invisible is not neutral. `k_sensor` charges by channel
 default sensor set is 12 units of eye against 4 of everything else — three quarters of a
 term that is already the second largest in the table above. There is no predation until
 Phase 3, so seeing another agent buys almost nothing, and Phase 1 has no add/remove-sensor
-operator, so **selection cannot delete the useless eyes**. Every agent would pay for three
-of them forever, and the symptom would surface during the tuning pass above looking like a
+operator, so **selection cannot delete the useless eyes**. Spec §3.3 does have `remove
+sensor` at 0.02, so the escape hatch exists — but it arrives with Phase 2's structural
+operators, and Phase 1 is exactly where §8's success criterion is judged. For the whole of
+the phase this milestone belongs to, every agent pays for three eyes it cannot use and
+cannot shed, and the symptom would surface during the tuning pass above looking like a
 `k_sensor` problem rather than a missing query.
 
 Making them visible inverts it: two independent routes to food, so the M12 acceptance run
