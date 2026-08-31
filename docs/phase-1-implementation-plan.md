@@ -285,6 +285,35 @@ Change these against a running population and several seeds, not by arithmetic. 
 values and their reasoning are on `MetabolismParams::base` and `::k_brain`; update those
 comments in the same commit.
 
+**Open decision: can agents *see* plants, or only smell them?** Decide this deliberately.
+It is the kind of question that otherwise gets answered by whichever way the code happens
+to fall, and the falling-by-default answer is the wrong one.
+
+Smell is already settled and wired: `PlantParams::scent_rate` deposits into chemo channel
+0, and M6's field, diffusion, and chemo sensor consume exactly that. Sight is not.
+`perceive::vision_ray` walks the *agent* spatial hash and reads the agent position, size,
+and signature arrays. Plants are a separate pool (`PlantParams::max_plants`; spec §5.1 is
+explicit that they are "the substrate, not agents"), so unless M7 gives vision a second
+query against them, plants are invisible and nobody will have chosen that.
+
+The cost of leaving them invisible is not neutral. `k_sensor` charges by channel, so the
+default sensor set is 12 units of eye against 4 of everything else — three quarters of a
+term that is already the second largest in the table above. There is no predation until
+Phase 3, so seeing another agent buys almost nothing, and Phase 1 has no add/remove-sensor
+operator, so **selection cannot delete the useless eyes**. Every agent would pay for three
+of them forever, and the symptom would surface during the tuning pass above looking like a
+`k_sensor` problem rather than a missing query.
+
+Making them visible inverts it: two independent routes to food, so the M12 acceptance run
+shows which one evolution finds first, and the `vision_ray` signature channel becomes
+meaningful on day one — "green means food" is learnable immediately, on the same machinery
+spec §4.2 wants for aposematism in Phase 4.
+
+Cheaper than it looks, too. Plants are static between growth and reseeding, so a plant
+spatial hash is rebuilt when the plant pool changes rather than every tick, unlike the
+agent hash. Whichever way this goes, record it on `PlantParams` next to `scent_rate`,
+where the next person asking will be looking.
+
 **Done when:** energy conservation holds over 10k ticks within epsilon.
 
 ## M8 — The tick
