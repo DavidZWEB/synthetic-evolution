@@ -23,23 +23,6 @@ use glam::Vec3;
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
-/// Everything a tick does today, in spec §2.4's order. Steps that do not exist yet —
-/// collision, interaction, births — are simply absent rather than stubbed.
-fn tick(world: &mut World) {
-    world.rebuild_spatial_hash();
-    world.perceive_all();
-    world.step_brains();
-    world.drive_effectors();
-    world.integrate_movement();
-    world.resolve_feeding();
-    world.grow_plants();
-    world.update_chemo();
-    world.charge_metabolism();
-    world.resolve_deaths();
-    world.resolve_births();
-    world.advance_tick();
-}
-
 fn populated(seed: u64, agents: u32) -> (World, SimParams) {
     populated_with_fill(seed, agents, SimParams::default().plants.initial_fill)
 }
@@ -84,7 +67,7 @@ fn energy_is_conserved_over_ten_thousand_ticks() {
     // The acceptance criterion, at the span the plan names.
     let (mut world, _) = populated(1, 200);
     for t in 0..10_000 {
-        tick(&mut world);
+        world.step();
         assert!(
             relative_drift(&world) < 1e-4,
             "tick {t}: {:.6} drifted from a ledger of {:.2} in / {:.2} out",
@@ -110,7 +93,7 @@ fn conservation_holds_across_seeds() {
     for seed in 1..=4 {
         let (mut world, _) = populated(seed, 120);
         for _ in 0..2_000 {
-            tick(&mut world);
+            world.step();
         }
         assert!(
             relative_drift(&world) < 1e-4,
@@ -132,7 +115,7 @@ fn an_agent_that_starves_takes_nothing_with_it() {
     // Long enough for the default budget to starve every one of them — an idle agent
     // lasts a few hundred ticks, and none of them can eat yet.
     for _ in 0..4_000 {
-        tick(&mut world);
+        world.step();
         assert!(
             relative_drift(&world) < 1e-4,
             "drifted while agents were dying: {:.6}",
@@ -161,7 +144,7 @@ fn energy_never_goes_negative() {
     // would report a leak that is really an overdraft.
     let (mut world, _) = populated(3, 80);
     for _ in 0..4_000 {
-        tick(&mut world);
+        world.step();
         for id in world.pool().iter_live() {
             let energy = world.agents().energy[id.index()];
             assert!(energy >= 0.0, "agent {id:?} went to {energy}");
@@ -358,7 +341,7 @@ fn a_population_that_eats_and_breeds_still_conserves() {
     // births, and a leak grows with the population rather than staying constant.
     let (mut world, _) = populated(41, 150);
     for t in 0..10_000 {
-        tick(&mut world);
+        world.step();
         assert!(
             relative_drift(&world) < 1e-4,
             "tick {t}: drifted {:.6} with {} alive",

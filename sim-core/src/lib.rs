@@ -30,6 +30,7 @@ pub mod pool;
 pub mod reproduction;
 pub mod rng;
 pub mod spatial;
+pub mod tick;
 pub mod world;
 
 pub use agents::{Agents, SpawnSpec};
