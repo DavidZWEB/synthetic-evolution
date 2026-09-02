@@ -2,9 +2,12 @@
 #
 # The build happens here rather than in Azure's Oryx container: the client imports
 # wasm-pack output from web/src/wasm/, which is gitignored (docs/development.md) and
-# needs a Rust toolchain Oryx does not have. So this job runs the same setup a
-# developer runs, builds the wasm, builds the client, and hands the action a finished
-# dist/ with skip_app_build.
+# needs a Rust toolchain Oryx does not have. So this job builds the wasm and the
+# client here and hands the action a finished dist/ with skip_app_build.
+#
+# It does not run the tests: ci.yml covers this commit. The two workflows trigger
+# together on a push to main rather than in sequence, so a deploy is concurrent with
+# its verification, not gated on it.
 name: Azure Static Web Apps
 
 on:
@@ -40,17 +43,37 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # Restores the cargo registry and target/ across runs. Without it every deploy
-      # rebuilds the whole workspace, including wasm-pack's own dependencies.
+      # The steps below are scripts/setup.sh without its `cargo test --workspace`
+      # tail. ci.yml runs the suite on this same commit, so calling setup.sh here
+      # would build and run all 13 test binaries a second time to learn nothing new.
+      # See docs/development.md.
+
+      # Reads rust-toolchain.toml and installs the pinned compiler, its components,
+      # and the wasm target. Before the cache step: rust-cache keys on the rustc
+      # version, so the pinned toolchain has to be the one it sees.
+      - name: Install pinned toolchain
+        run: rustup show
+
       - uses: Swatinem/rust-cache@v2
 
-      # scripts/setup.sh is the single source of truth for what a working checkout
-      # needs: it reads rust-toolchain.toml, installs the pinned wasm-pack, runs
-      # `npm ci`, and finishes with `cargo test --workspace`. Calling it here rather
-      # than restating its steps means the deploy cannot drift from local setup, and
-      # nothing reaches the site that the test suite has not passed.
-      - name: Set up toolchains, install dependencies, run tests
-        run: ./scripts/setup.sh
+      # Read rather than repeated, because cargo-installed binaries are not covered
+      # by Cargo.lock and scripts/setup.sh is where that version is pinned. A rename
+      # there leaves this empty and the install fails loudly rather than silently
+      # fetching whatever is latest.
+      - name: Read the pinned wasm-pack version
+        run: |
+          version="$(sed -n 's/^WASM_PACK_VERSION="\(.*\)"$/\1/p' scripts/setup.sh)"
+          test -n "$version" || { echo "no WASM_PACK_VERSION in scripts/setup.sh" >&2; exit 1; }
+          echo "WASM_PACK_VERSION=$version" >> "$GITHUB_ENV"
+
+      # Fetches a prebuilt binary. `cargo install` builds wasm-pack from source, which
+      # costs more than the test run this job just stopped duplicating.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
+
+      - name: Install client dependencies
+        run: npm ci --prefix web
 
       - name: Build wasm bindings
         run: npm run wasm --prefix web
