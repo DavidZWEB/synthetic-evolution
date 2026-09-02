@@ -424,44 +424,13 @@ impl World {
         placed
     }
 
-    /// Replaces the tunables, refusing any change that would resize what is already
-    /// allocated.
+    /// Replaces the tunables.
     ///
-    /// Every constant is runtime config and tuning happens in the browser (spec §7.6),
-    /// but not every constant can move *mid-run*. The pool, the arenas, the plant
-    /// arrays, the spatial grid and the chemo field are sized once at construction, and
-    /// the render snapshot's JS views point into memory that must not move (spec §7.3).
-    /// Refusing is the honest answer: silently ignoring a field would make the inspector
-    /// disagree with the sim, and resizing would detach every view.
-    ///
-    /// Sensing radii may **shrink** freely — the grid's cells are then larger than they
-    /// need to be, which costs a little time and stays correct. Growing one past the
-    /// cell size built at construction would let a neighbour query miss agents it should
-    /// have found, which is silent and would look like a sensor bug.
-    ///
-    /// `plants.initial_fill` is read only at construction, so setting it here has no
-    /// effect and is not an error; its own doc says as much.
+    /// The policy — which fields may move on a running world and which are frozen by
+    /// what they sized — is `SimParams::check_retune`, where it can be read and tested
+    /// without a world to hand.
     pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
-        params.validate()?;
-        if params.world.max_agents != self.params.world.max_agents {
-            return Err(ParamError("world.max_agents is fixed for the life of a world"));
-        }
-        if params.world.size != self.params.world.size {
-            return Err(ParamError("world.size is fixed for the life of a world"));
-        }
-        if params.plants.max_plants != self.params.plants.max_plants {
-            return Err(ParamError(
-                "plants.max_plants is fixed for the life of a world",
-            ));
-        }
-        if params.chemo.cells != self.params.chemo.cells {
-            return Err(ParamError("chemo.cells is fixed for the life of a world"));
-        }
-        if params.sensing.max_sense_radius() > self.hash.cell_size() {
-            return Err(ParamError(
-                "sensing radius would outgrow the spatial grid built for this world",
-            ));
-        }
+        self.params.check_retune(&params, self.hash.cell_size())?;
         self.params = params;
         Ok(())
     }

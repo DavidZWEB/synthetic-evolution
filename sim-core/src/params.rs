@@ -388,6 +388,85 @@ impl core::fmt::Display for ParamError {
 impl core::error::Error for ParamError {}
 
 impl SimParams {
+
+    /// Whether `next` may replace these params on a world already running, given the
+    /// spatial grid's `grid_cell` extent.
+    ///
+    /// **Editable — nearly everything.** Every field of `body`, `metabolism`,
+    /// `movement`, `mutation`, `feeding`, `reproduction`, `chemo.decay`,
+    /// `chemo.diffuse`, `world.dt`, `world.founder_spread`, `plants` other than the two
+    /// below, `sensing` ranges within the limit below, and the `brain` fields that are
+    /// not topology (`tau_min`, `tau_max`, the oscillator periods, `weight_init_scale`).
+    /// That is the whole point of spec §7.6: tuning happens in the browser against a
+    /// running population, not in the compiler.
+    ///
+    /// **Frozen, because they size something already allocated:**
+    ///
+    /// | Field | What it sized |
+    /// |---|---|
+    /// | `world.max_agents` | the slot pool, every SoA array, all six arenas, the snapshot |
+    /// | `world.size` | the spatial grid's extent and the chemo field's |
+    /// | `plants.max_plants` | the plant arrays and their neighbour grid |
+    /// | `chemo.cells` | the field's cell arrays |
+    /// | `sensing.vision_rays`, `brain.hidden_neurons`, `brain.oscillators` | the founding topology, and through it every arena's stride |
+    ///
+    /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
+    /// read once when the larder is stocked. Refusing is the honest answer for all of
+    /// these — accepting a value that changes nothing makes the inspector disagree with
+    /// the sim, and honouring one would move memory that JS holds views over (spec §7.3).
+    ///
+    /// **Sensing ranges may shrink but not grow.** `vision_range` and `chemo_radius`
+    /// below the grid's cell size are fine: the cells are then larger than they need to
+    /// be, which costs a little time and stays correct. Above it, a neighbour query
+    /// would walk one ring of cells and miss agents beyond it — silently, and it would
+    /// read as a sensor bug rather than a params one (spec §2.3).
+    ///
+    /// Written here rather than on `World` because none of it is about a world: it is a
+    /// property of two `SimParams` and one number, which is what makes it testable
+    /// without building a simulation to ask.
+    pub fn check_retune(&self, next: &SimParams, grid_cell: f32) -> Result<(), ParamError> {
+        next.validate()?;
+
+        for (changed, message) in [
+            (
+                next.world.max_agents != self.world.max_agents,
+                "world.max_agents is fixed for the life of a world",
+            ),
+            (
+                next.world.size != self.world.size,
+                "world.size is fixed for the life of a world",
+            ),
+            (
+                next.plants.max_plants != self.plants.max_plants,
+                "plants.max_plants is fixed for the life of a world",
+            ),
+            (
+                next.chemo.cells != self.chemo.cells,
+                "chemo.cells is fixed for the life of a world",
+            ),
+            (
+                next.sensing.vision_rays != self.sensing.vision_rays
+                    || next.brain.hidden_neurons != self.brain.hidden_neurons
+                    || next.brain.oscillators != self.brain.oscillators,
+                "the founding topology is fixed for the life of a world; it sets every arena stride",
+            ),
+            (
+                next.plants.initial_fill != self.plants.initial_fill,
+                "plants.initial_fill is read once, when the larder is stocked",
+            ),
+        ] {
+            if changed {
+                return Err(ParamError(message));
+            }
+        }
+
+        if next.sensing.max_sense_radius() > grid_cell {
+            return Err(ParamError(
+                "sensing radius would outgrow the spatial grid built for this world",
+            ));
+        }
+        Ok(())
+    }
     /// `!(x > 0.0)` rather than `x <= 0.0` throughout: the negated form also rejects
     /// NaN, which is the shape a bad value arrives in from JSON.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -623,6 +702,109 @@ impl Default for ChemoParams {
 
 #[cfg(test)]
 mod tests {
+    /// Retuning policy, exercised without building a world — which is why it lives on
+    /// `SimParams` rather than on `World`.
+    mod retune {
+        use super::*;
+
+        const GRID_CELL: f32 = 50.0;
+
+        fn pair() -> (SimParams, SimParams) {
+            let mut base = SimParams::default();
+            // Both radii comfortably inside the cell, so a test about some other field
+            // cannot be passing on the sensing check instead.
+            base.sensing.vision_range = 20.0;
+            base.sensing.chemo_radius = 20.0;
+            (base.clone(), base)
+        }
+
+        #[test]
+        fn ordinary_tuning_goes_through() {
+            let (current, mut next) = pair();
+            next.metabolism.base *= 3.0;
+            next.movement.drag = 0.4;
+            next.reproduction.threshold = 200.0;
+            next.mutation.weight_perturb_sigma = 0.9;
+            next.feeding.reach = 6.0;
+            next.chemo.decay = vec![0.5; next.chemo.decay.len()];
+            next.world.dt = 1.0 / 30.0;
+            next.world.founder_spread = 0.2;
+            next.body.size = 1.0;
+            assert!(current.check_retune(&next, GRID_CELL).is_ok());
+        }
+
+        #[test]
+        fn anything_that_sized_an_allocation_is_frozen() {
+            let cases: [(&str, fn(&mut SimParams)); 4] = [
+                ("world.max_agents", |p| p.world.max_agents += 1),
+                ("world.size", |p| p.world.size += 1.0),
+                ("plants.max_plants", |p| p.plants.max_plants += 1),
+                ("chemo.cells", |p| p.chemo.cells[0] += 1),
+            ];
+            for (name, mutate) in cases {
+                let (current, mut next) = pair();
+                mutate(&mut next);
+                assert!(
+                    current.check_retune(&next, GRID_CELL).is_err(),
+                    "{name} was accepted"
+                );
+            }
+        }
+
+        #[test]
+        fn the_founding_topology_is_frozen() {
+            // These three set the founder's neuron and connection counts, which fix every
+            // arena's stride at construction. Changing one at runtime does nothing at all
+            // today, and a value that silently does nothing is the thing `set_params`
+            // exists to refuse.
+            let cases: [(&str, fn(&mut SimParams)); 3] = [
+                ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
+                ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
+                ("brain.oscillators", |p| p.brain.oscillators += 1),
+            ];
+            for (name, mutate) in cases {
+                let (current, mut next) = pair();
+                mutate(&mut next);
+                assert!(
+                    current.check_retune(&next, GRID_CELL).is_err(),
+                    "{name} was accepted"
+                );
+            }
+        }
+
+        #[test]
+        fn a_construction_only_field_is_refused_rather_than_ignored() {
+            let (current, mut next) = pair();
+            next.plants.initial_fill = 0.25;
+            assert!(current.check_retune(&next, GRID_CELL).is_err());
+        }
+
+        #[test]
+        fn sensing_may_shrink_but_not_outgrow_the_grid() {
+            let (current, mut smaller) = pair();
+            smaller.sensing.vision_range = GRID_CELL * 0.5;
+            assert!(current.check_retune(&smaller, GRID_CELL).is_ok());
+
+            let (current, mut exact) = pair();
+            exact.sensing.vision_range = GRID_CELL;
+            assert!(
+                current.check_retune(&exact, GRID_CELL).is_ok(),
+                "a radius of exactly one cell still fits one ring"
+            );
+
+            let (current, mut bigger) = pair();
+            bigger.sensing.chemo_radius = GRID_CELL * 1.01;
+            assert!(current.check_retune(&bigger, GRID_CELL).is_err());
+        }
+
+        #[test]
+        fn an_invalid_value_is_still_invalid() {
+            let (current, mut next) = pair();
+            next.world.founder_spread = 0.9;
+            assert!(current.check_retune(&next, GRID_CELL).is_err());
+        }
+    }
+
     use super::*;
 
     #[test]
