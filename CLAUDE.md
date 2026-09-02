@@ -180,8 +180,12 @@ follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena
 back as a reviewer would — `/code-review`, or `gh pr diff` — and report the findings in the
 same reply that hands over the PR. What to look for, roughly in the order things go wrong here:
 
-- **The five invariants.** The lint test catches two of them. Determinism, no allocation in
-  the tick, and "every tunable is runtime config" are on you.
+- **The five invariants.** `tests/invariants.rs` scans for 1–3 lexically and `no_alloc.rs`
+  measures 4, so the review's job is the part a grep cannot see: a constant hardcoded where
+  a `SimParams` field belongs — invariant 5, which nothing tests — and determinism that is
+  semantic rather than textual, such as a summation whose order varies with input, or
+  iteration driven by anything but agent index. The golden hash catches that second class
+  from M8 onward; until M8 this review is the only thing that does.
 - **The load-bearing and strange.** Dead genome fields, the clamped elevation param, deferred
   births. Check each one still has a comment naming the spec section that justifies it —
   these are what a later tidy-up removes.
