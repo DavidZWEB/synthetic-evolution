@@ -136,9 +136,12 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
-            // Opened against an empty world: plants start bare and no agent exists yet,
-            // so every joule that ever appears has to arrive through `grow_plants`.
-            ledger: EnergyLedger::opening(0.0),
+            // Opened against whatever the larder was stocked with, so a pre-filled
+            // world is a boundary condition rather than 240,000 joules of drift. The
+            // same reasoning as a founder's tank, which `spawn_founder` records as
+            // input: energy present before the first tick still has to be accounted
+            // for (spec §5.1).
+            ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
             plants,

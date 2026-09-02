@@ -284,6 +284,23 @@ pub struct PlantParams {
     /// second. This is what gives the chemo sensor a food gradient to climb in
     /// Phase 1, before any agent can emit anything.
     pub scent_rate: f32,
+    /// Fraction of [`Self::max_energy`] each plant holds when the world is created.
+    ///
+    /// **Defaults to a full larder, and starting empty was a bug rather than a
+    /// choice.** Plants used to seed at zero, which made the opening state of every
+    /// world one no ecology would ever be in: filling the larder takes
+    /// `max_energy * max_plants / energy_input_rate` seconds — 400 s, or 24,000 ticks,
+    /// at these defaults — while a founder on a full tank lives about 250. Generation 0
+    /// therefore starved in a world containing, across its whole lifetime, about
+    /// 0.6 joules per plant: a tick and a half of upkeep. Every measurement taken
+    /// against that world was really measuring the empty larder, which reads as a
+    /// foraging failure and invites weakening a metabolic cost to fix it (spec §10).
+    ///
+    /// A fraction rather than an absolute, so it keeps its meaning when `max_energy`
+    /// moves. Filled uniformly and without drawing from the world's RNG: a random fill
+    /// would consume draws here and shift every genome scalar downstream of it, and
+    /// uniform is the saturated state `grow` converges to anyway (spec §5.1).
+    pub initial_fill: f32,
     /// The colour a `vision_ray` reports when it hits a plant.
     ///
     /// **Plants are visible as well as smellable — decided here, at M7.** The
@@ -448,6 +465,9 @@ impl SimParams {
         {
             return Err(ParamError("plants.signature must be in [0, 1] per channel"));
         }
+        if !(0.0..=1.0).contains(&self.plants.initial_fill) {
+            return Err(ParamError("plants.initial_fill must be in [0, 1]"));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -575,6 +595,7 @@ impl Default for PlantParams {
             max_energy: 60.0,
             radius: 2.0,
             scent_rate: 0.02,
+            initial_fill: 1.0,
             signature: [0.2, 0.8, 0.25],
         }
     }

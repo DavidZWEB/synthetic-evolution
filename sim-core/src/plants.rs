@@ -64,9 +64,15 @@ impl Plants {
         let mut cells = vec![0u32; count];
         hash.rebuild(&position, &alive, &mut cells);
 
+        // Stocked at construction, uniformly and without touching `rng`. A world whose
+        // autotrophs have never run is not a state any ecology passes through, and
+        // founders spawned into one starve long before it fills — see
+        // `PlantParams::initial_fill`.
+        let stock = params.plants.initial_fill * params.plants.max_energy;
+
         Self {
             position,
-            energy: vec![0.0; count],
+            energy: vec![stock; count],
             alive,
             hash,
         }
@@ -174,8 +180,15 @@ mod tests {
     use crate::params::ChemoParams;
 
     fn world() -> (Plants, SimParams) {
+        filled(1.0)
+    }
+
+    /// A world stocked to `fill` of `max_energy`. Growth can only be measured from an
+    /// empty larder, which is no longer the default — see `PlantParams::initial_fill`.
+    fn filled(fill: f32) -> (Plants, SimParams) {
         let mut params = SimParams::default();
         params.plants.max_plants = 200;
+        params.plants.initial_fill = fill;
         let mut rng = Rng::from_seed(4);
         (Plants::new(&params, &mut rng), params)
     }
@@ -201,7 +214,7 @@ mod tests {
 
     #[test]
     fn growth_absorbs_the_input_rate_while_there_is_room() {
-        let (mut plants, params) = world();
+        let (mut plants, params) = filled(0.0);
         let dt = params.world.dt;
         let absorbed = plants.grow(&params.plants, dt);
         let expected = params.plants.energy_input_rate * dt;
@@ -210,6 +223,28 @@ mod tests {
             "absorbed {absorbed}, input was {expected}"
         );
         assert!((plants.total_energy() - absorbed).abs() < 1e-2);
+    }
+
+    #[test]
+    fn the_larder_is_stocked_before_the_first_tick() {
+        // Founders live ~250 ticks and an empty larder takes ~24,000 to fill, so a world
+        // that starts bare is one where generation 0 never sees food at all. The default
+        // is a saturated ecosystem; `initial_fill` is how you ask for anything else.
+        let (full, params) = world();
+        let ceiling = params.plants.max_energy * full.len() as f32;
+        assert!((full.total_energy() - ceiling).abs() < 1e-1);
+
+        let (half, params) = filled(0.5);
+        assert!((half.total_energy() - ceiling * 0.5).abs() < 1e-1);
+
+        let (bare, _) = filled(0.0);
+        assert_eq!(bare.total_energy(), 0.0);
+
+        // Stocking must not consume RNG draws: a fill that varied the stream would move
+        // every genome scalar drawn after it, so two worlds differing only in how full
+        // the larder is would share no lineage at all.
+        assert_eq!(full.position(), bare.position());
+        let _ = params;
     }
 
     #[test]
