@@ -181,6 +181,11 @@ fn a_whole_tick_of_systems_never_allocates() {
     // that reallocated would be an allocation inside step 10.
     world.charge_metabolism();
     world.resolve_deaths();
+    // Warm the birth path too: a birth copies a genome into the world's scratch buffer
+    // and claims six arena blocks, and any of those reallocating is an allocation in
+    // step 10.
+    world.resolve_births();
+    world.advance_tick();
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
@@ -189,10 +194,13 @@ fn a_whole_tick_of_systems_never_allocates() {
             world.step_brains();
             world.drive_effectors();
             world.integrate_movement();
+            world.resolve_feeding();
             world.grow_plants();
             world.update_chemo();
             world.charge_metabolism();
             world.resolve_deaths();
+            world.resolve_births();
+            world.advance_tick();
         }
         std::hint::black_box(&world);
     });

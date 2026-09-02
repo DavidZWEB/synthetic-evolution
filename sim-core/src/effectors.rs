@@ -84,6 +84,20 @@ impl Intents {
         self.reproduce.fill(0.0);
     }
 
+    /// Drops one agent's requests, for a slot being handed to a new occupant.
+    ///
+    /// The intent buffer is the only per-agent array that does not live in `Agents`, so
+    /// it is the one that misses `Agents::init`'s guarantee that nothing survives from a
+    /// slot's previous tenant. Without this a newborn claiming a recycled slot carries
+    /// the dead agent's last thrust and ingest requests into its first tick.
+    pub fn clear_slot(&mut self, index: usize) {
+        debug_assert!(index < self.thrust.len(), "slot out of range");
+        self.thrust[index] = 0.0;
+        self.turn[index] = 0.0;
+        self.ingest[index] = 0.0;
+        self.reproduce[index] = 0.0;
+    }
+
     pub fn capacity(&self) -> u32 {
         self.thrust.len() as u32
     }
@@ -274,6 +288,18 @@ mod tests {
             }
         }
         assert_eq!(effector_count(&genes), 0, "a dangling effector compiled");
+    }
+
+    #[test]
+    fn clearing_one_slot_leaves_the_others_alone() {
+        let mut intents = Intents::with_capacity(4);
+        intents.thrust[1] = 5.0;
+        intents.thrust[2] = 7.0;
+        intents.reproduce[2] = 1.0;
+        intents.clear_slot(2);
+        assert_eq!(intents.thrust[2], 0.0);
+        assert_eq!(intents.reproduce[2], 0.0);
+        assert_eq!(intents.thrust[1], 5.0, "cleared a neighbour's request");
     }
 
     #[test]

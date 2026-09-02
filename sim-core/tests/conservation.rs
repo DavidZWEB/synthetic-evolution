@@ -15,7 +15,9 @@
 //!
 //! Transfers are deliberately absent from the ledger, which is what makes this catch
 //! mistakes nobody predicted: energy moving between two holders cancels, so a transfer
-//! written wrongly shows up as drift with no test having to anticipate it.
+//! written wrongly shows up as drift with no test having to anticipate it. Both of them
+//! now exist — an agent eating a plant, and a parent splitting its tank with a child —
+//! and neither is recorded anywhere. If either is wrong, these tests say so.
 
 use glam::Vec3;
 use sim_core::params::SimParams;
@@ -29,10 +31,13 @@ fn tick(world: &mut World) {
     world.step_brains();
     world.drive_effectors();
     world.integrate_movement();
+    world.resolve_feeding();
     world.grow_plants();
     world.update_chemo();
     world.charge_metabolism();
     world.resolve_deaths();
+    world.resolve_births();
+    world.advance_tick();
 }
 
 fn populated(seed: u64, agents: u32) -> (World, SimParams) {
@@ -173,4 +178,181 @@ fn a_world_at_carrying_capacity_stops_absorbing() {
         world.ledger().input()
     );
     assert!(relative_drift(&world) < 1e-4);
+}
+
+/// A world with a handful of grown plants and one agent standing on the first of them.
+///
+/// Everything the reproduction tests need is earned through the economy rather than
+/// written into the arrays: an agent made rich by assignment would be holding joules the
+/// ledger never saw, and every drift assertion after it would be measuring the setup.
+fn fed_agent(seed: u64, target: f32) -> (World, SimParams, sim_core::ids::AgentId) {
+    let mut params = SimParams::default();
+    params.world.max_agents = 4;
+    params.plants.max_plants = 6;
+    let mut world = World::new(seed, params.clone()).expect("valid params");
+
+    // Grow the plants first, so there is something to eat.
+    for _ in 0..2_000 {
+        world.grow_plants();
+    }
+    let larder = world.plants().position()[0];
+    let id = world.spawn_founder(larder).expect("room");
+
+    // Eat until rich enough, without any of the rest of the tick running — this is
+    // about the transfer, not about surviving long enough to make it.
+    for _ in 0..20_000 {
+        if world.agents().energy[id.index()] >= target {
+            break;
+        }
+        world.intents_mut().ingest[id.index()] = 1.0;
+        world.resolve_feeding();
+        world.grow_plants();
+    }
+    (world, params, id)
+}
+
+#[test]
+fn eating_moves_energy_without_creating_it() {
+    // The first transfer. An agent gaining what a plant loses is invisible to the ledger
+    // by construction, so a rate credited to the agent but not deducted from the plant —
+    // or deducted twice — shows up here and nowhere else.
+    let mut params = SimParams::default();
+    params.world.max_agents = 4;
+    params.plants.max_plants = 6;
+    let mut world = World::new(13, params.clone()).expect("valid params");
+    for _ in 0..2_000 {
+        world.grow_plants();
+    }
+    let larder = world.plants().position()[0];
+    let id = world.spawn_founder(larder).expect("room");
+
+    let plants_before = world.plants().total_energy();
+    let agent_before = world.agents().energy[id.index()];
+    let stock_before = world.total_energy();
+
+    world.intents_mut().ingest[id.index()] = 1.0;
+    world.resolve_feeding();
+
+    let eaten = world.agents().energy[id.index()] - agent_before;
+    assert!(eaten > 0.0, "nothing was eaten; is the gate right?");
+    assert!(
+        (world.plants().total_energy() - (plants_before - eaten)).abs() < 1e-3,
+        "the plant did not lose what the agent gained"
+    );
+    assert!(
+        (world.total_energy() - stock_before).abs() < 1e-3,
+        "eating changed the world's total energy"
+    );
+    assert!(relative_drift(&world) < 1e-4, "{:.6}", world.energy_drift());
+}
+
+#[test]
+fn an_agent_below_the_gate_does_not_eat() {
+    // The gate is what makes eating a decision. Without it every agent would feed
+    // constantly and the ingest effector would be decoration.
+    let (mut world, params, id) = fed_agent(17, 120.0);
+    let plants_before = world.plants().total_energy();
+    let agent_before = world.agents().energy[id.index()];
+
+    world.intents_mut().ingest[id.index()] = params.feeding.gate - 0.01;
+    world.resolve_feeding();
+    assert_eq!(
+        world.agents().energy[id.index()],
+        agent_before,
+        "ate anyway"
+    );
+    assert_eq!(world.plants().total_energy(), plants_before);
+}
+
+#[test]
+fn a_birth_splits_a_tank_rather_than_filling_one() {
+    // The second transfer, and the one most likely to be written as a grant: an
+    // offspring handed `start_energy` instead of a share of its parent conjures a full
+    // tank on every birth, and a population grows on free energy forever.
+    let (mut world, params, parent) = fed_agent(21, params_threshold());
+    assert!(
+        world.agents().energy[parent.index()] >= params.reproduction.threshold,
+        "the parent never got rich enough to breed"
+    );
+    // Age is not energy, so setting it directly leaves the books alone.
+    world.agents_mut().age[parent.index()] = params.reproduction.maturity_ticks;
+    world.intents_mut().reproduce[parent.index()] = 1.0;
+
+    let before = world.total_energy();
+    let parent_before = world.agents().energy[parent.index()];
+    let born = world.resolve_births();
+
+    assert_eq!(born, 1, "no offspring");
+    assert_eq!(world.population(), 2);
+    assert!(
+        (world.total_energy() - before).abs() < 1e-3,
+        "a birth changed the world's energy: {before} -> {}",
+        world.total_energy()
+    );
+    assert!(
+        world.agents().energy[parent.index()] < parent_before,
+        "the parent paid nothing for its child"
+    );
+    assert!(relative_drift(&world) < 1e-4, "{:.6}", world.energy_drift());
+}
+
+/// The reproduction threshold, so `fed_agent` knows how rich to get.
+fn params_threshold() -> f32 {
+    SimParams::default().reproduction.threshold
+}
+
+#[test]
+fn a_refused_birth_leaves_the_parent_whole() {
+    // At the population ceiling a birth is refused. Charging the parent for a child that
+    // never existed would destroy energy on the busiest tick of a run — and the ceiling
+    // is exactly when a run is busiest.
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 6;
+    let mut world = World::new(31, params.clone()).expect("valid params");
+    for _ in 0..2_000 {
+        world.grow_plants();
+    }
+    let larder = world.plants().position()[0];
+    let parent = world.spawn_founder(larder).expect("room for one");
+    for _ in 0..20_000 {
+        if world.agents().energy[parent.index()] >= params.reproduction.threshold {
+            break;
+        }
+        world.intents_mut().ingest[parent.index()] = 1.0;
+        world.resolve_feeding();
+        world.grow_plants();
+    }
+    world.agents_mut().age[parent.index()] = params.reproduction.maturity_ticks;
+    world.intents_mut().reproduce[parent.index()] = 1.0;
+
+    let held = world.agents().energy[parent.index()];
+    let stock = world.total_energy();
+    let born = world.resolve_births();
+
+    assert_eq!(born, 0, "spawned past the ceiling");
+    assert_eq!(
+        world.agents().energy[parent.index()],
+        held,
+        "the parent paid for a child that was never born"
+    );
+    assert!((world.total_energy() - stock).abs() < 1e-3);
+    assert!(relative_drift(&world) < 1e-4, "{:.6}", world.energy_drift());
+}
+
+#[test]
+fn a_population_that_eats_and_breeds_still_conserves() {
+    // Everything at once, for the span the milestone names. This is the run where a
+    // mistake in either transfer compounds: births make more eaters, eating funds more
+    // births, and a leak grows with the population rather than staying constant.
+    let (mut world, _) = populated(41, 150);
+    for t in 0..10_000 {
+        tick(&mut world);
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6} with {} alive",
+            world.energy_drift(),
+            world.population()
+        );
+    }
 }

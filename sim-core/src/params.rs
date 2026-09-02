@@ -28,6 +28,7 @@ pub struct SimParams {
     pub brain: BrainParams,
     pub reproduction: ReproductionParams,
     pub mutation: MutationParams,
+    pub feeding: FeedingParams,
     pub plants: PlantParams,
     pub chemo: ChemoParams,
 }
@@ -237,6 +238,33 @@ pub struct MutationParams {
     pub tau_perturb_factor: f32,
 }
 
+/// Eating. What an agent can draw from a plant it is touching, and when it asks.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FeedingParams {
+    /// Energy per tick an agent draws from the plant it is touching, at full drive.
+    ///
+    /// Per tick, matching [`MetabolismParams`], so the two can be compared directly:
+    /// this has to beat upkeep by enough that foraging pays, or eating is a way to
+    /// starve more slowly rather than a way to live (spec §5.1).
+    pub rate: f32,
+    /// Effector output above which the brain is asking to eat.
+    pub gate: f32,
+    /// How far past its own body an agent can reach, added to its size and the plant's
+    /// radius. Zero means it has to be in contact.
+    pub reach: f32,
+}
+
+impl Default for FeedingParams {
+    fn default() -> Self {
+        Self {
+            rate: 1.0,
+            gate: 0.5,
+            reach: 0.0,
+        }
+    }
+}
+
 /// The autotroph base. Non-brained entities that hold the energy entering the world.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -405,6 +433,12 @@ impl SimParams {
         }
         if self.reproduction.spawn_radius < 0.0 {
             return Err(ParamError("reproduction.spawn_radius must be non-negative"));
+        }
+        if !(self.feeding.rate >= 0.0) || !self.feeding.rate.is_finite() {
+            return Err(ParamError("feeding.rate must be non-negative"));
+        }
+        if self.feeding.reach < 0.0 {
+            return Err(ParamError("feeding.reach must be non-negative"));
         }
         if self
             .plants
@@ -629,6 +663,7 @@ mod tests {
             ("no chemo channels", |p| p.chemo.decay.clear()),
             // A colour is copied straight into a neuron's input, so an out-of-range one
             // pins every neuron an eye feeds — the unbounded-channel class M6 closed.
+            ("a negative feeding rate", |p| p.feeding.rate = -1.0),
             ("a plant colour outside [0, 1]", |p| {
                 p.plants.signature = [1.0e6, -50.0, f32::MAX]
             }),

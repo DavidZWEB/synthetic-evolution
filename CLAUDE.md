@@ -117,6 +117,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   plants.rs      the autotrophs: where every joule enters the world
   metabolism.rs  spec §5.2's cost function; what it costs to be alive for a tick
   ledger.rs      every joule in and out, so conservation is measured not assumed
+  feeding.rs     moving energy from a plant into the agent touching it
+  reproduction.rs when an agent may bud, and where the offspring lands
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands
