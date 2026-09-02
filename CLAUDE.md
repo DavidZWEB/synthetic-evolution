@@ -168,6 +168,55 @@ These are separate loops and must stay separate.
 
 **Where a default departs from spec §5.5, the reason lives on the field.** Not in a commit message and not here — on the `SimParams` doc comment, where the next person to tune it will be looking. Add to those notes rather than replacing them when the numbers move.
 
+## Landing changes
+
+**Never commit to `main`.** Every change goes on a branch and lands through a pull request —
+code, docs, tuning notes, a one-line typo fix. There is no "it's only documentation"
+exception: a docs change that records a decision is exactly the kind worth a second pair of
+eyes, because nothing else in the repo will catch it if the reasoning is wrong. Branch names
+follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena-empty-block`.
+
+**Then review the PR you just raised.** Opening it is not the end of the task. Read the diff
+back as a reviewer would — `/code-review`, or `gh pr diff` — and report the findings in the
+same reply that hands over the PR. What to look for, roughly in the order things go wrong here:
+
+- **The five invariants.** `tests/invariants.rs` scans for 1–3 lexically and `no_alloc.rs`
+  measures 4, so the review's job is the part a grep cannot see: a constant hardcoded where
+  a `SimParams` field belongs — invariant 5, which nothing tests — and determinism that is
+  semantic rather than textual, such as a summation whose order varies with input, or
+  iteration driven by anything but agent index. The golden hash catches that second class
+  from M8 onward; until M8 this review is the only thing that does.
+- **The load-bearing and strange.** Dead genome fields, the clamped elevation param, deferred
+  births. Check each one still has a comment naming the spec section that justifies it —
+  these are what a later tidy-up removes.
+- **Comments.** Why and not what, citing `docs/synthetic-evolution-spec.md` and never this
+  file (see *Comments* above).
+- **Shape.** A module doc on every file, ~400 lines a smell and 500 a split, systems taking
+  the slices they need rather than `&mut World`, newtype IDs at the boundaries, `pub` as a
+  decision.
+- **Ordinary correctness.** Inverted conditions, off-by-one, the other callers of a changed
+  function, a validation quietly dropped.
+- **Tests that assert less than they appear to.** A misparenthesised `abs`, a threshold
+  loose enough to pass either way, a fixture rich enough that the thing under test never
+  binds. A green test that cannot fail is worse than no test.
+
+**Fixes from the review land as a second commit on the PR** — never amended into the first.
+The audience is the human reading the open PR, not `main`'s history: a separate commit hands
+them the corrections as a diff of their own, and lets GitHub show what moved since they last
+looked. Amending destroys precisely that, and makes a review that caught a real error look
+identical to one that caught nothing.
+
+**PRs squash on merge**, so the branch collapses to a single commit on `main`. GitHub
+prefills that commit's body by concatenating the branch's messages, which is why each one is
+still worth writing properly — but the prefill is editable and the title falls back to the
+PR's, so read the squash message before merging rather than trusting it. Anything *Working
+style* requires has to survive into it, the note explaining a golden-hash update above all.
+
+Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
+decide. Say what you reviewed even when you found nothing — an explicit "here is what I
+checked and it was clean" is worth reading, and a silent PR is indistinguishable from an
+unreviewed one.
+
 ## Working style
 
 - Behavior changes require updating the golden hash deliberately, in the same commit, with a note on why the behavior changed. An unexplained hash update is a red flag.
