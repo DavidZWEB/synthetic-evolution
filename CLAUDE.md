@@ -168,6 +168,39 @@ These are separate loops and must stay separate.
 
 **Where a default departs from spec §5.5, the reason lives on the field.** Not in a commit message and not here — on the `SimParams` doc comment, where the next person to tune it will be looking. Add to those notes rather than replacing them when the numbers move.
 
+## Landing changes
+
+**Never commit to `main`.** Every change goes on a branch and lands through a pull request —
+code, docs, tuning notes, a one-line typo fix. There is no "it's only documentation"
+exception: a docs change that records a decision is exactly the kind worth a second pair of
+eyes, because nothing else in the repo will catch it if the reasoning is wrong. Branch names
+follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena-empty-block`.
+
+**Then review the PR you just raised.** Opening it is not the end of the task. Read the diff
+back as a reviewer would — `/code-review`, or `gh pr diff` — and report the findings in the
+same reply that hands over the PR. What to look for, roughly in the order things go wrong here:
+
+- **The five invariants.** The lint test catches two of them. Determinism, no allocation in
+  the tick, and "every tunable is runtime config" are on you.
+- **The load-bearing and strange.** Dead genome fields, the clamped elevation param, deferred
+  births. Check each one still has a comment naming the spec section that justifies it —
+  these are what a later tidy-up removes.
+- **Comments.** Why and not what, citing `docs/synthetic-evolution-spec.md` and never this
+  file (see *Comments* above).
+- **Shape.** A module doc on every file, ~400 lines a smell and 500 a split, systems taking
+  the slices they need rather than `&mut World`, newtype IDs at the boundaries, `pub` as a
+  decision.
+- **Ordinary correctness.** Inverted conditions, off-by-one, the other callers of a changed
+  function, a validation quietly dropped.
+- **Tests that assert less than they appear to.** A misparenthesised `abs`, a threshold
+  loose enough to pass either way, a fixture rich enough that the thing under test never
+  binds. A green test that cannot fail is worse than no test.
+
+Fix what is plainly wrong before handing over; raise what is a judgment call as a comment and
+let the human decide. Say what you reviewed even when you found nothing — an explicit "here
+is what I checked and it was clean" is worth reading, and a silent PR is indistinguishable
+from an unreviewed one.
+
 ## Working style
 
 - Behavior changes require updating the golden hash deliberately, in the same commit, with a note on why the behavior changed. An unexplained hash update is a red flag.
