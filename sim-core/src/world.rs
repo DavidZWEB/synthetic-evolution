@@ -16,6 +16,7 @@ use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
+use crate::command::{Command, Kind};
 use crate::effectors::{self, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
@@ -85,6 +86,13 @@ pub struct World {
     /// Agents that asked to reproduce and can, resolved at step 10 after the deaths.
     /// Owned and sized for the same reason.
     pub(crate) breeding: Vec<AgentId>,
+    /// Requests from outside the simulation, waiting for the tick they are stamped for
+    /// (spec §2.2b). Kept in submission order, which is what makes two runs fed the same
+    /// commands apply them the same way.
+    pub(crate) commands: Vec<Command>,
+    /// The ones due this tick, lifted out before any is applied so that a command
+    /// cannot enqueue another and have it run inside the same tick.
+    pub(crate) due_commands: Vec<Command>,
 }
 
 impl World {
@@ -143,6 +151,11 @@ impl World {
             ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
+            // Not sized at capacity: commands arrive at human speed, a handful per
+            // second at most, and reserving a slot per agent for them would cost more
+            // memory than the queue will ever hold.
+            commands: Vec::new(),
+            due_commands: Vec::new(),
             plants,
             params,
         })
@@ -365,6 +378,60 @@ impl World {
     #[inline]
     pub fn plants(&self) -> &Plants {
         &self.plants
+    }
+
+    /// Queues a request from outside the simulation (spec §2.2b).
+    ///
+    /// Nothing happens here beyond the push: the command applies at the top of the tick
+    /// it is stamped for. Applying on arrival would let a shell mutate the world
+    /// half-way through a tick, which is the same hazard the intent buffer exists to
+    /// prevent one layer down.
+    pub fn push_command(&mut self, command: Command) {
+        self.commands.push(command);
+    }
+
+    /// How many commands are still waiting.
+    #[inline]
+    pub fn pending_commands(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Applies every command due at the current tick, in submission order.
+    ///
+    /// Runs before step 1 so that an agent placed this tick perceives, thinks, and moves
+    /// like any other — arriving mid-tick would give it a partial one, and which part
+    /// would depend on where the queue was drained.
+    pub(crate) fn apply_commands(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
+        let mut due = core::mem::take(&mut self.due_commands);
+        let mut pending = core::mem::take(&mut self.commands);
+        due.clear();
+
+        // Partition in place. Both halves keep submission order, and taking the whole
+        // due set out before applying any means a command cannot enqueue another into
+        // its own tick.
+        let tick = self.tick;
+        let mut i = 0;
+        while i < pending.len() {
+            if pending[i].apply_at_tick <= tick {
+                due.push(pending.remove(i));
+            } else {
+                i += 1;
+            }
+        }
+        self.commands = pending;
+
+        for command in core::mem::take(&mut due) {
+            match command.kind {
+                // A refused spawn is the population ceiling, not an error (spec §2.2b).
+                Kind::SpawnFounder { position } => {
+                    self.spawn_founder(position);
+                }
+            }
+        }
+        self.due_commands = due;
     }
 
     /// Every joule the world currently holds, in plants and in agents.

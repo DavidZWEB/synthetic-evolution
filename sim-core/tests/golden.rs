@@ -88,7 +88,7 @@ fn the_shipped_defaults_hash_to_their_golden_value() {
     // stopped covering agents at all.
     let world = advanced(42, shipped(), 200, 300);
     assert!(world.population() > 0, "pinned a world with nothing left in it");
-    assert_eq!(world.state_hash(), 0x8f85_89e2_b663_bc69);
+    assert_eq!(world.state_hash(), 0xea06_56fd_0f18_2485);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn a_breeding_population_hashes_to_its_golden_value() {
         saw_a_birth(&world, 500),
         "nothing was born, so this pins a run that never reached resolve_births"
     );
-    assert_eq!(world.state_hash(), 0x00a9_fa9c_3c68_127f);
+    assert_eq!(world.state_hash(), 0x0cae_eeb2_e480_8e78);
 }
 
 #[test]

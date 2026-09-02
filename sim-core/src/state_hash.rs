@@ -11,10 +11,16 @@
 //! the question is not "does this matter today" but "could a change to it go unnoticed".
 //! `health` and `species_id` have no Phase 1 behaviour and are folded.
 //!
+//! Every variable-length run folds its **length first**. Without that, a genome of one
+//! gene followed by a plant could produce the same bytes as no genes followed by a
+//! differently-placed plant, and the hash would call two different worlds equal — the
+//! one failure mode a golden test cannot survive.
+//!
 //! Deliberately not folded: arena handles. Where an agent's genome happens to sit is
 //! allocator bookkeeping, and folding it would make the hash report a difference for a
 //! world that behaves identically. What the handles point *at* is folded instead.
 
+use crate::command::Kind;
 use crate::genome::Gene;
 use crate::world::World;
 
@@ -192,7 +198,9 @@ impl World {
             h.u32(agents.brain_units[i]);
             h.f32(agents.sensor_load[i]);
 
-            for gene in self.genome(id) {
+            let genome = self.genome(id);
+            h.u32(genome.len() as u32);
+            for gene in genome {
                 fold_gene(&mut h, gene);
             }
         }
@@ -201,15 +209,33 @@ impl World {
         // construction and folding them catches a world seeded from a different stream
         // even when every agent still agrees.
         let plants = self.plants();
+        h.u32(plants.len() as u32);
         for (&p, &e) in plants.position().iter().zip(plants.energy().iter()) {
             h.f32(p.x);
             h.f32(p.y);
             h.f32(e);
         }
 
+        // Commands not yet due are state too: two worlds identical in every other way
+        // but holding different queues diverge on the tick those queues come due.
+        h.u32(self.commands.len() as u32);
+        for command in &self.commands {
+            h.u64(command.apply_at_tick);
+            match &command.kind {
+                Kind::SpawnFounder { position } => {
+                    h.byte(0);
+                    h.f32(position.x);
+                    h.f32(position.y);
+                    h.f32(position.z);
+                }
+            }
+        }
+
         // The field carries into the next tick, so it is state and not a view of state.
         let field = self.chemo();
+        h.u32(field.channels() as u32);
         for c in 0..field.channels() {
+            h.u32(field.channel(c).len() as u32);
             for &v in field.channel(c) {
                 h.f32(v);
             }

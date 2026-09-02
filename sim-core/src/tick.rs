@@ -49,6 +49,8 @@ impl World {
     /// enters the world (spec §5.1), and its scent deposit is the "deposit" half of
     /// step 8, so it has to land before the diffuse and decay that follow it.
     pub fn step(&mut self) {
+        // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
+        self.apply_commands();
         self.rebuild_spatial_hash(); // 1
         self.perceive_all(); // 2
         self.step_brains(); // 3

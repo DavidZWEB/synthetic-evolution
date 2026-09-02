@@ -189,18 +189,7 @@ fn a_whole_tick_of_systems_never_allocates() {
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
-            world.rebuild_spatial_hash();
-            world.perceive_all();
-            world.step_brains();
-            world.drive_effectors();
-            world.integrate_movement();
-            world.resolve_feeding();
-            world.grow_plants();
-            world.update_chemo();
-            world.charge_metabolism();
-            world.resolve_deaths();
-            world.resolve_births();
-            world.advance_tick();
+            world.step();
         }
         std::hint::black_box(&world);
     });

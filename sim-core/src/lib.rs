@@ -12,6 +12,7 @@ pub mod agents;
 pub mod arena;
 pub mod brain;
 pub mod chemo;
+pub mod command;
 pub mod crossover;
 pub mod effectors;
 pub mod feeding;
