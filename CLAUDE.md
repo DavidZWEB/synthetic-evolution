@@ -200,18 +200,16 @@ same reply that hands over the PR. What to look for, roughly in the order things
   loose enough to pass either way, a fixture rich enough that the thing under test never
   binds. A green test that cannot fail is worse than no test.
 
-**Fixes from the review land as a second commit on the same PR** — never amended into the
-first, never squashed onto it. The history is the evidence that the step happened: a fix
-folded into the original commit makes a review that caught something look exactly like a
-review that caught nothing, and leaves the next person unable to tell whether one ran at
-all. Two commits — *the change*, then *what reviewing it found* — also give the human a
-diff of the correction on its own, which is usually the more interesting half.
+**Fixes from the review land as a second commit on the PR** — never amended into the first.
+The audience is the human reading the open PR, not `main`'s history: a separate commit hands
+them the corrections as a diff of their own, and lets GitHub show what moved since they last
+looked. Amending destroys precisely that, and makes a review that caught a real error look
+identical to one that caught nothing.
 
-From M8 this composes with the golden hash instead of fighting it, but say so explicitly: a
-review fix that changes behaviour updates the hash in the fix commit, so the branch carries
-two hash updates for one feature. That is correct and it still reads as the red flag
-*Working style* warns about, so the second commit message has to name the first update it
-supersedes.
+**PRs squash on merge**, so the branch collapses to a single commit on `main`. That makes
+the squash message — not the individual commit messages — the only one that survives, so it
+is where anything *Working style* requires has to end up, the note explaining a golden-hash
+update above all.
 
 Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
 decide. Say what you reviewed even when you found nothing — an explicit "here is what I
