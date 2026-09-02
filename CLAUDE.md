@@ -200,10 +200,17 @@ same reply that hands over the PR. What to look for, roughly in the order things
   loose enough to pass either way, a fixture rich enough that the thing under test never
   binds. A green test that cannot fail is worse than no test.
 
-Fix what is plainly wrong before handing over; raise what is a judgment call as a comment and
-let the human decide. Say what you reviewed even when you found nothing — an explicit "here
-is what I checked and it was clean" is worth reading, and a silent PR is indistinguishable
-from an unreviewed one.
+**Fixes from the review land as a second commit on the same PR** — never amended into the
+first, never squashed onto it. The history is the evidence that the step happened: a fix
+folded into the original commit makes a review that caught something look exactly like a
+review that caught nothing, and leaves the next person unable to tell whether one ran at
+all. Two commits — *the change*, then *what reviewing it found* — also give the human a
+diff of the correction on its own, which is usually the more interesting half.
+
+Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
+decide. Say what you reviewed even when you found nothing — an explicit "here is what I
+checked and it was clean" is worth reading, and a silent PR is indistinguishable from an
+unreviewed one.
 
 ## Working style
 
