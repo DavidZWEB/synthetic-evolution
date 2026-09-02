@@ -4,8 +4,8 @@
 //! every term here is what makes some strategy lose. Without `k_brain` and `k_sensor`,
 //! "grow every organ" has no downside and genomes bloat until the sim crawls; without
 //! `base`, sitting still is free and nothing ever has to forage; without `k_move`,
-//! sprinting everywhere is as cheap as drifting. CLAUDE.md lists these under *do not
-//! simplify* for exactly that reason — a metric that improves when a cost is weakened
+//! sprinting everywhere is as cheap as drifting. None of these terms is a tuning knob
+//! to be relaxed when a number looks bad — a metric that improves when a cost is weakened
 //! is usually a simulation that has quietly stopped selecting for anything.
 //!
 //! The whole charge is dissipation: it leaves the world through the ledger and is not

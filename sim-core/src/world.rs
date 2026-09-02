@@ -3,7 +3,7 @@
 //! A process must be able to hold several worlds at once — the native shell runs
 //! parameter sweeps that way, and the random-brain control population is a second
 //! world beside the first. That is why nothing here is `static`, including the
-//! innovation counter, which is a plain field (spec §7.2, CLAUDE.md invariant 3).
+//! innovation counter, which is a plain field (spec §7.2, §3.1).
 //!
 //! Deliberately not here yet: the tick. `step()` arrives at M8 with the 11 phases of
 //! spec §2.4 in `tick.rs`; this module owns state, lifecycle, and the thin wiring that
@@ -284,16 +284,21 @@ impl World {
     /// Returns a slot and its arena blocks. Despawning a dead agent is a no-op, so a
     /// double death cannot free the same block twice.
     ///
+    /// **Death is the only thing that calls this in the simulation today** — one call
+    /// site, in [`Self::resolve_deaths`], for an agent that starved. It is public
+    /// because removal has to be reachable from outside the tick: `no_alloc` exercises
+    /// it directly, and the `Command` enum at M8 is the route a client will use to take
+    /// an agent out of a running world.
+    ///
     /// **Whatever the agent still holds is dissipated here**, so removing one can never
-    /// delete energy the world was accounting for (spec §5.1). Starvation already
-    /// drained it to zero and dissipates nothing; anything else — a culled agent, a
-    /// Phase 3 corpse that has already transferred its share — has its remainder
-    /// charged to the ledger on the way out.
+    /// delete energy the world was accounting for (spec §5.1). A starved agent was
+    /// already drained to zero and dissipates nothing, so this costs the normal path
+    /// nothing; it is what makes every *other* route to removal safe, including the
+    /// tests that despawn a living agent today and the Phase 3 corpse that will
+    /// transfer part of one before removing it.
     ///
     /// Unlike [`Self::spawn`], this can own its accounting: creation genuinely differs
-    /// between a founder and an offspring, while removal has one correct rule. Leaving
-    /// it to callers meant a public method that silently destroyed energy, which is
-    /// invisible until a conservation test happens to cover that path.
+    /// between a founder and an offspring, while removal has one correct rule.
     pub fn despawn(&mut self, id: AgentId) -> bool {
         if !self.pool.is_alive(id) {
             return false;

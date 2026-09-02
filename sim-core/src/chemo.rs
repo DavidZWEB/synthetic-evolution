@@ -516,7 +516,7 @@ mod tests {
     fn an_out_of_range_channel_reads_blind_rather_than_panicking() {
         // A sensor gene's channel param is a mutable float. Nothing stops a lineage
         // from naming a channel that does not exist, and `sim-core` must not panic in
-        // release on anything that passed validation (CLAUDE.md).
+        // release on anything that passed validation.
         let mut f = field();
         f.deposit(99, Vec3::ZERO, 5.0);
         assert_eq!(f.sample(99, Vec3::ZERO), 0.0);

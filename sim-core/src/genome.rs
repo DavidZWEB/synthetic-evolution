@@ -26,7 +26,8 @@ use crate::ids::InnovationId;
 /// Parameter slots on a sensor or effector gene.
 ///
 /// Fixed-size, not a `Vec`: a genome is copied on every birth, and a heap allocation
-/// per gene would allocate in the tick (CLAUDE.md invariant 4). Four covers the widest
+/// per gene would allocate in the tick, and the tick never allocates (spec §2.2a).
+/// Four covers the widest
 /// entry in the spec §4.1/§4.2 catalog — `vision_ray`'s azimuth, elevation, range, fov.
 pub const GENE_PARAMS: usize = 4;
 
@@ -355,8 +356,8 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
 /// the pattern.
 ///
 /// Counted, because what this term exists to bound is *genome* growth, not tick cost.
-/// CLAUDE.md's reason for it is that "genomes bloat without limit and the sim slows to
-/// a crawl over hours", and the thing that actually crawls is the 11 KB copied on every
+/// The term exists because genomes otherwise grow monotonically and the sim slows to a
+/// crawl over hours (spec §5.2), and the thing that actually crawls is the 11 KB copied on every
 /// birth and held for every living agent. A disabled gene costs all of that; it saves
 /// only a multiply-add. Charging only for enabled connections would let a lineage
 /// accumulate thousands of disabled ones for free, which is precisely the bloat the

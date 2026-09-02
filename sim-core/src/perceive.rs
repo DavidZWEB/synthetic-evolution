@@ -55,7 +55,7 @@ pub struct Sensor {
 ///
 /// A bundle rather than eight parameters, and shared rather than mutable on purpose —
 /// "sensors query the world, they are not fed world state" is a load-bearing invariant
-/// (CLAUDE.md), and a type that cannot mutate is a cheaper way to hold it than a rule
+/// (spec §2.2c), and a type that cannot mutate is a cheaper way to hold it than a rule
 /// someone has to remember.
 #[derive(Clone, Copy)]
 pub struct WorldView<'a> {

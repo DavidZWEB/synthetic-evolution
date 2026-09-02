@@ -112,7 +112,7 @@ pub struct SpatialHash {
     /// `cell_starts[c]..cell_starts[c + 1]` indexes [`Self::entries`] for cell `c`.
     cell_starts: Vec<u32>,
     /// Per-cell write cursor for the scatter pass. A field, not a local, so a rebuild
-    /// allocates nothing (CLAUDE.md invariant 4).
+    /// allocates nothing (spec §2.2a).
     cursor: Vec<u32>,
     /// Live indices, grouped by cell and ascending within each cell.
     entries: Vec<u32>,

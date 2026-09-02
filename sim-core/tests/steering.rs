@@ -4,8 +4,8 @@
 //! which is what the milestone asks for and what makes the claim narrow: it says the
 //! sensorimotor chain closes correctly — perceive → think → act → move, with every sign
 //! convention agreeing — and says nothing about whether food-seeking *evolves*. That is
-//! spec §8's Phase 1 criterion, it needs plants and selection, and CLAUDE.md is explicit
-//! that a human has to watch it rather than a test asserting it (M12).
+//! spec §8's Phase 1 criterion, it needs plants and selection, and §7.8 puts it in the
+//! tier no test can assert — a human has to watch it (M12).
 //!
 //! Worth being blunt about why it is here anyway. Four systems land at M6 and compose
 //! for the first time. A gradient rotated into the wrong frame, a turn signed the wrong

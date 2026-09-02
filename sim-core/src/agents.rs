@@ -1,7 +1,7 @@
 //! The agent state arrays: struct-of-arrays, fixed capacity, no per-agent objects.
 //!
 //! There is no `Agent` struct with methods. An agent is an index, and behaviour lives
-//! in systems that take the slices they need (CLAUDE.md, spec §2.2a). Everything here
+//! in systems that take the slices they need (spec §2.2a). Everything here
 //! is authoritative world state owned by the sim and never handed to the renderer
 //! directly; the snapshot is a narrow projection of a few of these fields.
 //!

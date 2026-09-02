@@ -3,7 +3,7 @@
 //! An allocation in the hot loop does not fail a functional test — it shows up as
 //! frame-time jitter in the browser and as a slow drift in an overnight headless run,
 //! which is exactly the kind of thing nobody traces back to a `Vec::push`. So it is
-//! measured directly (CLAUDE.md invariant 4, spec §7.8 tier 2).
+//! measured directly (spec §2.2a, §7.8 tier 2).
 //!
 //! Counting is per-thread rather than global: this binary's test harness allocates on
 //! its own thread while the measured region runs, and a global counter would fold that
