@@ -19,7 +19,7 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | plants, metabolism, death done; feeding and reproduction next |
+| M7 World and economy | done; metabolic budget pass outstanding |
 | M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -385,9 +385,36 @@ pins the figure so a change is deliberate. It is not fixed here because the plan
 explicit that these move against a running population and several seeds, and reproduction
 does not exist yet — that is the next change.
 
+**Decisions taken in the transfer half.**
+
+*An agent eats the nearest plant in reach, not every plant at once.* The more physical
+reading of §4.2's "absorb food in contact radius", and it stops a crowded patch being
+worth more per tick than a single plant — otherwise a population could feed faster by
+standing where plants happen to overlap, which is geography rather than behaviour. Empty
+sites are skipped, since a depleted plant stays in the world and would otherwise block a
+fuller one beside it.
+
+*A parent is charged only after the birth succeeds.* At the population ceiling a spawn is
+refused, and deducting first would destroy energy on exactly the busiest tick of a run.
+
+*`world.rs` is over the size limit and the split belongs to M8.* It is 616 lines of code
+before this change, past the 500 that CLAUDE.md calls a split. The new logic went into
+`feeding.rs` and `reproduction.rs` so it only grew by wiring, but the real fix is M8
+lifting the eleven tick-step methods into `tick.rs`, which is that milestone's job
+anyway. Noted so it is a decision rather than a drift.
+
+**Outstanding: the metabolic budget pass.** Now possible for the first time — there is a
+running population to measure against. It is deliberately *not* in this change, because
+tuning and code changes are separate loops and the output is a report rather than a
+commit: several seeds per configuration, a vector of metrics with the random-brain
+control alongside, and a shortlist for a human rather than a winner picked by a machine.
+The known figure to move is an idle agent's ~250 ticks against §5.5's ~2000, pinned by
+`metabolism`'s `the_default_budget_is_still_the_known_overshoot`.
+
 **Done when:** energy conservation holds over 10k ticks within epsilon. Met —
 `sim-core/tests/conservation.rs`, which also holds it across four seeds, through a
-population starving to nothing, and at carrying capacity.
+population starving to nothing, at carrying capacity, across both transfers, and over a
+10k-tick run of a population that both eats and breeds.
 
 ## M8 — The tick
 

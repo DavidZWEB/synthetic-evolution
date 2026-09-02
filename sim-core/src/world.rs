@@ -16,16 +16,19 @@ use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
 use crate::effectors::{self, AgentIntents, Effector, Intents};
+use crate::feeding;
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::ledger::EnergyLedger;
 use crate::metabolism;
 use crate::movement;
+use crate::mutate;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, SelfView, Sensor, WorldView};
 use crate::plants::Plants;
 use crate::pool::SlotPool;
+use crate::reproduction;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
 
@@ -78,6 +81,9 @@ pub struct World {
     /// Slots that reached zero energy this tick, resolved at step 10 in agent-index
     /// order. Owned by the world and sized once, so a death allocates nothing.
     dying: Vec<AgentId>,
+    /// Agents that asked to reproduce and can, resolved at step 10 after the deaths.
+    /// Owned and sized for the same reason.
+    breeding: Vec<AgentId>,
 }
 
 impl World {
@@ -134,6 +140,7 @@ impl World {
             // so every joule that ever appears has to arrive through `grow_plants`.
             ledger: EnergyLedger::opening(0.0),
             dying: Vec::with_capacity(capacity as usize),
+            breeding: Vec::with_capacity(capacity as usize),
             plants,
             params,
         })
@@ -416,6 +423,19 @@ impl World {
     }
 
     /// What every agent's effectors asked for on the most recent step 4.
+    /// Mutable agent state, for shells and tests that set up a specific situation.
+    /// The tick itself goes through the systems, not through here.
+    #[inline]
+    pub fn agents_mut(&mut self) -> &mut Agents {
+        &mut self.agents
+    }
+
+    /// Mutable intent buffer, for the same reason.
+    #[inline]
+    pub fn intents_mut(&mut self) -> &mut Intents {
+        &mut self.intents
+    }
+
     #[inline]
     pub fn intents(&self) -> &Intents {
         &self.intents
@@ -525,6 +545,130 @@ impl World {
         self.dying = dying;
         self.dying.clear();
         removed
+    }
+
+    /// Moves energy from plants into the agents eating them. Step 7 of the tick
+    /// (spec §2.4).
+    ///
+    /// A transfer, not a flow: nothing is recorded in the ledger, because the same
+    /// joules are still in the world afterwards. If this is ever written wrongly the
+    /// conservation test says so without knowing that eating exists.
+    ///
+    /// Agent-index order, because two agents can reach the same plant in one tick and
+    /// the plant may not hold enough for both. Whoever is asked first gets what is
+    /// there; resolving in any other order would make the outcome depend on pool
+    /// layout.
+    pub fn resolve_feeding(&mut self) {
+        let feeding = self.params.feeding.clone();
+        let plant_radius = self.params.plants.radius;
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            if self.intents.ingest[i] <= feeding.gate {
+                continue;
+            }
+            let reach = self.agents.size[i] + plant_radius + feeding.reach;
+            let taken = feeding::ingest(
+                self.agents.position[i],
+                reach,
+                feeding.rate,
+                &mut self.plants,
+            );
+            self.agents.energy[i] += taken;
+        }
+    }
+
+    /// Notes which agents asked to reproduce and can afford to. Part of step 4's
+    /// reading of the intent buffer, deferred like a death so the pool is not mutated
+    /// mid-tick (spec §2.4).
+    fn note_breeders(&mut self) {
+        self.breeding.clear();
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            if reproduction::ready(
+                self.agents.energy[i],
+                self.agents.age[i],
+                self.intents.reproduce[i],
+                &self.params.reproduction,
+            ) {
+                self.breeding.push(id);
+            }
+        }
+    }
+
+    /// Creates the offspring of every agent that asked. The other half of step 10.
+    ///
+    /// The parent's energy is **split, not granted**: the offspring's tank comes out of
+    /// the parent and nothing is recorded in the ledger, unlike a founder's. And the
+    /// deduction happens only after the spawn succeeds — at the population ceiling a
+    /// birth is refused, and charging a parent for a child that never existed would
+    /// destroy energy on the busiest tick of a run.
+    ///
+    /// Agent-index order. Births hand out pool slots, so any other order would put the
+    /// same population in different slots and every later tick would diverge.
+    pub fn resolve_births(&mut self) -> usize {
+        self.note_breeders();
+        let breeding = core::mem::take(&mut self.breeding);
+        let mut born = 0;
+
+        for &parent in &breeding {
+            let p = parent.index();
+            let share = self.agents.energy[p] * self.params.reproduction.energy_split;
+
+            // Built before the spawn so the parent's genome can be read while the world
+            // is otherwise untouched; mutation is what makes the child a variation
+            // rather than a clone (spec §3.3).
+            let mut scratch = core::mem::take(&mut self.genome_scratch);
+            let genome = self.agents.genome[p];
+            scratch.clear();
+            scratch.extend_from_slice(self.genes.get(genome));
+            mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
+
+            let position = reproduction::offspring_position(
+                self.agents.position[p],
+                &self.params.reproduction,
+                self.params.world.size,
+                &mut self.rng,
+            );
+            let yaw = self
+                .rng
+                .range(-core::f32::consts::PI, core::f32::consts::PI);
+            let spec = SpawnSpec {
+                position,
+                yaw,
+                energy: share,
+                size: genome::body_trait(&scratch, BodyTrait::Size)
+                    .unwrap_or(self.params.body.size),
+                signature: Vec3::new(
+                    genome::body_trait(&scratch, BodyTrait::SignatureR).unwrap_or(0.5),
+                    genome::body_trait(&scratch, BodyTrait::SignatureG).unwrap_or(0.5),
+                    genome::body_trait(&scratch, BodyTrait::SignatureB).unwrap_or(0.5),
+                ),
+                parent_a: parent,
+            };
+            let spawned = self.spawn(&spec, &scratch);
+            self.genome_scratch = scratch;
+
+            if spawned.is_some() {
+                // Only now. A refused birth leaves the parent whole.
+                self.agents.energy[p] -= share;
+                born += 1;
+            }
+        }
+
+        self.breeding = breeding;
+        self.breeding.clear();
+        born
+    }
+
+    /// Ages every live agent and advances the clock. Step 11 of the tick (spec §2.4).
+    pub fn advance_tick(&mut self) {
+        for id in self.pool.iter_live() {
+            // Saturating, so a world left running for a year does not wrap an agent's
+            // age back to zero and make it eligible to breed again from nothing.
+            let age = &mut self.agents.age[id.index()];
+            *age = age.saturating_add(1);
+        }
+        self.tick += 1;
     }
 
     /// Every joule the world currently holds, in plants and in agents.
