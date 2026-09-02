@@ -497,7 +497,7 @@ So `feeding.reach` is the highest-leverage knob for encounters and `radius` is q
 in it, which is also why `feeding.rate` measured inert: rate is extraction speed, reach is
 coverage. At `reach` 8, 72–77% of agents are within reach of a plant.
 
-**Decided: the founder keeps its eyes, and what needs re-reading is `k_sensor`.**
+**Decided: the founder keeps everything for Phase 1, and gets simpler at Phase 2.**
 
 The question was whether to give founders fewer sensors so their metabolism is cheaper.
 It is worth taking seriously — the sensor term is the largest in the budget after body
@@ -550,10 +550,23 @@ what binds, and how it is charged is the part that is wrong.
 
 `genome::sensor_load` weights by channel count, making the default set 16 units for five
 organs. Spec §5.5 says `k_sensor` is "0.01 each, weighted by modality", which per sensor
-reads as 5. The channel reading is this codebase's, recorded at M4 as a known gap. Changing
-it is a `sim-core` change made in response to a metric, so it needs review rather than a
-tuning sweep — but it is the change the numbers point at, and it is the one that does not
-spend a capability to buy a joule.
+reads as 5. The channel reading is this codebase's, recorded at M4 as a known gap.
+
+**Nothing about sensors changes in Phase 1.** Not the founder's organs and not how they are
+billed: the measured case for either is real, but both are `sim-core` edited on the strength
+of a metric, and a phase whose success criterion is still unmet is the worst moment to spend
+a capability to buy a joule. The larder was a bug and is fixed; the sensor budget is a
+judgment call and is deferred.
+
+**The real answer is that founders should not have been maximal in the first place, and
+Phase 1 could not have had it either way.** Density is forced here — with no add-sensor
+operator, an organ missing from the founder is unreachable for every descendant, so granting
+everything is the only choice that keeps the search space whole. That constraint lifts at
+Phase 2, and the default should invert then: the simplest organism that closes the loop,
+with complexity earned rather than issued. Recorded in the spec rather than here, at §3.3
+next to the operators that unlock it, with a pointer from the Phase 2 roadmap entry and an
+open question at §11.7 for how simple is still viable — which is a measurement, not a
+principle.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon. Met —
 `sim-core/tests/conservation.rs`, which also holds it across four seeds, through a
