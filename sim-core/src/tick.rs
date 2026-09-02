@@ -375,7 +375,8 @@ impl World {
             *age = age.saturating_add(1);
         }
         self.tick += 1;
-    }}
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -488,7 +489,10 @@ mod tests {
         };
         let (a, ta, ea) = run();
         let (b, tb, eb) = run();
-        assert!(!a.is_empty(), "everything died, so this compares two empties");
+        assert!(
+            !a.is_empty(),
+            "everything died, so this compares two empties"
+        );
         assert_eq!(a, b);
         assert_eq!(ta, tb);
         assert_eq!(ea, eb);
