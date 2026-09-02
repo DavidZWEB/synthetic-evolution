@@ -136,11 +136,9 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
-            // Opened against whatever the larder was stocked with, so a pre-filled
-            // world is a boundary condition rather than 240,000 joules of drift. The
-            // same reasoning as a founder's tank, which `spawn_founder` records as
-            // input: energy present before the first tick still has to be accounted
-            // for (spec §5.1).
+            // Against the stock, not zero: energy present before the first tick is a
+            // boundary condition, the same treatment `spawn_founder` gives a founder's
+            // tank (spec §5.1).
             ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
@@ -780,11 +778,9 @@ mod tests {
 
     #[test]
     fn stocking_the_larder_does_not_move_the_rng_stream() {
-        // Plant *positions* are drawn before the fill is applied, so comparing those
-        // proves nothing. What has to match is everything drawn after: one generator
-        // serves the whole world, so a fill that consumed draws would hand two worlds
-        // differing only in how full the larder is completely different founders, and
-        // they would share no lineage at all.
+        // Plant *positions* are drawn before the fill, so comparing those proves
+        // nothing — the obvious assertion here passes under the bug. What has to match
+        // is everything drawn after, since one generator serves the whole world.
         let genome_at = |fill: f32| {
             let mut params = SimParams::default();
             params.world.max_agents = 4;

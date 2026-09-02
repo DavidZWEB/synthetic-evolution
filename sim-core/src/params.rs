@@ -286,20 +286,14 @@ pub struct PlantParams {
     pub scent_rate: f32,
     /// Fraction of [`Self::max_energy`] each plant holds when the world is created.
     ///
-    /// **Defaults to a full larder, and starting empty was a bug rather than a
-    /// choice.** Plants used to seed at zero, which made the opening state of every
-    /// world one no ecology would ever be in: filling the larder takes
-    /// `max_energy * max_plants / energy_input_rate` seconds — 400 s, or 24,000 ticks,
-    /// at these defaults — while a founder on a full tank lives about 250. Generation 0
-    /// therefore starved in a world containing, across its whole lifetime, about
-    /// 0.6 joules per plant: a tick and a half of upkeep. Every measurement taken
-    /// against that world was really measuring the empty larder, which reads as a
-    /// foraging failure and invites weakening a metabolic cost to fix it (spec §10).
+    /// **Defaults full; empty was a bug rather than a choice.** Filling a bare larder
+    /// takes ~24,000 ticks at these defaults against a founder lifetime of ~250, so
+    /// generation 0 starved in a world with no food in it yet — which reads as a
+    /// foraging failure and invites weakening a metabolic cost (spec §10). Measured in
+    /// `docs/phase-1-implementation-plan.md` under M7.
     ///
-    /// A fraction rather than an absolute, so it keeps its meaning when `max_energy`
-    /// moves. Filled uniformly and without drawing from the world's RNG: a random fill
-    /// would consume draws here and shift every genome scalar downstream of it, and
-    /// uniform is the saturated state `grow` converges to anyway (spec §5.1).
+    /// Filled uniformly and without drawing from `rng`: a random fill would shift every
+    /// genome scalar drawn after it.
     pub initial_fill: f32,
     /// The colour a `vision_ray` reports when it hits a plant.
     ///

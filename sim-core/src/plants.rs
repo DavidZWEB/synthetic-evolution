@@ -64,10 +64,7 @@ impl Plants {
         let mut cells = vec![0u32; count];
         hash.rebuild(&position, &alive, &mut cells);
 
-        // Stocked at construction, uniformly and without touching `rng`. A world whose
-        // autotrophs have never run is not a state any ecology passes through, and
-        // founders spawned into one starve long before it fills — see
-        // `PlantParams::initial_fill`.
+        // Uniform, and drawing nothing from `rng` — see `PlantParams::initial_fill`.
         let stock = params.plants.initial_fill * params.plants.max_energy;
 
         Self {
@@ -183,8 +180,7 @@ mod tests {
         filled(1.0)
     }
 
-    /// A world stocked to `fill` of `max_energy`. Growth can only be measured from an
-    /// empty larder, which is no longer the default — see `PlantParams::initial_fill`.
+    /// A world stocked to `fill` of `max_energy`. Growth is only measurable from empty.
     fn filled(fill: f32) -> (Plants, SimParams) {
         let mut params = SimParams::default();
         params.plants.max_plants = 200;
@@ -227,9 +223,6 @@ mod tests {
 
     #[test]
     fn the_larder_is_stocked_before_the_first_tick() {
-        // Founders live ~250 ticks and an empty larder takes ~24,000 to fill, so a world
-        // that starts bare is one where generation 0 never sees food at all. The default
-        // is a saturated ecosystem; `initial_fill` is how you ask for anything else.
         let (full, params) = world();
         let ceiling = params.plants.max_energy * full.len() as f32;
         assert!((full.total_energy() - ceiling).abs() < 1e-1);
