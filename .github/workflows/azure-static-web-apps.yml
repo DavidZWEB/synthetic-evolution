@@ -1,0 +1,110 @@
+# Deploys web/ to Azure Static Web Apps.
+#
+# The build happens here rather than in Azure's Oryx container: the client imports
+# wasm-pack output from web/src/wasm/, which is gitignored (docs/development.md) and
+# needs a Rust toolchain Oryx does not have. So this job builds the wasm and the
+# client here and hands the action a finished dist/ with skip_app_build.
+#
+# It does not run the tests itself. Production deploys are triggered by ci.yml
+# finishing, and only when it succeeded, so main can only reach the live site on a
+# commit whose suite passed. Preview environments still deploy straight off the pull
+# request, ungated — a red PR shows a failing check beside a working preview, which
+# is the point of a preview.
+#
+# One consequence of workflow_run worth knowing before editing this file: GitHub
+# always runs the copy of it that is on the default branch. Changes to the production
+# path here do nothing until they are merged, and cannot be exercised from a branch.
+name: Azure Static Web Apps
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+# A second push to the same branch makes the first deploy irrelevant.
+concurrency:
+  group: swa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# repo_token below is used only to comment the preview URL on the pull request.
+# Spelled out because a repository whose default workflow permissions are read-only
+# drops that comment with no error.
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build_and_deploy:
+    # A CI run that failed, was cancelled, or was skipped is not a green light.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    name: Build and deploy
+    steps:
+      # A workflow_run event carries the default branch's ref, not the commit that
+      # was tested, so the tested SHA has to be named explicitly. Deploying
+      # github.ref here would ship whatever main happens to be at now, which is not
+      # necessarily what CI just passed.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Before setup.sh, and load-bearing for more than build times: rust-cache
+      # restores $CARGO_HOME/bin, so setup.sh finds the pinned wasm-pack already
+      # present and skips a from-source `cargo install` that costs minutes.
+      - uses: Swatinem/rust-cache@v2
+
+      # scripts/setup.sh is the single source of truth for what a working checkout
+      # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
+      # and npm ci. --skip-tests drops only its verification tail, because ci.yml has
+      # already run the suite on this commit — and, for a production deploy, has to
+      # have passed before this workflow is triggered at all.
+      - name: Set up toolchains and install dependencies
+        run: ./scripts/setup.sh --skip-tests
+
+      - name: Build wasm bindings
+        run: npm run wasm --prefix web
+
+      - name: Build client
+        run: npm run build --prefix web
+
+      - name: Deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          # Vite's project root, and its build output relative to that root.
+          app_location: web
+          output_location: dist
+          # No Azure Functions backend; the sim runs entirely in the browser.
+          api_location: ""
+          # dist/ is already built above. Letting Oryx rebuild would fail on the
+          # missing Rust toolchain.
+          skip_app_build: true
+          skip_api_build: true
+          production_branch: main
+
+  close_pull_request:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close preview environment
+    steps:
+      # Tears down the per-PR preview site. No checkout or build needed.
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: close
+          app_location: web
