@@ -121,21 +121,28 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   reproduction.rs when an agent may bud, and where the offspring lands
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
-  world.rs       World struct, spawn/despawn, and step() when it lands
-  tests/         invariants.rs — scans src for banned patterns; no_alloc.rs
+  world.rs       World struct, spawn/despawn, the command queue, and the accessors
+  tick.rs        spec §2.4's eleven steps, in the order that makes them reproducible
+  command.rs     the serde-serializable way anything outside asks the world to change
+  state_hash.rs  folds a whole world into one number; what the golden test compares
+  tests/         invariants.rs scans src for banned patterns; no_alloc, footprint,
+                 conservation, steering, forward_compat, and golden
 shells/wasm/     wasm-bindgen bindings, snapshot pointer export
 shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
 web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never committed
 ```
 
-Still to come, one concept each: `tick.rs` (the 11 steps, order normative), and the
-plants, metabolism, and reproduction that close the energy economy.
+`world.rs` and `tick.rs` write two halves of one `impl`, which is why `World`'s fields
+are `pub(crate)` rather than private — Rust needs crate visibility to split an `impl`
+across files. Nothing outside the crate gains by it: the shells and the integration
+tests still go through the accessors.
 
 ## Commands
 
 ```
 ./scripts/setup.sh                   # fresh machine: toolchain, wasm-pack, npm ci
-cargo test --workspace               # unit tests + invariant scan + no-alloc
+cargo test --workspace               # unit tests, invariant scan, no-alloc, golden hash
+wasm-pack test --node shells/wasm    # the other half of the hash: wasm agrees with native
 cargo run -p native -- --seed 42 --ticks 100000
 npm run wasm --prefix web            # rebuild bindings into web/src/wasm/
 npm run dev  --prefix web            # client on http://localhost:5173
@@ -144,8 +151,11 @@ npm run dev  --prefix web            # client on http://localhost:5173
 `npm run dev` does not rebuild the wasm bindings — run `npm run wasm` after changing
 `sim-core`. It gets chained into `dev` and `build` at M9, when the client imports them.
 
-The golden-hash and energy-conservation tests arrive with the tick; `cargo test`
-currently covers the unit tests, the source-invariant scan, and the no-alloc check.
+`cargo test --workspace` runs everything that can run natively, the golden hash
+included. It cannot run the cross-target half: `wasm-pack test --node shells/wasm`
+compiles `sim-core` to wasm32 and asserts the same seeds produce the same hashes, which
+is what catches a platform transcendental or a width assumption no native test can see.
+Run it after anything that touches arithmetic inside the tick.
 
 ## Definition of done
 
