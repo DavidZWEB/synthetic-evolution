@@ -126,6 +126,8 @@ flamegraph.svg
 
 In order: `rustup show` (installs the pinned toolchain, components, and wasm target), `cargo install --locked wasm-pack@0.15.0`, Node via nvm if it is present, `npm ci --prefix web`, then `cargo test --workspace` to prove it worked. It is idempotent — running it on an already-set-up machine does nothing but check.
 
+`--skip-tests` drops that last step and nothing else. It exists for the deploy workflow, which needs the same toolchain a developer needs but runs on a commit `ci.yml` has already tested; running the suite twice for one answer is the only thing CI wants to leave out. Use the default interactively — on a fresh machine the verification step is how you learn the install actually works.
+
 Read the script rather than trusting a copy pasted here; a duplicated script drifts. Four details in it are worth understanding:
 
 **`npm ci` rather than `npm install`.** `ci` installs exactly what the lockfile says and errors if `package.json` and the lockfile disagree. `install` will happily update the lockfile, which is how two machines silently diverge. Use `install` only when deliberately adding a dependency.

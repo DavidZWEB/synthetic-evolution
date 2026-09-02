@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 # One-command setup for a fresh machine. If a new checkout needs a step that is not in
 # here, this script is wrong — fix it rather than documenting the step.
+#
+#   --skip-tests   install everything, but do not run the suite at the end.
+#
+# CI uses --skip-tests: the deploy workflow needs the same toolchain a developer needs,
+# but ci.yml has already run the suite on that commit and running it twice buys
+# nothing. Interactively you want the default — the verification step is how you find
+# out the install actually works.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+run_tests=1
+for arg in "$@"; do
+  case "$arg" in
+    --skip-tests) run_tests=0 ;;
+    *) echo "unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
 
 # Cargo-installed binaries are separate programs and are not covered by Cargo.lock,
 # so the version is pinned here instead.
@@ -75,8 +90,13 @@ info "Node packages"
 # machines diverge — use it only when deliberately adding a dependency.
 npm ci --prefix web
 
-info "Verifying"
-cargo test --workspace
+if [ "$run_tests" -eq 1 ]; then
+  info "Verifying"
+  cargo test --workspace
+else
+  info "Verifying"
+  echo "    skipped (--skip-tests)"
+fi
 
 printf '\nSetup complete.\n'
 printf '  cargo test --workspace       run the test suite\n'

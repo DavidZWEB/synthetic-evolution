@@ -5,13 +5,21 @@
 # needs a Rust toolchain Oryx does not have. So this job builds the wasm and the
 # client here and hands the action a finished dist/ with skip_app_build.
 #
-# It does not run the tests: ci.yml covers this commit. The two workflows trigger
-# together on a push to main rather than in sequence, so a deploy is concurrent with
-# its verification, not gated on it.
+# It does not run the tests itself. Production deploys are triggered by ci.yml
+# finishing, and only when it succeeded, so main can only reach the live site on a
+# commit whose suite passed. Preview environments still deploy straight off the pull
+# request, ungated — a red PR shows a failing check beside a working preview, which
+# is the point of a preview.
+#
+# One consequence of workflow_run worth knowing before editing this file: GitHub
+# always runs the copy of it that is on the default branch. Changes to the production
+# path here do nothing until they are merged, and cannot be exercised from a branch.
 name: Azure Static Web Apps
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, closed]
@@ -31,11 +39,21 @@ permissions:
 
 jobs:
   build_and_deploy:
-    if: github.event_name == 'push' || github.event.action != 'closed'
+    # A CI run that failed, was cancelled, or was skipped is not a green light.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request' && github.event.action != 'closed')
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
+      # A workflow_run event carries the default branch's ref, not the commit that
+      # was tested, so the tested SHA has to be named explicitly. Deploying
+      # github.ref here would ship whatever main happens to be at now, which is not
+      # necessarily what CI just passed.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - uses: actions/setup-node@v4
         with:
@@ -43,37 +61,18 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # The steps below are scripts/setup.sh without its `cargo test --workspace`
-      # tail. ci.yml runs the suite on this same commit, so calling setup.sh here
-      # would build and run all 13 test binaries a second time to learn nothing new.
-      # See docs/development.md.
-
-      # Reads rust-toolchain.toml and installs the pinned compiler, its components,
-      # and the wasm target. Before the cache step: rust-cache keys on the rustc
-      # version, so the pinned toolchain has to be the one it sees.
-      - name: Install pinned toolchain
-        run: rustup show
-
+      # Before setup.sh, and load-bearing for more than build times: rust-cache
+      # restores $CARGO_HOME/bin, so setup.sh finds the pinned wasm-pack already
+      # present and skips a from-source `cargo install` that costs minutes.
       - uses: Swatinem/rust-cache@v2
 
-      # Read rather than repeated, because cargo-installed binaries are not covered
-      # by Cargo.lock and scripts/setup.sh is where that version is pinned. A rename
-      # there leaves this empty and the install fails loudly rather than silently
-      # fetching whatever is latest.
-      - name: Read the pinned wasm-pack version
-        run: |
-          version="$(sed -n 's/^WASM_PACK_VERSION="\(.*\)"$/\1/p' scripts/setup.sh)"
-          test -n "$version" || { echo "no WASM_PACK_VERSION in scripts/setup.sh" >&2; exit 1; }
-          echo "WASM_PACK_VERSION=$version" >> "$GITHUB_ENV"
-
-      # Fetches a prebuilt binary. `cargo install` builds wasm-pack from source, which
-      # costs more than the test run this job just stopped duplicating.
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: wasm-pack@${{ env.WASM_PACK_VERSION }}
-
-      - name: Install client dependencies
-        run: npm ci --prefix web
+      # scripts/setup.sh is the single source of truth for what a working checkout
+      # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
+      # and npm ci. --skip-tests drops only its verification tail, because ci.yml has
+      # already run the suite on this commit — and, for a production deploy, has to
+      # have passed before this workflow is triggered at all.
+      - name: Set up toolchains and install dependencies
+        run: ./scripts/setup.sh --skip-tests
 
       - name: Build wasm bindings
         run: npm run wasm --prefix web
