@@ -70,7 +70,7 @@ panic = "abort"
 
 **Resolver 3, not 2.** It is the edition-2024 default and is MSRV-aware, so dependency resolution cannot quietly pick a version newer than the pinned toolchain.
 
-**The feature flags are load-bearing, not decoration.** `glam` with `default-features = false` plus `libm` routes its transcendentals through software implementations rather than the platform's, which is invariant 1 — platform `sin`/`cos` differ between native and WASM. It also leaves SIMD off, which keeps `Vec3` at 12 bytes; `agents.rs` asserts that at compile time because the zero-copy snapshot views depend on the layout. `rand_pcg`'s `serde` feature is what lets RNG state be checkpointed and resumed mid-run. Changing any of these is a determinism decision, not a tidy-up.
+**The feature flags are load-bearing, not decoration.** `glam` with `default-features = false` plus `libm` routes its transcendentals through software implementations rather than the platform's, which is invariant 1 — platform `sin`/`cos` differ between native and WASM. `scalar-math` is what turns glam's SIMD backends off; `default-features = false` does **not**, which this file claimed until CI on an x86_64 runner disagreed with an aarch64 laptop about a pinned golden hash. Note that neither flag governs `Vec3`'s 12-byte layout — `Vec3` is scalar either way, so the compile-time `size_of` assert in `agents.rs` (which the zero-copy snapshot views depend on) is not the thing protecting determinism here. `Quat` is the SIMD-backed type. `rand_pcg`'s `serde` feature is what lets RNG state be checkpointed and resumed mid-run. Changing any of these is a determinism decision, not a tidy-up.
 
 A workspace produces **one `Cargo.lock` at the root** covering every crate, which is what you want — the native and WASM shells cannot drift onto different dependency versions.
 
@@ -125,6 +125,8 @@ flamegraph.svg
 ### `scripts/setup.sh`
 
 In order: `rustup show` (installs the pinned toolchain, components, and wasm target), `cargo install --locked wasm-pack@0.15.0`, Node via nvm if it is present, `npm ci --prefix web`, then `cargo test --workspace` to prove it worked. It is idempotent — running it on an already-set-up machine does nothing but check.
+
+`--skip-tests` drops that last step and nothing else. It exists for the deploy workflow, which needs the same toolchain a developer needs but runs on a commit `ci.yml` has already tested; running the suite twice for one answer is the only thing CI wants to leave out. Use the default interactively — on a fresh machine the verification step is how you learn the install actually works.
 
 Read the script rather than trusting a copy pasted here; a duplicated script drifts. Four details in it are worth understanding:
 

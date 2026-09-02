@@ -66,7 +66,10 @@ fn parent_b_exists_and_is_always_null() {
     for _ in 0..600 {
         world.step();
     }
-    assert!(world.population() > 1, "nothing was born, so nothing is tested");
+    assert!(
+        world.population() > 1,
+        "nothing was born, so nothing is tested"
+    );
     for id in world.pool().iter_live() {
         assert_eq!(
             world.agents().parent_b[id.index()],
@@ -116,12 +119,18 @@ fn sensor_elevation_is_carried_and_never_varies() {
     let first = world.pool().iter_live().next().expect("a founder");
     let before = elevations(&world, first);
     assert!(!before.is_empty(), "no directional sensor to check");
-    assert!(before.iter().all(|&e| e == 0.0), "elevation started off-plane");
+    assert!(
+        before.iter().all(|&e| e == 0.0),
+        "elevation started off-plane"
+    );
 
     for _ in 0..600 {
         world.step();
     }
-    assert!(world.population() > 1, "nothing was born, so nothing mutated");
+    assert!(
+        world.population() > 1,
+        "nothing was born, so nothing mutated"
+    );
     for id in world.pool().iter_live() {
         assert!(
             elevations(&world, id).iter().all(|&e| e == 0.0),

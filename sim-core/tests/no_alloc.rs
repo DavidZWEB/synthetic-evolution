@@ -257,13 +257,19 @@ fn draining_the_command_queue_never_allocates() {
 
     // Warm both queues, and every pool a spawn touches.
     for i in 0..64u32 {
-        world.push_command(Command::at(i as u64, Kind::SpawnFounder { position: at(i) }));
+        world.push_command(Command::at(
+            i as u64,
+            Kind::SpawnFounder { position: at(i) },
+        ));
     }
     for _ in 0..64 {
         world.step();
     }
     assert_eq!(world.pending_commands(), 0, "warmup left work behind");
-    assert!(world.population() > 0, "nothing spawned, so nothing was warmed");
+    assert!(
+        world.population() > 0,
+        "nothing spawned, so nothing was warmed"
+    );
 
     let observed = count_allocations(|| {
         for i in 0..32u32 {

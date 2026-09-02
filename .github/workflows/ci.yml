@@ -1,0 +1,54 @@
+# Runs the test suite on every push. Separate from the deploy workflow on purpose:
+# a golden-hash break should report as "CI failed", not as "Azure deploy failed",
+# and the suite should not need a deployment token to run. See docs/development.md.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer commit on the same branch makes the older run's answer uninteresting.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # `push` already covers every branch in this repository, so the pull_request
+    # trigger exists only for forks, whose pushes are not visible here. Without this
+    # guard each branch would build twice for the same commit.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads rust-toolchain.toml and installs the pinned compiler, its components,
+      # and the wasm target. Deliberately before the cache step: rust-cache keys on
+      # the rustc version, so the pinned toolchain has to be the one it sees.
+      - name: Install pinned toolchain
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      # -D warnings because a lint nobody is required to fix is a lint nobody fixes.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The golden hash, energy conservation, the no-alloc check, and the source scan
+      # for the determinism invariants all live in here.
+      - name: Test
+        run: cargo test --workspace
+
+      # sim-core reaching for something that is not in wasm's std would otherwise not
+      # surface until a deploy. Checking the target is cheap; it is not a substitute
+      # for running the tests under wasm, which needs the cross-target hash harness.
+      - name: Check wasm target
+        run: cargo check -p wasm --target wasm32-unknown-unknown
