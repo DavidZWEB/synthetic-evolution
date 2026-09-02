@@ -207,6 +207,12 @@ review that caught nothing, and leaves the next person unable to tell whether on
 all. Two commits — *the change*, then *what reviewing it found* — also give the human a
 diff of the correction on its own, which is usually the more interesting half.
 
+From M8 this composes with the golden hash instead of fighting it, but say so explicitly: a
+review fix that changes behaviour updates the hash in the fix commit, so the branch carries
+two hash updates for one feature. That is correct and it still reads as the red flag
+*Working style* warns about, so the second commit message has to name the first update it
+supersedes.
+
 Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
 decide. Say what you reviewed even when you found nothing — an explicit "here is what I
 checked and it was clean" is worth reading, and a silent PR is indistinguishable from an
