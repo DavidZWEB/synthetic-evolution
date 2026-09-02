@@ -779,6 +779,29 @@ mod tests {
     }
 
     #[test]
+    fn stocking_the_larder_does_not_move_the_rng_stream() {
+        // Plant *positions* are drawn before the fill is applied, so comparing those
+        // proves nothing. What has to match is everything drawn after: one generator
+        // serves the whole world, so a fill that consumed draws would hand two worlds
+        // differing only in how full the larder is completely different founders, and
+        // they would share no lineage at all.
+        let genome_at = |fill: f32| {
+            let mut params = SimParams::default();
+            params.world.max_agents = 4;
+            params.plants.max_plants = 32;
+            params.plants.initial_fill = fill;
+            let mut world = World::new(11, params).expect("valid params");
+            let id = world
+                .spawn_founder(Vec3::new(10.0, 10.0, 0.0))
+                .expect("pool has room");
+            world.genome(id).to_vec()
+        };
+        let full = genome_at(1.0);
+        assert_eq!(full, genome_at(0.0));
+        assert_eq!(full, genome_at(0.37));
+    }
+
+    #[test]
     fn rejects_invalid_params_at_construction() {
         let mut params = SimParams::default();
         params.world.dt = 0.0;

@@ -234,17 +234,11 @@ mod tests {
         let ceiling = params.plants.max_energy * full.len() as f32;
         assert!((full.total_energy() - ceiling).abs() < 1e-1);
 
-        let (half, params) = filled(0.5);
+        let (half, _) = filled(0.5);
         assert!((half.total_energy() - ceiling * 0.5).abs() < 1e-1);
 
         let (bare, _) = filled(0.0);
         assert_eq!(bare.total_energy(), 0.0);
-
-        // Stocking must not consume RNG draws: a fill that varied the stream would move
-        // every genome scalar drawn after it, so two worlds differing only in how full
-        // the larder is would share no lineage at all.
-        assert_eq!(full.position(), bare.position());
-        let _ = params;
     }
 
     #[test]
