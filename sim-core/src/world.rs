@@ -431,7 +431,11 @@ impl World {
         }
         self.commands = pending;
 
-        for command in core::mem::take(&mut due) {
+        // Borrowed, not taken. `core::mem::take` here would drop the buffer at the end
+        // of the loop and hand `due_commands` back a zero-capacity `Vec`, so every tick
+        // carrying a command would reallocate — the same shape `dying` and `breeding`
+        // avoid by assigning theirs back.
+        for command in &due {
             match command.kind {
                 // A refused spawn is the population ceiling, not an error (spec §2.2b).
                 Kind::SpawnFounder { position } => {
@@ -439,6 +443,7 @@ impl World {
                 }
             }
         }
+        due.clear();
         self.due_commands = due;
     }
 

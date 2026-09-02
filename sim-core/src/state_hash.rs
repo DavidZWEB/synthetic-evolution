@@ -33,7 +33,7 @@ use crate::world::World;
 /// published constant and a published loop: same number on every target, every
 /// compiler, every version. That is the only property that matters here (spec §7.4).
 #[derive(Clone, Debug)]
-pub struct Fnv1a(u64);
+pub(crate) struct Fnv1a(u64);
 
 impl Default for Fnv1a {
     fn default() -> Self {
@@ -45,16 +45,16 @@ impl Fnv1a {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
 
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self(Self::OFFSET)
     }
 
-    pub fn byte(&mut self, b: u8) {
+    pub(crate) fn byte(&mut self, b: u8) {
         self.0 ^= b as u64;
         self.0 = self.0.wrapping_mul(Self::PRIME);
     }
 
-    pub fn u32(&mut self, v: u32) {
+    pub(crate) fn u32(&mut self, v: u32) {
         // Little-endian explicitly, not `to_ne_bytes`. Native order is a property of
         // the host, and native and wasm agreeing is the point (spec §7.4).
         for b in v.to_le_bytes() {
@@ -62,7 +62,7 @@ impl Fnv1a {
         }
     }
 
-    pub fn u64(&mut self, v: u64) {
+    pub(crate) fn u64(&mut self, v: u64) {
         for b in v.to_le_bytes() {
             self.byte(b);
         }
@@ -74,19 +74,19 @@ impl Fnv1a {
     /// states equal and one identical state different. Bits do neither, and a NaN
     /// reaching the hash is a divergence that should be reported rather than smoothed
     /// over.
-    pub fn f32(&mut self, v: f32) {
+    pub(crate) fn f32(&mut self, v: f32) {
         self.u32(v.to_bits());
     }
 
-    pub fn f64(&mut self, v: f64) {
+    pub(crate) fn f64(&mut self, v: f64) {
         self.u64(v.to_bits());
     }
 
-    pub fn bool(&mut self, v: bool) {
+    pub(crate) fn bool(&mut self, v: bool) {
         self.byte(v as u8);
     }
 
-    pub fn finish(&self) -> u64 {
+    pub(crate) fn finish(&self) -> u64 {
         self.0
     }
 }
