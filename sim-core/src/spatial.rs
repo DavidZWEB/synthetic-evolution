@@ -271,6 +271,11 @@ impl SpatialHash {
         self.dims
     }
 
+    /// Extent of one cell along x and y.
+    ///
+    /// Also the ceiling on any sensing radius this world can be retuned to: a query
+    /// wider than a cell would have to walk more than one ring, which the neighbour loop
+    /// does not do (spec §2.3). `World::set_params` refuses on that basis.
     pub fn cell_size(&self) -> f32 {
         self.cell[0]
     }

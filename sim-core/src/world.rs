@@ -388,6 +388,48 @@ impl World {
         self.parts.get(self.agents.parts[id.index()])
     }
 
+    /// Replaces the tunables, refusing any change that would resize what is already
+    /// allocated.
+    ///
+    /// Every constant is runtime config and tuning happens in the browser (spec §7.6),
+    /// but not every constant can move *mid-run*. The pool, the arenas, the plant
+    /// arrays, the spatial grid and the chemo field are sized once at construction, and
+    /// the render snapshot's JS views point into memory that must not move (spec §7.3).
+    /// Refusing is the honest answer: silently ignoring a field would make the inspector
+    /// disagree with the sim, and resizing would detach every view.
+    ///
+    /// Sensing radii may **shrink** freely — the grid's cells are then larger than they
+    /// need to be, which costs a little time and stays correct. Growing one past the
+    /// cell size built at construction would let a neighbour query miss agents it should
+    /// have found, which is silent and would look like a sensor bug.
+    ///
+    /// `plants.initial_fill` is read only at construction, so setting it here has no
+    /// effect and is not an error; its own doc says as much.
+    pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
+        params.validate()?;
+        if params.world.max_agents != self.params.world.max_agents {
+            return Err(ParamError("world.max_agents is fixed for the life of a world"));
+        }
+        if params.world.size != self.params.world.size {
+            return Err(ParamError("world.size is fixed for the life of a world"));
+        }
+        if params.plants.max_plants != self.params.plants.max_plants {
+            return Err(ParamError(
+                "plants.max_plants is fixed for the life of a world",
+            ));
+        }
+        if params.chemo.cells != self.params.chemo.cells {
+            return Err(ParamError("chemo.cells is fixed for the life of a world"));
+        }
+        if params.sensing.max_sense_radius() > self.hash.cell_size() {
+            return Err(ParamError(
+                "sensing radius would outgrow the spatial grid built for this world",
+            ));
+        }
+        self.params = params;
+        Ok(())
+    }
+
     /// Queues a request from outside the simulation (spec §2.2b).
     ///
     /// Nothing happens here beyond the push: the command applies at the top of the tick
@@ -543,6 +585,59 @@ mod tests {
         let mut params = SimParams::default();
         params.world.max_agents = 32;
         World::new(7, params).expect("defaults are valid")
+    }
+
+    #[test]
+    fn retuning_a_world_takes_effect_and_refuses_to_resize_it() {
+        let mut world = small_world();
+        let capacity = world.pool().capacity();
+
+        // An ordinary tuning change goes through and is visible immediately.
+        let mut tuned = world.params().clone();
+        tuned.metabolism.base *= 2.0;
+        assert!(world.set_params(tuned.clone()).is_ok());
+        assert_eq!(world.params().metabolism.base, tuned.metabolism.base);
+
+        // Anything that sizes something already allocated does not. Silently ignoring
+        // one of these would make the inspector disagree with the sim, and honouring it
+        // would detach every JS view over the snapshot (spec §7.3).
+        for (name, mutate) in [
+            ("max_agents", (|p: &mut SimParams| p.world.max_agents += 1) as fn(&mut SimParams)),
+            ("world.size", |p: &mut SimParams| p.world.size += 1.0),
+            ("max_plants", |p: &mut SimParams| p.plants.max_plants += 1),
+            ("chemo.cells", |p: &mut SimParams| p.chemo.cells[0] += 1),
+        ] {
+            let mut bad = world.params().clone();
+            mutate(&mut bad);
+            assert!(world.set_params(bad).is_err(), "{name} was accepted");
+        }
+        assert_eq!(world.pool().capacity(), capacity, "the pool moved anyway");
+    }
+
+    #[test]
+    fn a_sensing_radius_may_shrink_but_not_outgrow_its_grid() {
+        // Cells are sized once, and the neighbour loop walks one ring. A radius wider
+        // than a cell would miss agents it should have found — silently, and it would
+        // read as a sensor bug rather than a params one (spec §2.3).
+        let mut world = small_world();
+        let cell = world.spatial_hash().cell_size();
+
+        let mut smaller = world.params().clone();
+        smaller.sensing.vision_range = cell * 0.5;
+        smaller.sensing.chemo_radius = cell * 0.25;
+        assert!(world.set_params(smaller).is_ok(), "shrinking should be fine");
+
+        let mut bigger = world.params().clone();
+        bigger.sensing.vision_range = cell * 1.5;
+        assert!(world.set_params(bigger).is_err(), "grew past the grid");
+    }
+
+    #[test]
+    fn retuning_still_validates() {
+        let mut world = small_world();
+        let mut invalid = world.params().clone();
+        invalid.plants.initial_fill = 2.0;
+        assert!(world.set_params(invalid).is_err());
     }
 
     #[test]
