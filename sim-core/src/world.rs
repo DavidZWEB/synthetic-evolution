@@ -178,6 +178,12 @@ impl World {
         perceive::compile(genes, self.sensors.get_mut(handles.sensors));
         effectors::compile(genes, self.effectors.get_mut(handles.effectors));
         self.agents.init(id, spec, &handles);
+        // The intent buffer lives outside `Agents`, so it misses `init`'s guarantee that
+        // nothing survives from the slot's previous tenant. Without this a newborn
+        // claiming a recycled slot acts on a corpse's last request on its first tick —
+        // harmless only while no step between births and the next step 4 reads an
+        // intent, which is an ordering M8 is free to change.
+        self.intents.clear_slot(id.index());
         // Derived from the genome rather than the caller, and cached because metabolism
         // charges for them every tick and they cannot change while the agent lives.
         self.agents.brain_units[id.index()] = genome::brain_complexity(genes);
@@ -896,6 +902,30 @@ mod tests {
                 "the world leaked its arena blocks"
             );
         }
+    }
+
+    #[test]
+    fn a_newborn_does_not_inherit_a_dead_agents_intents() {
+        // Every other per-agent field is reset by `Agents::init`; the intent buffer is
+        // the one that lives elsewhere and used to escape it.
+        let mut w = small_world();
+        let a = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        w.intents_mut().thrust[a.index()] = 42.0;
+        w.intents_mut().ingest[a.index()] = 1.0;
+        w.despawn(a);
+
+        let b = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        assert_eq!(b.index(), a.index(), "expected the slot to be recycled");
+        assert_eq!(
+            w.intents().thrust[b.index()],
+            0.0,
+            "inherited a thrust request"
+        );
+        assert_eq!(
+            w.intents().ingest[b.index()],
+            0.0,
+            "inherited an ingest request"
+        );
     }
 
     #[test]
