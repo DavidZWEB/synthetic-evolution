@@ -69,6 +69,13 @@ This isn't style preference. Narrow signatures are what let you run systems in i
 ### Comments
 
 - **Explain why, never what.** `// increment index` is noise. `// previous activations, so behavior doesn't depend on pool order` is the reason the line exists.
+- **Cite the spec, never this file.** `CLAUDE.md` is instructions for the agent, not
+  project documentation — it is not shipped, not versioned with the design, and means
+  nothing to someone reading `sim-core` on its own. Every rule worth putting in a comment
+  has a home in `docs/synthetic-evolution-spec.md`; cite that. Where a rule genuinely
+  has no spec section, state the reasoning in the comment rather than pointing at
+  anything.
+
 - **Anything load-bearing and strange gets a comment naming the spec section.** This is the important one. Code like the `parentB` field, the clamped elevation param, or deferring births to step 10 all look like dead weight or arbitrary choices. Without an anchor, someone eventually tidies them away.
 
   ```rust
@@ -108,6 +115,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
   effectors.rs   brain outputs into the intent buffer; changes nothing itself
   movement.rs    draining the thrust and turn intents into velocity and position
   plants.rs      the autotrophs: where every joule enters the world
+  metabolism.rs  spec §5.2's cost function; what it costs to be alive for a tick
+  ledger.rs      every joule in and out, so conservation is measured not assumed
   mutate.rs      mutation operators (scalars only this phase)
   crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
   world.rs       World struct, spawn/despawn, and step() when it lands

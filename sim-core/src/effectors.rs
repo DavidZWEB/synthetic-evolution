@@ -5,7 +5,7 @@
 //! interaction, births — are what act on it. That separation is what makes step 4 of
 //! the tick meaningful: every agent decides against the same world, and an agent that
 //! happens to sit early in the pool cannot move before a later one has chosen
-//! (spec §2.4, CLAUDE.md).
+//! (spec §2.4).
 //!
 //! Effectors bind to a neuron **by innovation id**, resolved to a slot once at birth,
 //! exactly as sensors and connections are. [`Effector`] is the compiled form.

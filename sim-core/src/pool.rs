@@ -2,7 +2,7 @@
 //!
 //! Agents are slots in parallel arrays, not objects, so "spawning" means claiming an
 //! index and "dying" means returning it. Capacity is fixed at construction and never
-//! grows: the tick must not allocate (CLAUDE.md invariant 4), and in the browser a
+//! grows: the tick must not allocate (spec §2.2a), and in the browser a
 //! grown WASM heap detaches every JS view over the snapshot (spec §7.3).
 //!
 //! Deliberately not here: what lives in those slots. This module knows only which

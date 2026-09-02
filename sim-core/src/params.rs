@@ -266,7 +266,8 @@ pub struct PlantParams {
     /// for the whole of the phase §8's criterion is judged in. Every agent would have
     /// paid for three organs that see nothing, and it would have surfaced during the
     /// metabolic tuning pass looking like a `k_sensor` problem rather than a missing
-    /// query — the kind of symptom CLAUDE.md warns gets "fixed" by weakening a cost.
+    /// query — the kind of symptom that gets "fixed" by weakening a metabolic cost,
+    /// which is how a simulation quietly stops selecting for anything (spec §10).
     ///
     /// Visible gives two independent routes to food, so an M12 run shows which one
     /// evolution finds first, and makes the signature channel meaningful immediately:
@@ -312,7 +313,7 @@ impl ChemoParams {
 ///
 /// These are not tuning limits — they are the boundary that keeps a bad value from
 /// becoming a panic or an out-of-memory abort. Params arrive from JS at runtime, so
-/// "nobody would set that" is not a guarantee (spec §7.6, CLAUDE.md).
+/// "nobody would set that" is not a guarantee (spec §7.6).
 const MAX_AGENTS: u32 = 1_000_000;
 const MAX_PLANTS: u32 = 1_000_000;
 /// Perception is 60–80% of tick cost, and each ray widens every brain. Far above any

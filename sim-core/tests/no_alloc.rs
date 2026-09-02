@@ -3,7 +3,7 @@
 //! An allocation in the hot loop does not fail a functional test — it shows up as
 //! frame-time jitter in the browser and as a slow drift in an overnight headless run,
 //! which is exactly the kind of thing nobody traces back to a `Vec::push`. So it is
-//! measured directly (CLAUDE.md invariant 4, spec §7.8 tier 2).
+//! measured directly (spec §2.2a, §7.8 tier 2).
 //!
 //! Counting is per-thread rather than global: this binary's test harness allocates on
 //! its own thread while the measured region runs, and a global counter would fold that
@@ -175,7 +175,12 @@ fn a_whole_tick_of_systems_never_allocates() {
     world.perceive_all();
     world.drive_effectors();
     world.integrate_movement();
+    world.grow_plants();
     world.update_chemo();
+    // Warm the death path too: `dying` is sized at capacity up front, and a `Vec::push`
+    // that reallocated would be an allocation inside step 10.
+    world.charge_metabolism();
+    world.resolve_deaths();
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
@@ -184,7 +189,10 @@ fn a_whole_tick_of_systems_never_allocates() {
             world.step_brains();
             world.drive_effectors();
             world.integrate_movement();
+            world.grow_plants();
             world.update_chemo();
+            world.charge_metabolism();
+            world.resolve_deaths();
         }
         std::hint::black_box(&world);
     });

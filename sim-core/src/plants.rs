@@ -9,7 +9,7 @@
 //! **All energy enters the world here, at a fixed rate, and nowhere else.** That is the
 //! invariant the whole economy rests on: selection is only real while energy is scarce,
 //! and a second source anywhere — a birth bonus, a free meal, a rounding error that
-//! rounds up — quietly makes every strategy viable (spec §5.1, CLAUDE.md). [`grow`]
+//! rounds up — quietly makes every strategy viable (spec §5.1). [`grow`]
 //! returns what it actually added so the ledger records the truth rather than the
 //! nominal rate.
 //!
