@@ -19,6 +19,13 @@ concurrency:
   group: swa-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# repo_token below is used only to comment the preview URL on the pull request.
+# Spelled out because a repository whose default workflow permissions are read-only
+# drops that comment with no error.
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   build_and_deploy:
     if: github.event_name == 'push' || github.event.action != 'closed'
@@ -26,10 +33,6 @@ jobs:
     name: Build and deploy
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The action reads the PR head commit to label preview environments.
-          submodules: false
-          lfs: false
 
       - uses: actions/setup-node@v4
         with:
