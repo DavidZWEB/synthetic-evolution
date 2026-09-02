@@ -380,6 +380,14 @@ impl World {
         &self.plants
     }
 
+    /// One agent's part offsets, as flat `xyz` triples relative to its own origin.
+    ///
+    /// Exactly one part, at the origin, for all of V1. The indirection is cashed in at
+    /// Phase 5, when a body has parts worth placing (spec §3.5, §9.1).
+    pub fn parts_of(&self, id: AgentId) -> &[f32] {
+        self.parts.get(self.agents.parts[id.index()])
+    }
+
     /// Queues a request from outside the simulation (spec §2.2b).
     ///
     /// Nothing happens here beyond the push: the command applies at the top of the tick
