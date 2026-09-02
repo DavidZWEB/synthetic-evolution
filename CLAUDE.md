@@ -206,10 +206,11 @@ them the corrections as a diff of their own, and lets GitHub show what moved sin
 looked. Amending destroys precisely that, and makes a review that caught a real error look
 identical to one that caught nothing.
 
-**PRs squash on merge**, so the branch collapses to a single commit on `main`. That makes
-the squash message — not the individual commit messages — the only one that survives, so it
-is where anything *Working style* requires has to end up, the note explaining a golden-hash
-update above all.
+**PRs squash on merge**, so the branch collapses to a single commit on `main`. GitHub
+prefills that commit's body by concatenating the branch's messages, which is why each one is
+still worth writing properly — but the prefill is editable and the title falls back to the
+PR's, so read the squash message before merging rather than trusting it. Anything *Working
+style* requires has to survive into it, the note explaining a golden-hash update above all.
 
 Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
 decide. Say what you reviewed even when you found nothing — an explicit "here is what I
