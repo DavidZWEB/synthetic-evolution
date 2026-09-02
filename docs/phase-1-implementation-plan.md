@@ -564,9 +564,13 @@ operator, an organ missing from the founder is unreachable for every descendant,
 everything is the only choice that keeps the search space whole. That constraint lifts at
 Phase 2, and the default should invert then: the simplest organism that closes the loop,
 with complexity earned rather than issued. Recorded in the spec rather than here, at §3.3
-next to the operators that unlock it, with a pointer from the Phase 2 roadmap entry and an
-open question at §11.7 for how simple is still viable — which is a measurement, not a
-principle.
+next to the operators that unlock it, with a pointer from the Phase 2 roadmap entry and
+question 7 of §11 for how simple is still viable — which is a measurement, not a principle.
+
+One thing that pointer surfaced: the Phase 2 roadmap line lists add/remove *neuron and
+connection*, not add/remove *sensor*, and a sensor is its own gene kind rather than a
+neuron. So the phase that unlocks a simpler founder is not yet named in the roadmap. The
+spec now asks Phase 2 to decide it rather than assuming it.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon. Met —
 `sim-core/tests/conservation.rs`, which also holds it across four seeds, through a

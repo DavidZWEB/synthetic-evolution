@@ -722,7 +722,7 @@ Determinism is what makes this trustworthy: every result is a reproducible `(see
 
 **Because the goal is to share early, the renderer needs to be presentable from Phase 2, not Phase 5.** A clean instanced 2D renderer plus seed URLs makes every phase from 3 onward shareable, which is where the feedback actually comes from. The Three.js pass at Phase 5 then upgrades a working presentation rather than creating one — don't defer *all* visual polish to Phase 5 on the strength of that line item.
 
-**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, genetic distance, species clustering, phylogenetic tree. **Revisit founder composition here (§3.3)** — Phase 1 grants founders every sensor only because nothing can add one later, and this is the phase that lifts that constraint. *Success: brains grow in complexity, distinct species appear.*
+**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, genetic distance, species clustering, phylogenetic tree. **Revisit founder composition here (§3.3), and decide here whether the sensor operators land with the neuron ones** — this line currently lists add/remove neuron and connection only, but a sensor is its own gene kind, so simplifying the founder stays blocked until add/remove *sensor* exists too. *Success: brains grow in complexity, distinct species appear.*
 
 **Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.*
 
