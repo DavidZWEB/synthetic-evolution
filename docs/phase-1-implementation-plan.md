@@ -20,7 +20,8 @@ referenced in commit messages.
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
 | M7 World and economy | done; larder fixed, `k_sensor` unit open — see the budget pass |
-| M8–M12 | not started |
+| M8 The tick | done |
+| M9–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -589,7 +590,65 @@ Build-plan task 7.
 - Forward-compatibility checklist audited here.
 
 **Done when:** the golden hash is stable across two in-process runs, and native and
-`wasm-pack test --node` agree on the same seed.
+`wasm-pack test --node` agree on the same seed. Met — `sim-core/tests/golden.rs` and
+`shells/wasm/tests/cross_target.rs`, which share one scenario file so that "native and
+wasm agree" cannot decay into each target agreeing with itself.
+
+**Decisions taken here.**
+
+*`World`'s fields are `pub(crate)`, and that is what the split cost.* Rust needs crate
+visibility to write an `impl` across two files, so lifting the eleven steps out of
+`world.rs` meant opening its fields to sibling modules. Nothing outside `sim-core` gains
+anything — the shells and the integration tests still go through the accessors — and the
+alternative was leaving a 1194-line file that CLAUDE.md calls a split at 500.
+
+*The steps stay `pub` alongside `step()`.* `steering.rs` drives perception through
+movement without the economy on purpose, so that what it measures is the sensorimotor
+chain rather than a population's luck with food. A shell should call `step`.
+
+*Three files held their own copy of the tick order.* `conservation.rs`, `no_alloc.rs`,
+and now `tick.rs` itself. The first two were rewritten to call `step()`: an acceptance
+test that assembles its own tick can go on passing against an order that no longer
+ships, which is the failure a golden hash exists to prevent and would have been immune to.
+
+*FNV-1a rather than `DefaultHasher`.* Not for hash quality — `DefaultHasher` is
+explicitly not stable across Rust releases, so a golden value built on it moves when the
+toolchain moves, and every such move looks exactly like the behaviour change the test
+exists to distinguish. Bytes fold little-endian rather than native, because native and
+wasm agreeing is the whole point.
+
+*Every variable-length run folds its length first.* Without it, one gene followed by a
+plant can produce the same bytes as no genes followed by a differently-placed plant, and
+the hash calls two different worlds equal. That is the only failure a golden test cannot
+survive, so it was worth the hash update that fixing it cost.
+
+*Two golden runs, each guarded against becoming vacuous.* The shipped defaults at 300
+ticks, inside the ~400 an idle founder now survives: run past extinction and the hash
+pins an empty world and a decayed field, which is a stable number that has stopped
+covering agents. And a configuration that reproduces, because the defaults produce no
+births at all and a hash over a population that only starves never reaches
+`resolve_births`. Both assert the guard before comparing the value — the birth guard
+caught its own test pinning a run where every offspring had already died.
+
+*A command stamped for a tick already past runs rather than being dropped.* Dropping
+would make the result depend on how far the sim had got when the message arrived, which
+is wall-clock timing leaking into a deterministic system: the same run replayed on a
+slower machine would diverge. Commands apply before step 1, so an agent placed this tick
+gets a whole one instead of a fragment whose size depends on where the queue was drained.
+
+*The forward-compatibility checklist is executable.* Ticking boxes in a document does not
+stop the next person deleting a field that is always `NULL`; every hedge on that list
+*is* unused code today, which is exactly why it reads as removable.
+`sim-core/tests/forward_compat.rs` covers the five that had nothing pinning them and
+names where the other six already are.
+
+*`llvm-tools` is a required toolchain component, not an optional one.* Nothing in the
+source calls it, but it ships `libLLVM.dylib` into `lib/rustlib/<host>/lib/`, which is
+where `rust-lld` looks. Without it, linking anything for wasm32 dies with `Library not
+loaded: @rpath/libLLVM.dylib` and the cross-target test cannot run at all. The toolchain
+ships another copy elsewhere that `rust-lld` cannot see, so the failure reads as a broken
+install rather than a missing component. Now pinned in `rust-toolchain.toml`, which
+`setup.sh` already reads.
 
 ## M9 — WASM shell and renderer
 

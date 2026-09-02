@@ -5,9 +5,10 @@
 //! world beside the first. That is why nothing here is `static`, including the
 //! innovation counter, which is a plain field (spec §7.2, §3.1).
 //!
-//! Deliberately not here yet: the tick. `step()` arrives at M8 with the 11 phases of
-//! spec §2.4 in `tick.rs`; this module owns state, lifecycle, and the thin wiring that
-//! hands a system the slices belonging to one agent.
+//! Deliberately not here: the tick. Spec §2.4's eleven steps live in `tick`, which
+//! writes the other half of this `impl`. What stays here is state, lifecycle, and the
+//! accessors — how a world comes into being, how an agent enters and leaves it, and
+//! what can be read from outside the crate.
 
 use glam::Vec3;
 
@@ -15,20 +16,16 @@ use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
-use crate::effectors::{self, AgentIntents, Effector, Intents};
-use crate::feeding;
+use crate::command::{Command, Kind};
+use crate::effectors::{self, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::ledger::EnergyLedger;
-use crate::metabolism;
-use crate::movement;
-use crate::mutate;
 use crate::params::{ParamError, SimParams};
-use crate::perceive::{self, SelfView, Sensor, WorldView};
+use crate::perceive::{self, Sensor};
 use crate::plants::Plants;
 use crate::pool::SlotPool;
-use crate::reproduction;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
 
@@ -36,54 +33,66 @@ use crate::spatial::SpatialHash;
 const PARTS_PER_AGENT: u32 = 1;
 
 /// A single simulation: its state, its parameters, and its random stream.
+///
+/// Fields are `pub(crate)` rather than private because `tick` splits the eleven steps
+/// into their own module and Rust needs at least crate visibility to write an `impl`
+/// across two files. Nothing outside `sim-core` gains anything: the shells and the
+/// integration tests still go through the accessors at the bottom of this file.
 pub struct World {
-    params: SimParams,
-    rng: Rng,
-    tick: u64,
+    pub(crate) params: SimParams,
+    pub(crate) rng: Rng,
+    pub(crate) tick: u64,
     /// Monotonic source of [`InnovationId`]s. A field rather than a `static` so two
     /// worlds in one process cannot hand out ids from the same counter (spec §3.1).
-    next_innovation: u32,
-    pool: SlotPool,
-    agents: Agents,
+    pub(crate) next_innovation: u32,
+    pub(crate) pool: SlotPool,
+    pub(crate) agents: Agents,
     /// Compiled neurons, one block per agent.
-    brains: Arena<Neuron>,
+    pub(crate) brains: Arena<Neuron>,
     /// Compiled wiring, one block per agent. Separate from `brains` because a synapse
     /// and a neuron are different element types, not because they have different
     /// lifetimes — the two blocks are claimed and freed together.
-    synapses: Arena<Synapse>,
+    pub(crate) synapses: Arena<Synapse>,
     /// Compiled sensors, one block per agent: an organ's parameters and the brain slots
     /// it writes to, resolved at birth (spec §2.2c).
-    sensors: Arena<Sensor>,
+    pub(crate) sensors: Arena<Sensor>,
     /// Compiled effectors, one block per agent: the brain slot that drives each one.
-    effectors: Arena<Effector>,
+    pub(crate) effectors: Arena<Effector>,
     /// What every agent's effectors asked for this tick. Written at step 4, drained by
     /// the systems that follow it (spec §2.4).
-    intents: Intents,
+    pub(crate) intents: Intents,
     /// Gene lists, one block per agent.
-    genes: Arena<Gene>,
+    pub(crate) genes: Arena<Gene>,
     /// The founding topology, whose innovation ids every founder in this world shares
     /// (spec §3.1).
-    plan: FounderPlan,
+    pub(crate) plan: FounderPlan,
     /// Reusable buffer for building a genome before it is copied into the arena.
     /// Owned by the world and sized once, so a birth allocates nothing.
-    genome_scratch: Vec<Gene>,
+    pub(crate) genome_scratch: Vec<Gene>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
-    parts: Arena<f32>,
+    pub(crate) parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
-    hash: SpatialHash,
+    pub(crate) hash: SpatialHash,
     /// Pheromone concentrations: what plants scent and what the chemo sensor reads.
-    field: ChemoField,
+    pub(crate) field: ChemoField,
     /// The autotrophs. Every joule in the world enters through them (spec §5.1).
-    plants: Plants,
+    pub(crate) plants: Plants,
     /// Every joule that entered and left. The acceptance criterion for M7 is that this
     /// agrees with the stock actually present (spec §5.1).
-    ledger: EnergyLedger,
+    pub(crate) ledger: EnergyLedger,
     /// Slots that reached zero energy this tick, resolved at step 10 in agent-index
     /// order. Owned by the world and sized once, so a death allocates nothing.
-    dying: Vec<AgentId>,
+    pub(crate) dying: Vec<AgentId>,
     /// Agents that asked to reproduce and can, resolved at step 10 after the deaths.
     /// Owned and sized for the same reason.
-    breeding: Vec<AgentId>,
+    pub(crate) breeding: Vec<AgentId>,
+    /// Requests from outside the simulation, waiting for the tick they are stamped for
+    /// (spec §2.2b). Kept in submission order, which is what makes two runs fed the same
+    /// commands apply them the same way.
+    pub(crate) commands: Vec<Command>,
+    /// The ones due this tick, lifted out before any is applied so that a command
+    /// cannot enqueue another and have it run inside the same tick.
+    pub(crate) due_commands: Vec<Command>,
 }
 
 impl World {
@@ -142,6 +151,11 @@ impl World {
             ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
+            // Not sized at capacity: commands arrive at human speed, a handful per
+            // second at most, and reserving a slot per agent for them would cost more
+            // memory than the queue will ever hold.
+            commands: Vec::new(),
+            due_commands: Vec::new(),
             plants,
             params,
         })
@@ -332,103 +346,6 @@ impl World {
         self.pool.free(id)
     }
 
-    /// Runs every live agent's sensors and writes what they return into its brain.
-    /// Step 2 of the tick (spec §2.4).
-    ///
-    /// A whole pass before [`Self::step_brains`], not fused with it: every agent must
-    /// perceive the same world, and a fused loop would let agent 0's decision reach
-    /// agent 1's eye within the same tick.
-    pub fn perceive_all(&mut self) {
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            let agent = SelfView {
-                index: id.raw(),
-                position: self.agents.position[i],
-                orientation: self.agents.orientation[i],
-                energy_tanks: self.agents.energy[i] / self.params.reproduction.start_energy,
-            };
-            let world = WorldView {
-                positions: &self.agents.position,
-                signatures: &self.agents.signature,
-                sizes: &self.agents.size,
-                hash: &self.hash,
-                field: &self.field,
-                plants: &self.plants,
-                plant_radius: self.params.plants.radius,
-                plant_signature: Vec3::from(self.params.plants.signature),
-            };
-            perceive::perceive(
-                self.sensors.get(self.agents.sensors[i]),
-                &agent,
-                &world,
-                self.brains.get_mut(self.agents.brain[i]),
-            );
-        }
-    }
-
-    /// Advances every live brain one Euler step. Step 3 of the tick (spec §2.4).
-    ///
-    /// Lives here rather than in `brain` for the reason `rebuild_spatial_hash` does:
-    /// this is the only place that knows which blocks belong to which agent. The step
-    /// itself takes plain slices and is testable without a world.
-    ///
-    /// Agent-index order, so that nothing about the result depends on pool layout —
-    /// though with every brain reading only the previous step's outputs, the order is
-    /// belt as well as braces here.
-    pub fn step_brains(&mut self) {
-        let dt = self.params.world.dt;
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            let (brain, synapses) = (self.agents.brain[i], self.agents.synapses[i]);
-            brain::step(self.brains.get_mut(brain), self.synapses.get(synapses), dt);
-        }
-    }
-
-    /// Reads every live agent's effectors into the intent buffer. Step 4 of the tick
-    /// (spec §2.4).
-    ///
-    /// Nothing here changes the world. The buffer is cleared first, so an agent that
-    /// lost an effector coasts rather than repeating its last request forever.
-    pub fn drive_effectors(&mut self) {
-        self.intents.clear();
-        let movement = &self.params.movement;
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            effectors::drive(
-                self.effectors.get(self.agents.effectors[i]),
-                self.brains.get(self.agents.brain[i]),
-                movement,
-                &mut AgentIntents {
-                    thrust: &mut self.intents.thrust[i],
-                    turn: &mut self.intents.turn[i],
-                    ingest: &mut self.intents.ingest[i],
-                    reproduce: &mut self.intents.reproduce[i],
-                },
-            );
-        }
-    }
-
-    /// Applies the movement intents. Step 5 of the tick (spec §2.4).
-    ///
-    /// Split from [`Self::drive_effectors`] rather than fused with it because every
-    /// agent must decide against the same world: an agent early in the pool moving
-    /// before a later one has chosen is exactly what the intent buffer exists to
-    /// prevent.
-    pub fn integrate_movement(&mut self) {
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            movement::integrate(
-                &mut self.agents.position[i],
-                &mut self.agents.velocity[i],
-                &mut self.agents.orientation[i],
-                self.intents.thrust[i],
-                self.intents.turn[i],
-                &self.params.movement,
-                &self.params.world,
-            );
-        }
-    }
-
     /// What every agent's effectors asked for on the most recent step 4.
     /// Mutable agent state, for shells and tests that set up a specific situation.
     /// The tick itself goes through the systems, not through here.
@@ -448,25 +365,6 @@ impl World {
         &self.intents
     }
 
-    /// Diffuses and decays the pheromone field by one tick. Step 8 of the tick
-    /// (spec §2.4), after whatever deposited into it.
-    pub fn update_chemo(&mut self) {
-        self.field.update(&self.params.chemo);
-    }
-
-    /// Rebuilds the neighbour grid from current positions. Step 1 of the tick.
-    ///
-    /// Lives here rather than in `spatial` because it is the only place that knows
-    /// which slices belong together; the hash itself takes plain slices so it can be
-    /// tested without a world.
-    pub fn rebuild_spatial_hash(&mut self) {
-        self.hash.rebuild(
-            &self.agents.position,
-            self.pool.alive_flags(),
-            &mut self.agents.grid_cell,
-        );
-    }
-
     #[inline]
     pub fn spatial_hash(&self) -> &SpatialHash {
         &self.hash
@@ -482,200 +380,71 @@ impl World {
         &self.plants
     }
 
-    /// Grows the plants by one tick and scents the field. Part of step 8, and the only
-    /// place energy enters the world (spec §5.1).
+    /// One agent's part offsets, as flat `xyz` triples relative to its own origin.
     ///
-    /// What the plants *actually* absorbed goes into the ledger, not the nominal input
-    /// rate: at carrying capacity the surplus never enters, and conservation has to be
-    /// measured rather than inferred.
-    pub fn grow_plants(&mut self) -> f32 {
-        let dt = self.params.world.dt;
-        let absorbed = self.plants.grow(&self.params.plants, dt);
-        self.ledger.record_input(absorbed);
-        self.plants.scent(&mut self.field, &self.params.plants, dt);
-        absorbed
+    /// Exactly one part, at the origin, for all of V1. The indirection is cashed in at
+    /// Phase 5, when a body has parts worth placing (spec §3.5, §9.1).
+    pub fn parts_of(&self, id: AgentId) -> &[f32] {
+        self.parts.get(self.agents.parts[id.index()])
     }
 
-    /// Charges every live agent its upkeep and notes who ran out. Step 9 of the tick
-    /// (spec §2.4).
+    /// Queues a request from outside the simulation (spec §2.2b).
     ///
-    /// An agent is charged only what it has left, so energy never goes negative and the
-    /// amount dissipated is exactly the amount that existed. The death itself is
-    /// deferred to step 10: mutating the pool here would make free-list allocation
-    /// depend on iteration order, which is the fastest way to lose determinism.
-    pub fn charge_metabolism(&mut self) {
-        self.dying.clear();
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            let cost = metabolism::cost_per_tick(
-                self.agents.size[i],
-                self.agents.brain_units[i],
-                self.agents.sensor_load[i],
-                self.intents.thrust[i],
-                &self.params.metabolism,
-            );
-            // Only what is there. Charging past zero would dissipate energy the world
-            // never held, and the ledger would report a leak that is really an
-            // overdraft.
-            let charged = cost.min(self.agents.energy[i]).max(0.0);
-            self.agents.energy[i] -= charged;
-            self.ledger.record_dissipated(charged);
-            if self.agents.energy[i] <= 0.0 {
-                self.dying.push(id);
+    /// Nothing happens here beyond the push: the command applies at the top of the tick
+    /// it is stamped for. Applying on arrival would let a shell mutate the world
+    /// half-way through a tick, which is the same hazard the intent buffer exists to
+    /// prevent one layer down.
+    pub fn push_command(&mut self, command: Command) {
+        self.commands.push(command);
+    }
+
+    /// How many commands are still waiting.
+    #[inline]
+    pub fn pending_commands(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Applies every command due at the current tick, in submission order.
+    ///
+    /// Runs before step 1 so that an agent placed this tick perceives, thinks, and moves
+    /// like any other — arriving mid-tick would give it a partial one, and which part
+    /// would depend on where the queue was drained.
+    pub(crate) fn apply_commands(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
+        let mut due = core::mem::take(&mut self.due_commands);
+        let mut pending = core::mem::take(&mut self.commands);
+        due.clear();
+
+        // Partition in place. Both halves keep submission order, and taking the whole
+        // due set out before applying any means a command cannot enqueue another into
+        // its own tick.
+        let tick = self.tick;
+        let mut i = 0;
+        while i < pending.len() {
+            if pending[i].apply_at_tick <= tick {
+                due.push(pending.remove(i));
+            } else {
+                i += 1;
             }
         }
-    }
+        self.commands = pending;
 
-    /// Removes the agents that ran out of energy. Part of step 10 (spec §2.4).
-    ///
-    /// Agent-index order, because `iter_live` is ascending and that is what fills
-    /// `dying`. Deaths resolved in any other order would hand the free list back in a
-    /// different sequence and the next births would land in different slots.
-    ///
-    /// A starving agent holds no energy by the time it gets here — `charge_metabolism`
-    /// took exactly what was left — so `despawn` finds nothing to dissipate. It would
-    /// dissipate a remainder if there were one, which is what makes any *other* route
-    /// to removal safe too. Corpses that return part of an agent to the world arrive
-    /// with predation in Phase 3.
-    pub fn resolve_deaths(&mut self) -> usize {
-        let dying = core::mem::take(&mut self.dying);
-        let mut removed = 0;
-        for &id in &dying {
-            debug_assert!(
-                self.agents.energy[id.index()] <= 0.0,
-                "starvation should have drained this agent before step 10"
-            );
-            if self.despawn(id) {
-                removed += 1;
+        // Borrowed, not taken. `core::mem::take` here would drop the buffer at the end
+        // of the loop and hand `due_commands` back a zero-capacity `Vec`, so every tick
+        // carrying a command would reallocate — the same shape `dying` and `breeding`
+        // avoid by assigning theirs back.
+        for command in &due {
+            match command.kind {
+                // A refused spawn is the population ceiling, not an error (spec §2.2b).
+                Kind::SpawnFounder { position } => {
+                    self.spawn_founder(position);
+                }
             }
         }
-        self.dying = dying;
-        self.dying.clear();
-        removed
-    }
-
-    /// Moves energy from plants into the agents eating them. Step 7 of the tick
-    /// (spec §2.4).
-    ///
-    /// A transfer, not a flow: nothing is recorded in the ledger, because the same
-    /// joules are still in the world afterwards. If this is ever written wrongly the
-    /// conservation test says so without knowing that eating exists.
-    ///
-    /// Agent-index order, because two agents can reach the same plant in one tick and
-    /// the plant may not hold enough for both. Whoever is asked first gets what is
-    /// there; resolving in any other order would make the outcome depend on pool
-    /// layout.
-    pub fn resolve_feeding(&mut self) {
-        let feeding = self.params.feeding.clone();
-        let plant_radius = self.params.plants.radius;
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            if self.intents.ingest[i] <= feeding.gate {
-                continue;
-            }
-            let reach = self.agents.size[i] + plant_radius + feeding.reach;
-            let taken = feeding::ingest(
-                self.agents.position[i],
-                reach,
-                feeding.rate,
-                &mut self.plants,
-            );
-            self.agents.energy[i] += taken;
-        }
-    }
-
-    /// Notes which agents asked to reproduce and can afford to. Part of step 4's
-    /// reading of the intent buffer, deferred like a death so the pool is not mutated
-    /// mid-tick (spec §2.4).
-    fn note_breeders(&mut self) {
-        self.breeding.clear();
-        for id in self.pool.iter_live() {
-            let i = id.index();
-            if reproduction::ready(
-                self.agents.energy[i],
-                self.agents.age[i],
-                self.intents.reproduce[i],
-                &self.params.reproduction,
-            ) {
-                self.breeding.push(id);
-            }
-        }
-    }
-
-    /// Creates the offspring of every agent that asked. The other half of step 10.
-    ///
-    /// The parent's energy is **split, not granted**: the offspring's tank comes out of
-    /// the parent and nothing is recorded in the ledger, unlike a founder's. And the
-    /// deduction happens only after the spawn succeeds — at the population ceiling a
-    /// birth is refused, and charging a parent for a child that never existed would
-    /// destroy energy on the busiest tick of a run.
-    ///
-    /// Agent-index order. Births hand out pool slots, so any other order would put the
-    /// same population in different slots and every later tick would diverge.
-    pub fn resolve_births(&mut self) -> usize {
-        self.note_breeders();
-        let breeding = core::mem::take(&mut self.breeding);
-        let mut born = 0;
-
-        for &parent in &breeding {
-            let p = parent.index();
-            let share = self.agents.energy[p] * self.params.reproduction.energy_split;
-
-            // Built before the spawn so the parent's genome can be read while the world
-            // is otherwise untouched; mutation is what makes the child a variation
-            // rather than a clone (spec §3.3).
-            let mut scratch = core::mem::take(&mut self.genome_scratch);
-            let genome = self.agents.genome[p];
-            scratch.clear();
-            scratch.extend_from_slice(self.genes.get(genome));
-            mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
-
-            let position = reproduction::offspring_position(
-                self.agents.position[p],
-                &self.params.reproduction,
-                self.params.world.size,
-                &mut self.rng,
-            );
-            let yaw = self
-                .rng
-                .range(-core::f32::consts::PI, core::f32::consts::PI);
-            let spec = SpawnSpec {
-                position,
-                yaw,
-                energy: share,
-                size: genome::body_trait(&scratch, BodyTrait::Size)
-                    .unwrap_or(self.params.body.size),
-                signature: Vec3::new(
-                    genome::body_trait(&scratch, BodyTrait::SignatureR).unwrap_or(0.5),
-                    genome::body_trait(&scratch, BodyTrait::SignatureG).unwrap_or(0.5),
-                    genome::body_trait(&scratch, BodyTrait::SignatureB).unwrap_or(0.5),
-                ),
-                parent_a: parent,
-            };
-            let spawned = self.spawn(&spec, &scratch);
-            self.genome_scratch = scratch;
-
-            if spawned.is_some() {
-                // Only now. A refused birth leaves the parent whole.
-                self.agents.energy[p] -= share;
-                born += 1;
-            }
-        }
-
-        self.breeding = breeding;
-        self.breeding.clear();
-        born
-    }
-
-    /// Ages every live agent and advances the clock. Step 11 of the tick (spec §2.4).
-    pub fn advance_tick(&mut self) {
-        for id in self.pool.iter_live() {
-            // Saturating, so a world left running for a year does not wrap an agent's
-            // age back to zero and make it eligible to breed again from nothing.
-            let age = &mut self.agents.age[id.index()];
-            *age = age.saturating_add(1);
-        }
-        self.tick += 1;
+        due.clear();
+        self.due_commands = due;
     }
 
     /// Every joule the world currently holds, in plants and in agents.

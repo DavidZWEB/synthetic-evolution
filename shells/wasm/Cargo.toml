@@ -9,3 +9,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 sim-core.workspace = true
 wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+glam.workspace = true

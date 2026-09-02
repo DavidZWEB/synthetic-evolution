@@ -3,5 +3,11 @@
 # in its own commit, and re-run the hash tests. See docs/development.md.
 [toolchain]
 channel = "1.98.0"
-components = ["rustfmt", "clippy"]
+# `llvm-tools` is not optional despite nothing in the source calling it: it ships
+# `libLLVM.dylib` into `lib/rustlib/<host>/lib/`, which is where `rust-lld` looks. Without
+# it, linking anything for wasm32 dies with `Library not loaded: @rpath/libLLVM.dylib`,
+# and the cross-target hash test — the only thing that checks native and wasm agree —
+# cannot run at all. The toolchain ships a copy at `lib/libLLVM.dylib` that `rust-lld`
+# cannot see, so the failure looks like a broken install rather than a missing component.
+components = ["rustfmt", "clippy", "llvm-tools"]
 targets = ["wasm32-unknown-unknown"]

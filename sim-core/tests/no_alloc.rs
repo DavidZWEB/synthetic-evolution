@@ -189,18 +189,7 @@ fn a_whole_tick_of_systems_never_allocates() {
 
     let observed = count_allocations(|| {
         for _ in 0..20 {
-            world.rebuild_spatial_hash();
-            world.perceive_all();
-            world.step_brains();
-            world.drive_effectors();
-            world.integrate_movement();
-            world.resolve_feeding();
-            world.grow_plants();
-            world.update_chemo();
-            world.charge_metabolism();
-            world.resolve_deaths();
-            world.resolve_births();
-            world.advance_tick();
+            world.step();
         }
         std::hint::black_box(&world);
     });
@@ -253,4 +242,40 @@ fn a_full_pool_refuses_without_allocating() {
         }
     });
     assert_eq!(observed, 0, "rejecting a birth allocated {observed} times");
+}
+
+#[test]
+fn draining_the_command_queue_never_allocates() {
+    // The drain runs through two reusable buffers, and it is easy to write it so one of
+    // them is freed and regrown every tick. `a_whole_tick_of_systems_never_allocates`
+    // cannot see that: its queue is empty, so the drain returns before touching either.
+    use sim_core::command::{Command, Kind};
+
+    let mut params = SimParams::default();
+    params.world.max_agents = 256;
+    let mut world = World::new(21, params).expect("valid params");
+
+    // Warm both queues, and every pool a spawn touches.
+    for i in 0..64u32 {
+        world.push_command(Command::at(i as u64, Kind::SpawnFounder { position: at(i) }));
+    }
+    for _ in 0..64 {
+        world.step();
+    }
+    assert_eq!(world.pending_commands(), 0, "warmup left work behind");
+    assert!(world.population() > 0, "nothing spawned, so nothing was warmed");
+
+    let observed = count_allocations(|| {
+        for i in 0..32u32 {
+            let tick = world.tick_count();
+            world.push_command(Command::at(tick, Kind::SpawnFounder { position: at(i) }));
+            world.step();
+        }
+        std::hint::black_box(&world);
+    });
+
+    assert_eq!(
+        observed, 0,
+        "draining the command queue allocated {observed} times after warmup"
+    );
 }
