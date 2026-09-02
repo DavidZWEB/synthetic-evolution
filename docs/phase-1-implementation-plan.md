@@ -19,7 +19,7 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | done; defaults not yet viable — see the budget pass |
+| M7 World and economy | done; larder fixed, `k_sensor` unit open — see the budget pass |
 | M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -451,6 +451,109 @@ weakening a metabolic cost makes every number look better and is how a simulatio
 stops selecting for anything (spec §10). The known figure remains an idle agent's ~250
 ticks against §5.5's ~2000, pinned by `metabolism`'s
 `the_default_budget_is_still_the_known_overshoot`.
+
+**The budget pass was measuring an empty larder.** `Plants::new` seeded every site at
+zero energy, and filling one takes `max_energy · max_plants / energy_input_rate`
+seconds — 400 s, or 24,000 ticks, at the defaults — against a founder lifetime of about
+250. Generation 0 lived and died in a world that had received, across the whole of its
+existence, roughly 0.6 joules per plant: a tick and a half of upkeep. Everything above
+about foraging was therefore measuring the absence of food, and the honest reading of
+"0.13 offspring per lifetime" is that there was almost nothing to forage.
+
+That is fixed rather than tuned — `PlantParams::initial_fill`, defaulting to a full
+larder, with `World::new` opening the ledger against the stock. An empty world was never
+a choice anyone made; it is the state no ecology passes through. The reasoning lives on
+the field.
+
+**What the three levers do once the larder is stocked.** Measured over 20k ticks, three
+seeds each, 150 founders. `W` warm larder, `M` slower dissipation (`body.size` 3→1.5,
+`k_sensor` 0.01→0.0025), `F` denser food (12k plants, input 1800), `V` more friction
+(`drag` 0.9→0.3 with `max_thrust` and `k_move` moved together to hold top speed and
+movement cost fixed).
+
+| config | births | extinct@ | plant fill |
+|---|---:|---:|---:|
+| defaults, cold | 0, 0, 0 | 237–242 | 1% |
+| `W` warm only | 0, 0, 0 | 384–467 | 99% |
+| `WM` warm+slow | 0, 0, 0 | 844–1228 | 99% |
+| `WF` warm+dense | 0, 0, 0 | 532–851 | 99% |
+| `WV` warm+visc | 0, 0, 0 | 464–662 | 99% |
+| `WMFV` warm+all | 12, 24, 16 | 4748, 8475, survived | 99% |
+| `MFV` cold+all | 0, 0, 0 | 637–661 | 3% |
+
+No single lever produces a birth. All four together do, and `MFV` — every lever except
+the warm larder — produces none, which is what makes the larder necessary rather than
+merely helpful.
+
+**The binding constraint is geometric, not behavioural.** Instrumenting the gates found
+them innocent: about 47% of agents want to eat and 48% want to breed at any moment, which
+is what a fan-in-scaled sigmoid should give. What is scarce is being *near* food. The
+fraction of agents within reach of a plant matches the fraction of world area covered by
+plant capture discs — `max_plants · π·(radius + feeding.reach)² / size²`, which is 5.0% at
+the defaults and measured 4.7–5.3%. A population that senses nothing would score exactly
+that, and the population scores exactly that.
+
+So `feeding.reach` is the highest-leverage knob for encounters and `radius` is quadratic
+in it, which is also why `feeding.rate` measured inert: rate is extraction speed, reach is
+coverage. At `reach` 8, 72–77% of agents are within reach of a plant.
+
+**Decided: the founder keeps its eyes, and what needs re-reading is `k_sensor`.**
+
+The question was whether to give founders fewer sensors so their metabolism is cheaper.
+It is worth taking seriously — the sensor term is the largest in the budget after body
+size, and `sensing.vision_rays` is already a `SimParams` field, so reducing it is tuning
+rather than a code change.
+
+The arithmetic, at default body and topology:
+
+| founder | sensor units | brain units | cost/tick | idle ticks |
+|---|---:|---:|---:|---:|
+| `vision_rays` 0 (blind) | 4 | 136 | 0.277 | 361 |
+| `vision_rays` 3 (default) | 16 | 268 | 0.403 | 248 |
+| `vision_rays` 6 | 28 | 400 | 0.530 | 189 |
+| default, `body.size` 1.5 | 16 | 268 | 0.268 | 373 |
+| default, `k_sensor` per *sensor* | 5 | 268 | 0.293 | 341 |
+
+Blinding the founder entirely buys 361 idle ticks. Halving `body.size` buys 373 — more,
+and nothing about it is permanent.
+
+**The eyes cost 12 of the 16 sensor units and currently earn nothing measurable.**
+Enrichment — agents within reach of a plant, over the geometric coverage that a
+sense-less population would score — sits at 0.8–1.1× for every variant from zero rays to
+six. Blind founders find food exactly as often as sighted ones. (The metric is only
+meaningful while coverage is well below 1; at `reach` 8 the discs overlap and the ratio
+stops meaning anything.)
+
+That measurement is the trap, not the answer. The eyes look free to remove precisely
+because no brain has evolved to use them, and evolving one is the phase's success
+criterion (spec §8). Removing them makes that permanently unreachable: `mutate` takes
+`&mut [Gene]`, so it cannot add or remove a gene at all, and it explicitly no-ops on
+`Gene::Sensor`. There is no add-sensor operator in Phase 1 and no remove-sensor operator
+either, so the founder's organs are every descendant's organs for the whole phase. This is
+the M4 fully-connected-topology decision restated in a different organ: dense is what keeps
+the search space reachable, and sparse forbids permanently.
+
+The measurement that settles it, all at `reach` 8 and `body.size` 1.5, three seeds:
+
+| founder | births | extinct@ |
+|---|---:|---:|
+| 3 eyes, `k_sensor` per channel | 0, 0, 0 | 638–1418 |
+| 3 eyes, `k_sensor` per sensor | 1, 2, 3 | 1990–4852 |
+| blind, per channel | 4, 2, 5 | 2270–3713 |
+| **6 eyes**, per sensor | 1, 2, 1 | 922–3844 |
+| 3 eyes, per channel, `body.size` 1.0 | 0, 0, 0 | 959–1531 |
+
+Keeping all three eyes and charging per sensor performs like blinding and charging per
+channel. Correcting the cost model even affords *twice* the default eyes and still breeds,
+while shrinking the body alone — the largest single term — does not. The sensor budget is
+what binds, and how it is charged is the part that is wrong.
+
+`genome::sensor_load` weights by channel count, making the default set 16 units for five
+organs. Spec §5.5 says `k_sensor` is "0.01 each, weighted by modality", which per sensor
+reads as 5. The channel reading is this codebase's, recorded at M4 as a known gap. Changing
+it is a `sim-core` change made in response to a metric, so it needs review rather than a
+tuning sweep — but it is the change the numbers point at, and it is the one that does not
+spend a capability to buy a joule.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon. Met —
 `sim-core/tests/conservation.rs`, which also holds it across four seeds, through a
