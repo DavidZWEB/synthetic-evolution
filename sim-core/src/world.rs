@@ -593,56 +593,32 @@ mod tests {
     }
 
     #[test]
-    fn retuning_a_world_takes_effect_and_refuses_to_resize_it() {
+    fn retuning_a_world_delegates_to_the_policy_with_its_real_grid() {
+        // What is worth testing here is the wiring, not the rules: `check_retune` owns
+        // which fields may move and proves it against two structs. What only a world can
+        // show is that `set_params` passes it the grid cell this world was actually
+        // built with, so the sensing ceiling is the real one.
         let mut world = small_world();
-        let capacity = world.pool().capacity();
+        let cell = world.spatial_hash().cell_size();
 
-        // An ordinary tuning change goes through and is visible immediately.
         let mut tuned = world.params().clone();
         tuned.metabolism.base *= 2.0;
         assert!(world.set_params(tuned.clone()).is_ok());
         assert_eq!(world.params().metabolism.base, tuned.metabolism.base);
 
-        // Anything that sizes something already allocated does not. Silently ignoring
-        // one of these would make the inspector disagree with the sim, and honouring it
-        // would detach every JS view over the snapshot (spec §7.3).
-        for (name, mutate) in [
-            ("max_agents", (|p: &mut SimParams| p.world.max_agents += 1) as fn(&mut SimParams)),
-            ("world.size", |p: &mut SimParams| p.world.size += 1.0),
-            ("max_plants", |p: &mut SimParams| p.plants.max_plants += 1),
-            ("chemo.cells", |p: &mut SimParams| p.chemo.cells[0] += 1),
-        ] {
-            let mut bad = world.params().clone();
-            mutate(&mut bad);
-            assert!(world.set_params(bad).is_err(), "{name} was accepted");
-        }
-        assert_eq!(world.pool().capacity(), capacity, "the pool moved anyway");
-    }
+        let mut at_the_ceiling = world.params().clone();
+        at_the_ceiling.sensing.vision_range = cell;
+        assert!(
+            world.set_params(at_the_ceiling).is_ok(),
+            "a full cell should fit"
+        );
 
-    #[test]
-    fn a_sensing_radius_may_shrink_but_not_outgrow_its_grid() {
-        // Cells are sized once, and the neighbour loop walks one ring. A radius wider
-        // than a cell would miss agents it should have found — silently, and it would
-        // read as a sensor bug rather than a params one (spec §2.3).
-        let mut world = small_world();
-        let cell = world.spatial_hash().cell_size();
+        let mut past_it = world.params().clone();
+        past_it.sensing.vision_range = cell * 1.01;
+        assert!(world.set_params(past_it).is_err(), "grew past its own grid");
 
-        let mut smaller = world.params().clone();
-        smaller.sensing.vision_range = cell * 0.5;
-        smaller.sensing.chemo_radius = cell * 0.25;
-        assert!(world.set_params(smaller).is_ok(), "shrinking should be fine");
-
-        let mut bigger = world.params().clone();
-        bigger.sensing.vision_range = cell * 1.5;
-        assert!(world.set_params(bigger).is_err(), "grew past the grid");
-    }
-
-    #[test]
-    fn retuning_still_validates() {
-        let mut world = small_world();
-        let mut invalid = world.params().clone();
-        invalid.plants.initial_fill = 2.0;
-        assert!(world.set_params(invalid).is_err());
+        // And nothing moved underneath it.
+        assert_eq!(world.pool().capacity(), small_world().pool().capacity());
     }
 
     #[test]

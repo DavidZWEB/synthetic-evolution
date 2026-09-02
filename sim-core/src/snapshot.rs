@@ -237,7 +237,10 @@ mod tests {
             assert_eq!(snap.alive()[i], 1);
             assert_eq!(snap.position()[i * 3], world.agents().position[i].x);
             assert_eq!(snap.position()[i * 3 + 1], world.agents().position[i].y);
-            assert_eq!(snap.orientation()[i * 4 + 3], world.agents().orientation[i].w);
+            assert_eq!(
+                snap.orientation()[i * 4 + 3],
+                world.agents().orientation[i].w
+            );
             assert_eq!(snap.size()[i], world.agents().size[i]);
             assert_eq!(snap.signature()[i * 3], world.agents().signature[i].x);
             assert_eq!(snap.part_count()[i], 1, "one part per agent in V1");

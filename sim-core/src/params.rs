@@ -388,7 +388,6 @@ impl core::fmt::Display for ParamError {
 impl core::error::Error for ParamError {}
 
 impl SimParams {
-
     /// Whether `next` may replace these params on a world already running, given the
     /// spatial grid's `grid_cell` extent.
     ///
@@ -709,6 +708,9 @@ mod tests {
 
         const GRID_CELL: f32 = 50.0;
 
+        /// A named edit to apply to a copy of the params, for the tables below.
+        type Case = (&'static str, fn(&mut SimParams));
+
         fn pair() -> (SimParams, SimParams) {
             let mut base = SimParams::default();
             // Both radii comfortably inside the cell, so a test about some other field
@@ -735,7 +737,7 @@ mod tests {
 
         #[test]
         fn anything_that_sized_an_allocation_is_frozen() {
-            let cases: [(&str, fn(&mut SimParams)); 4] = [
+            let cases: [Case; 4] = [
                 ("world.max_agents", |p| p.world.max_agents += 1),
                 ("world.size", |p| p.world.size += 1.0),
                 ("plants.max_plants", |p| p.plants.max_plants += 1),
@@ -757,7 +759,7 @@ mod tests {
             // arena's stride at construction. Changing one at runtime does nothing at all
             // today, and a value that silently does nothing is the thing `set_params`
             // exists to refuse.
-            let cases: [(&str, fn(&mut SimParams)); 3] = [
+            let cases: [Case; 3] = [
                 ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
                 ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
                 ("brain.oscillators", |p| p.brain.oscillators += 1),

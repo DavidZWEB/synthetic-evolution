@@ -79,7 +79,10 @@ fn the_snapshot_spans_describe_the_buffer_they_claim_to() {
             capacity * stride,
             "{field} is not {stride} per slot"
         );
-        assert!(span["ptr"].as_u64().expect(field) > 0, "{field} has a null pointer");
+        assert!(
+            span["ptr"].as_u64().expect(field) > 0,
+            "{field} has a null pointer"
+        );
     }
 }
 
@@ -98,7 +101,10 @@ fn retuning_goes_through_but_resizing_does_not() {
     // Same trap as above: `max_agents` has to be a key the parser knows, or this
     // rejects a typo rather than the resize.
     let mut resized = params.clone();
-    assert!(resized["world"]["max_agents"].is_number(), "key name changed");
+    assert!(
+        resized["world"]["max_agents"].is_number(),
+        "key name changed"
+    );
     resized["world"]["max_agents"] = serde_json::json!(99_999);
     assert!(sim.set_params(&resized.to_string()).is_err());
 }
@@ -147,5 +153,8 @@ fn inspecting_an_empty_slot_is_an_error() {
     // Returning a plausible-looking zeroed agent would put a ghost in the inspector.
     let sim = sim(2);
     assert!(sim.inspect_agent(50).is_err(), "slot 50 holds nothing");
-    assert!(sim.inspect_agent(u32::MAX).is_err(), "past capacity entirely");
+    assert!(
+        sim.inspect_agent(u32::MAX).is_err(),
+        "past capacity entirely"
+    );
 }

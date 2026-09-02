@@ -314,5 +314,8 @@ fn writing_the_render_snapshot_never_allocates() {
         observed, 0,
         "writing the snapshot allocated {observed} times after warmup"
     );
-    assert!(snapshot.population() > 0, "everything died; nothing was written");
+    assert!(
+        snapshot.population() > 0,
+        "everything died; nothing was written"
+    );
 }
