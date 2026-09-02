@@ -6,7 +6,6 @@
 //! criterion exists to rule out. Included by path rather than imported because a test
 //! fixture is not part of `sim-core`'s public surface and should not become one.
 
-use glam::Vec3;
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
@@ -43,22 +42,9 @@ pub fn breeding() -> SimParams {
     params
 }
 
-/// Founders on a golden-angle spiral, so the layout is a pure function of the count and
-/// carries no accidental symmetry.
 pub fn seeded(seed: u64, params: SimParams, founders: u32) -> World {
     let mut world = World::new(seed, params).expect("valid params");
-    let size = world.params().world.size;
-    for i in 0..founders {
-        let a = i as f32 * 2.399_963_2;
-        let r = size * 0.4 * (i as f32 / founders as f32);
-        world
-            .spawn_founder(Vec3::new(
-                size * 0.5 + r * sim_core::math::cos(a),
-                size * 0.5 + r * sim_core::math::sin(a),
-                0.0,
-            ))
-            .expect("pool has room");
-    }
+    assert_eq!(world.seed_founders(founders), founders, "pool has room");
     world
 }
 

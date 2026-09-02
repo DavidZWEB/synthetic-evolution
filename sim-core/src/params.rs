@@ -44,6 +44,13 @@ pub struct WorldParams {
     pub max_agents: u32,
     /// Seconds of sim time per tick. 60 ticks/sec of sim time (spec §2.1).
     pub dt: f32,
+    /// How far generation 0 spreads from the centre, as a fraction of [`Self::size`].
+    ///
+    /// A real tunable rather than a layout detail: it sets the initial density, and
+    /// density decides whether founders start close enough for kin selection to have
+    /// anything to act on and near enough to plants to eat. 0.4 fills most of the world
+    /// without piling everything on the seam.
+    pub founder_spread: f32,
 }
 
 /// Fixed body traits. Genetic from Phase 2; one value for everyone in Phase 1.
@@ -459,6 +466,12 @@ impl SimParams {
         {
             return Err(ParamError("plants.signature must be in [0, 1] per channel"));
         }
+        if !(0.0..=0.5).contains(&self.world.founder_spread) {
+            return Err(ParamError(
+                "world.founder_spread must be in [0, 0.5]; beyond half the world a disc \
+                 drawn from the centre wraps onto itself",
+            ));
+        }
         if !(0.0..=1.0).contains(&self.plants.initial_fill) {
             return Err(ParamError("plants.initial_fill must be in [0, 1]"));
         }
@@ -494,6 +507,7 @@ impl Default for WorldParams {
     fn default() -> Self {
         Self {
             size: 1_000.0,
+            founder_spread: 0.4,
             max_agents: 5_000,
             dt: 1.0 / 60.0,
         }

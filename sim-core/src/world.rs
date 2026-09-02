@@ -22,6 +22,7 @@ use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::ledger::EnergyLedger;
+use crate::math;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, Sensor};
 use crate::plants::Plants;
@@ -386,6 +387,41 @@ impl World {
     /// Phase 5, when a body has parts worth placing (spec §3.5, §9.1).
     pub fn parts_of(&self, id: AgentId) -> &[f32] {
         self.parts.get(self.agents.parts[id.index()])
+    }
+
+    /// Places `count` founders on a golden-angle spiral around the centre, and reports
+    /// how many the pool had room for.
+    ///
+    /// Where generation 0 starts is a property of the simulation, not of whichever shell
+    /// asked for it: the layout is folded into every seeded run, so two arrangements of
+    /// the same count are different experiments from the same seed. One definition here
+    /// means a headless sweep and the browser are running the same one.
+    ///
+    /// The **golden angle** spreads points evenly with no rings and no spokes, which a
+    /// grid or a fixed-radius circle would both hand generation 0 for free — a spatial
+    /// structure nothing in the ecology put there, and one that offspring inherit
+    /// through spatial viscosity (spec §5.4).
+    pub fn seed_founders(&mut self, count: u32) -> u32 {
+        /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
+        /// sunflower seeds pack without lining up.
+        const GOLDEN_ANGLE: f32 = 2.399_963_2;
+
+        let size = self.params.world.size;
+        let spread = self.params.world.founder_spread;
+        let mut placed = 0;
+        for i in 0..count {
+            let angle = i as f32 * GOLDEN_ANGLE;
+            let r = size * spread * (i as f32 / count.max(1) as f32);
+            let position = Vec3::new(
+                size * 0.5 + r * math::cos(angle),
+                size * 0.5 + r * math::sin(angle),
+                0.0,
+            );
+            if self.spawn_founder(position).is_some() {
+                placed += 1;
+            }
+        }
+        placed
     }
 
     /// Replaces the tunables, refusing any change that would resize what is already

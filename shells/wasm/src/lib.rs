@@ -20,7 +20,6 @@
 //! views whenever `memory.buffer` is not the one it built them from. That check is a
 //! pointer comparison per frame.
 
-use glam::Vec3;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -127,27 +126,14 @@ impl Sim {
         Ok(Sim { world, snapshot })
     }
 
-    /// Places `count` founders on a golden-angle spiral around the world's centre.
+    /// Seeds generation 0, and reports how many the pool had room for.
     ///
-    /// Seeding is a boundary condition rather than an ongoing action, so it is a
-    /// direct call rather than a command: there is no tick to stamp it for yet, and a
-    /// client that had to queue commands before the first step would need a tick number
-    /// it does not have.
+    /// The layout belongs to `sim-core` — it is folded into every seeded run, so a
+    /// browser and a headless sweep that arranged founders differently would not be
+    /// running the same experiment. This is a direct call rather than a command because
+    /// seeding is a boundary condition: there is no tick to stamp it for yet.
     pub fn seed_founders(&mut self, count: u32) -> u32 {
-        let size = self.world.params().world.size;
-        let mut placed = 0;
-        for i in 0..count {
-            let a = i as f32 * 2.399_963_2;
-            let r = size * 0.4 * (i as f32 / count.max(1) as f32);
-            let position = Vec3::new(
-                size * 0.5 + r * sim_core::math::cos(a),
-                size * 0.5 + r * sim_core::math::sin(a),
-                0.0,
-            );
-            if self.world.spawn_founder(position).is_some() {
-                placed += 1;
-            }
-        }
+        let placed = self.world.seed_founders(count);
         self.refresh();
         placed
     }
