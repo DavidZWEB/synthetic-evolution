@@ -14,12 +14,21 @@ rust-version = "1.98"
 [workspace.dependencies]
 sim-core = { path = "sim-core" }
 
-# `default-features = false` disables glam's `std` math, and `libm` routes its
-# transcendentals through the software implementations instead. Both are load-bearing:
-# platform sin/cos differ between native and WASM, which is a silent determinism break
-# (spec §7.4). Leaving SIMD off also keeps Vec3 at 12 bytes, which `agents.rs` asserts
-# at compile time because the zero-copy snapshot views depend on it (spec §7.3).
-glam = { version = "0.30", default-features = false, features = ["libm", "serde"] }
+# All three features are load-bearing determinism choices, not tidiness (spec §7.4).
+#
+# `default-features = false` disables glam's `std` math and `libm` routes its
+# transcendentals through software implementations instead: platform sin/cos differ
+# between native and WASM, which is a silent determinism break.
+#
+# `scalar-math` disables glam's SIMD backends. It is the one that is easy to lose,
+# because dropping it breaks nothing that any single machine can see: glam picks SSE2
+# on x86_64 and scalar elsewhere, so a quaternion op gives one answer on an x86_64
+# runner and another on an aarch64 laptop, from the same seed. WASM is scalar too,
+# which means the native-versus-WASM cross-target test agrees on an aarch64 machine
+# and hides it. It does not affect Vec3's 12-byte layout that `agents.rs` asserts
+# (spec §7.3) — Vec3 is scalar with or without it, which is why that assert never
+# caught this.
+glam = { version = "0.30", default-features = false, features = ["libm", "scalar-math", "serde"] }
 libm = "0.2"
 rand = { version = "0.9", default-features = false }
 # `serde` so RNG state can be checkpointed and resumed mid-run.

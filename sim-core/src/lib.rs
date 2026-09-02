@@ -12,6 +12,7 @@ pub mod agents;
 pub mod arena;
 pub mod brain;
 pub mod chemo;
+pub mod command;
 pub mod crossover;
 pub mod effectors;
 pub mod feeding;
@@ -30,6 +31,8 @@ pub mod pool;
 pub mod reproduction;
 pub mod rng;
 pub mod spatial;
+pub mod state_hash;
+pub mod tick;
 pub mod world;
 
 pub use agents::{Agents, SpawnSpec};

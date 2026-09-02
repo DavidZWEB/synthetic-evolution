@@ -13,17 +13,22 @@ Phase 1 deliberately hardcodes things that later phases make genetic. That is no
 
 These cost almost nothing now and are expensive to retrofit. Every one must be in place before Phase 1 is done, even though nothing uses them yet.
 
-- [ ] `positions`/`velocities` are `N*3`, z pinned to 0
-- [ ] `orientation` is a quaternion `N*4`, constrained to yaw about Z — **not** a scalar heading
-- [ ] `parentA` **and** `parentB` exist; `parentB` is `NULL_ID` always
-- [ ] `partOffset`/`partCount` exist; every agent has exactly 1 part at the origin
-- [ ] Sensor direction params are `(azimuth, elevation)` pairs; elevation clamped to 0, its mutation operator disabled
-- [ ] Turn effector takes a rotation axis, pinned to Z
-- [ ] Spatial hash is a triple-nested cell loop with Z range `[0,0]`
-- [ ] Chemo field is a 3D grid with depth 1
-- [ ] All world mutations go through a serde-serializable `Command` enum carrying `apply_at_tick`
-- [ ] Innovation counter is a field on `World`, not a `static`
-- [ ] Crossover function written and unit-tested, though nothing calls it
+**Audited at M8, and now executable.** Ticking a box in a document does not stop the next
+person deleting a field that is always `NULL`, so each hedge has a test that fails if it
+goes. `sim-core/tests/forward_compat.rs` holds the five that had nothing pinning them and
+names where the other six are already tested.
+
+- [x] `positions`/`velocities` are `N*3`, z pinned to 0
+- [x] `orientation` is a quaternion `N*4`, constrained to yaw about Z — **not** a scalar heading
+- [x] `parentA` **and** `parentB` exist; `parentB` is `NULL_ID` always
+- [x] `partOffset`/`partCount` exist; every agent has exactly 1 part at the origin
+- [x] Sensor direction params are `(azimuth, elevation)` pairs; elevation clamped to 0, its mutation operator disabled
+- [x] Turn effector takes a rotation axis, pinned to Z
+- [x] Spatial hash is a triple-nested cell loop with Z range `[0,0]`
+- [x] Chemo field is a 3D grid with depth 1
+- [x] All world mutations go through a serde-serializable `Command` enum carrying `apply_at_tick`
+- [x] Innovation counter is a field on `World`, not a `static`
+- [x] Crossover function written and unit-tested, though nothing calls it
 
 Rationale for each is in spec §9.1 and §3.4. Do not remove any as unused code.
 
