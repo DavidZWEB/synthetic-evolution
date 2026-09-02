@@ -138,7 +138,11 @@ mod tests {
         }
         world.step();
         assert_eq!(world.population(), 8, "pool holds 8");
-        assert_eq!(world.pending_commands(), 0, "refused commands should not requeue");
+        assert_eq!(
+            world.pending_commands(),
+            0,
+            "refused commands should not requeue"
+        );
     }
 
     #[test]
