@@ -136,9 +136,10 @@ impl World {
                 capacity,
             ),
             field: ChemoField::new(&params.chemo, params.world.size),
-            // Opened against an empty world: plants start bare and no agent exists yet,
-            // so every joule that ever appears has to arrive through `grow_plants`.
-            ledger: EnergyLedger::opening(0.0),
+            // Against the stock, not zero: energy present before the first tick is a
+            // boundary condition, the same treatment `spawn_founder` gives a founder's
+            // tank (spec §5.1).
+            ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
             plants,
@@ -773,6 +774,27 @@ mod tests {
         let mut params = SimParams::default();
         params.world.max_agents = 32;
         World::new(7, params).expect("defaults are valid")
+    }
+
+    #[test]
+    fn stocking_the_larder_does_not_move_the_rng_stream() {
+        // Plant *positions* are drawn before the fill, so comparing those proves
+        // nothing — the obvious assertion here passes under the bug. What has to match
+        // is everything drawn after, since one generator serves the whole world.
+        let genome_at = |fill: f32| {
+            let mut params = SimParams::default();
+            params.world.max_agents = 4;
+            params.plants.max_plants = 32;
+            params.plants.initial_fill = fill;
+            let mut world = World::new(11, params).expect("valid params");
+            let id = world
+                .spawn_founder(Vec3::new(10.0, 10.0, 0.0))
+                .expect("pool has room");
+            world.genome(id).to_vec()
+        };
+        let full = genome_at(1.0);
+        assert_eq!(full, genome_at(0.0));
+        assert_eq!(full, genome_at(0.37));
     }
 
     #[test]

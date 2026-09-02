@@ -284,6 +284,17 @@ pub struct PlantParams {
     /// second. This is what gives the chemo sensor a food gradient to climb in
     /// Phase 1, before any agent can emit anything.
     pub scent_rate: f32,
+    /// Fraction of [`Self::max_energy`] each plant holds when the world is created.
+    ///
+    /// **Defaults full; empty was a bug rather than a choice.** Filling a bare larder
+    /// takes ~24,000 ticks at these defaults against a founder lifetime of ~250, so
+    /// generation 0 starved in a world with no food in it yet — which reads as a
+    /// foraging failure and invites weakening a metabolic cost (spec §10). Measured in
+    /// `docs/phase-1-implementation-plan.md` under M7.
+    ///
+    /// Filled uniformly and without drawing from `rng`: a random fill would shift every
+    /// genome scalar drawn after it.
+    pub initial_fill: f32,
     /// The colour a `vision_ray` reports when it hits a plant.
     ///
     /// **Plants are visible as well as smellable — decided here, at M7.** The
@@ -448,6 +459,9 @@ impl SimParams {
         {
             return Err(ParamError("plants.signature must be in [0, 1] per channel"));
         }
+        if !(0.0..=1.0).contains(&self.plants.initial_fill) {
+            return Err(ParamError("plants.initial_fill must be in [0, 1]"));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -575,6 +589,7 @@ impl Default for PlantParams {
             max_energy: 60.0,
             radius: 2.0,
             scent_rate: 0.02,
+            initial_fill: 1.0,
             signature: [0.2, 0.8, 0.25],
         }
     }

@@ -215,6 +215,16 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 
 **Evolvable mutation rates** let lineages self-tune. Stable niches evolve low rates; lineages under pressure evolve high ones. It costs almost nothing to implement and it visibly improves the dynamics.
 
+**Founders must get simpler once these operators exist — revisit founder construction when they land.** Phase 1 issues every founder the complete sensory suite: three eyes, a nose, an interoceptor, fully connected. That is forced rather than chosen. With no add-sensor and no add-connection operator, anything missing from the founder is unreachable for every descendant for the whole of the phase, so density is the only safe default when structure cannot change.
+
+That argument expires the moment the structural operators above are *implemented* — add/remove neuron, connection, and sensor. The table has specified all three since v0.1; what no phase of §8 yet schedules is the sensor pair, and that is the one this depends on. After that, a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
+
+So when the structural operators arrive, invert the default: the founder should be the **simplest organism that can still close the loop** — plausibly one chemoreceptor, thrust, turn, ingest, and little else — with complexity earned rather than granted. Three consequences to plan for:
+
+- **The metabolic terms change meaning.** With a maximal founder, `k_sensor` (§5.2) is a tax every agent pays equally, so it selects for nothing within a generation-0 population. With a minimal founder it becomes the price of an upgrade, which is the selective role it was designed for.
+- **Minimal may not be viable, and that is a measurement.** A founder too simple to find food starves before it can reproduce, and the floor depends on the §5.5 energy economy and on food density, not on principle. Sweep it; do not reason it out.
+- **Founder composition should be runtime config**, for the same reason every other tunable is (§7.6). It is a parameter to sweep, not a constant to rewrite.
+
 ### 3.4 Crossover and speciation
 
 Genetic distance (NEAT compatibility):
@@ -712,7 +722,7 @@ Determinism is what makes this trustworthy: every result is a reproducible `(see
 
 **Because the goal is to share early, the renderer needs to be presentable from Phase 2, not Phase 5.** A clean instanced 2D renderer plus seed URLs makes every phase from 3 onward shareable, which is where the feedback actually comes from. The Three.js pass at Phase 5 then upgrades a working presentation rather than creating one — don't defer *all* visual polish to Phase 5 on the strength of that line item.
 
-**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, genetic distance, species clustering, phylogenetic tree. *Success: brains grow in complexity, distinct species appear.*
+**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, genetic distance, species clustering, phylogenetic tree. **Revisit founder composition here (§3.3), and decide here whether the sensor operators land with the neuron ones** — this line currently lists add/remove neuron and connection only, but a sensor is its own gene kind, so simplifying the founder stays blocked until add/remove *sensor* exists too. *Success: brains grow in complexity, distinct species appear.*
 
 **Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.*
 
@@ -877,3 +887,4 @@ That last one is a real methodological hazard. Keep a random-brain control popul
 4. ~~Target scale?~~ **Decided:** two profiles — 50k headless on the native shell (aspirational, flexible), and whatever holds 60fps in the shared web build. Agent count is runtime config, not a constant (§6).
 5. ~~When does multi-segment morphology land?~~ **Decided:** Phase 5, before volumetric 3D, as rigid genome-derived bodies (§3.5). Rapier deferred to articulation, and possibly skipped entirely (§9.2).
 6. ~~Watch, experiment, or share?~~ **Decided:** experiment *and* share, deployed as a static app early. Consequences: seed URLs are a first-class feature (§6), the renderer must be presentable from Phase 2 (§8), host choice is constrained by COOP/COEP (§7.7), and §9.5 is deprioritized.
+7. **What is the minimal viable founder? Open.** Phase 1 hands every founder the full sensory suite because no operator can add one back (§3.3), so the question could not be asked. Once the structural operators exist the default should invert toward the simplest organism that closes the loop — but how simple stays viable against the §5.5 economy is a measurement nobody has taken.

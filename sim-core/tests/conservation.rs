@@ -41,9 +41,16 @@ fn tick(world: &mut World) {
 }
 
 fn populated(seed: u64, agents: u32) -> (World, SimParams) {
+    populated_with_fill(seed, agents, SimParams::default().plants.initial_fill)
+}
+
+/// As [`populated`], with the larder stocked to `fill` of `max_energy`. Only the tests
+/// that measure the larder *filling* want anything but the default, which is full.
+fn populated_with_fill(seed: u64, agents: u32, fill: f32) -> (World, SimParams) {
     let mut params = SimParams::default();
     params.world.max_agents = agents.max(1);
     params.plants.max_plants = 400;
+    params.plants.initial_fill = fill;
     let mut world = World::new(seed, params.clone()).expect("valid params");
     let size = params.world.size;
     for i in 0..agents {
@@ -167,7 +174,11 @@ fn a_world_at_carrying_capacity_stops_absorbing() {
     // The input rate is nominal, not guaranteed. Once every plant is full the surplus
     // never enters the world, and the ledger has to record what happened rather than
     // what was asked for — otherwise conservation fails against a rate nobody supplied.
-    let (mut world, params) = populated(5, 0);
+    // Empty on purpose: absorption stopping at the ceiling is only observable if there
+    // is a ceiling left to reach. The shipped default stocks the larder at construction
+    // instead, and puts that energy in the ledger's opening balance rather than its
+    // input — see `PlantParams::initial_fill`.
+    let (mut world, params) = populated_with_fill(5, 0, 0.0);
     for _ in 0..200_000 {
         world.grow_plants();
     }
