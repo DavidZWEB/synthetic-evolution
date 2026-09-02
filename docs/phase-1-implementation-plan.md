@@ -19,7 +19,7 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | done; metabolic budget pass outstanding |
+| M7 World and economy | done; defaults not yet viable — see the budget pass |
 | M8–M12 | not started |
 
 ## Cross-cutting rules for this phase
@@ -403,13 +403,54 @@ before this change, past the 500 that CLAUDE.md calls a split. The new logic wen
 lifting the eleven tick-step methods into `tick.rs`, which is that milestone's job
 anyway. Noted so it is a decision rather than a drift.
 
-**Outstanding: the metabolic budget pass.** Now possible for the first time — there is a
-running population to measure against. It is deliberately *not* in this change, because
-tuning and code changes are separate loops and the output is a report rather than a
-commit: several seeds per configuration, a vector of metrics with the random-brain
-control alongside, and a shortlist for a human rather than a winner picked by a machine.
-The known figure to move is an idle agent's ~250 ticks against §5.5's ~2000, pinned by
-`metabolism`'s `the_default_budget_is_still_the_known_overshoot`.
+**The budget pass ran. Generation 0 is not viable, and one parameter will not fix it.**
+Measured over 20k-tick runs, three seeds per configuration, 150 founders. Every
+configuration tried went extinct; what follows is the vector, not a winner.
+
+*The default world cannot feed 150 agents.* They dissipate 0.403/tick each — 3,600/s
+between them — against an `energy_input_rate` of 600/s. Carrying capacity is about **25
+agents**, and the run starts with six times that. Plants sat at 25% fill while the
+population starved, so the larder was never the limit: supply was. Raising input to
+2,400/s takes plants to 100% fill and peak agent energy from 112 to 156.
+
+*`reproduction.maturity_ticks` (300) exceeds the default idle lifetime (248).* Not a
+tuning preference — two shipped defaults that contradict each other. At the default
+budget an agent cannot be old enough and rich enough at the same time, in any world,
+however much food there is. This is why config A produced zero births even with plants
+at 100%.
+
+*`feeding.rate` is not a lever.* Above about 5 it changes nothing: total energy ingested
+was byte-identical at 15 and at 40. Encounters bound intake, not extraction speed.
+`feeding.reach` does matter — total ingested scaled 147 → 540 → 1218 as reach went
+0 → 6 → 15.
+
+*The metabolic overshoot is real but secondary.* `body.size` 3 → 1 and `k_sensor` per
+sensor rather than per channel triples idle life, 248 → 750 ticks. Necessary for anything
+else to matter, sufficient for nothing on its own.
+
+*The world is too slippery to hold station, and fixing that is not enough either.* At
+`drag` 0.9/s an agent that cuts thrust coasts about 90 units before slowing; a plant's
+reach is 5. Making it viscous — `drag` 0.2, `max_thrust` 13, `k_move` 0.003, which holds
+top speed and movement cost fixed — lets agents drain a plant instead of skimming it, and
+peak energy rises 151 → 200. Births barely move and extinction time does not move at all.
+Coast distance is `top_speed / ln(1/drag)`, so the three parameters have to move together.
+
+*What actually remains.* With every lever above applied, a founder produces about **0.13
+offspring in its lifetime**. Replacement needs 1.0. That is an eight-fold gap, and no
+single parameter tested closes it: random-brain agents simply do not forage well enough
+to pay for themselves, which is the behaviour selection exists to produce and cannot
+produce until something survives to be selected. Whether Phase 1's defaults should make
+generation 0 marginally viable — and how — is a judgment call, not a measurement.
+Untested directions worth a look: many more founders, far denser plants, a
+`reproduction.threshold` closer to `start_energy`, or a lower `start_energy` so a full
+tank is cheaper to reach.
+
+No parameter has been changed on the strength of any of this. The values are a human's
+call, and the plan is explicit that a metric improving is not a reason on its own —
+weakening a metabolic cost makes every number look better and is how a simulation quietly
+stops selecting for anything (spec §10). The known figure remains an idle agent's ~250
+ticks against §5.5's ~2000, pinned by `metabolism`'s
+`the_default_budget_is_still_the_known_overshoot`.
 
 **Done when:** energy conservation holds over 10k ticks within epsilon. Met —
 `sim-core/tests/conservation.rs`, which also holds it across four seeds, through a
