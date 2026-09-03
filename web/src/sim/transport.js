@@ -46,8 +46,8 @@ export function preferredKind() {
  * Creates the writer half. `handoff` is what the worker posts to the main thread so it
  * can build the matching reader.
  */
-export function createWriter(kind, capacity) {
-  const layout = frameLayout(capacity);
+export function createWriter(kind, capacity, plantCapacity) {
+  const layout = frameLayout(capacity, plantCapacity);
   return kind === SHARED ? sharedWriter(layout) : transferableWriter(layout);
 }
 
@@ -63,7 +63,7 @@ function sharedWriter(layout) {
 
   return {
     kind: SHARED,
-    handoff: { kind: SHARED, buffer, capacity: layout.capacity },
+    handoff: { kind: SHARED, buffer, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
     transfer: [],
 
     publish(source, tick, population) {
@@ -88,7 +88,7 @@ function transferableWriter(layout) {
 
   return {
     kind: TRANSFERABLE,
-    handoff: { kind: TRANSFERABLE, capacity: layout.capacity },
+    handoff: { kind: TRANSFERABLE, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
     transfer: [],
 
     /** Returns a message to post, or null when no buffer is free. */
@@ -115,7 +115,7 @@ function transferableWriter(layout) {
 
 /** Builds the reader half from whatever `createWriter` handed off. */
 export function createReader(handoff) {
-  const layout = frameLayout(handoff.capacity);
+  const layout = frameLayout(handoff.capacity, handoff.plantCapacity);
   return handoff.kind === SHARED ? sharedReader(handoff, layout) : transferableReader(layout);
 }
 

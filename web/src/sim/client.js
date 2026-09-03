@@ -8,7 +8,7 @@
 
 import { createReader } from './transport.js';
 
-export function createSim({ seed, founders, capacity, params = null }) {
+export function createSim({ seed, founders, params = null }) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
   let reader = null;
@@ -20,7 +20,7 @@ export function createSim({ seed, founders, capacity, params = null }) {
 
     if (message.kind === 'ready') {
       reader = createReader(message.transport);
-      emit('ready', { transport: reader.kind, capacity: reader.capacity });
+      emit('ready', { transport: reader.kind, capacity: reader.capacity, hints: message.hints });
       return;
     }
 
@@ -45,7 +45,7 @@ export function createSim({ seed, founders, capacity, params = null }) {
     emit('error', { context: 'worker', message: 'a message could not be deserialised' });
   };
 
-  worker.postMessage({ kind: 'create', seed, params, founders, capacity });
+  worker.postMessage({ kind: 'create', seed, params, founders });
 
   const send = (kind, payload = {}) => worker.postMessage({ kind, ...payload });
 

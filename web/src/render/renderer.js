@@ -45,6 +45,54 @@ void main() {
   gl_Position = vec4(unit * 2.0 * u_scale - u_scale + u_offset, 0.0, 1.0);
 }`;
 
+/**
+ * Plants: the same quad, sized by a uniform radius and shaded by how much the site holds.
+ *
+ * A separate program rather than a branch in the agent shader. Plants differ in every
+ * respect that matters to a draw — one radius for all of them, colour from a parameter
+ * rather than a gene, and no orientation — and folding them together would mean uploading
+ * per-plant copies of values that are the same for every one.
+ */
+const PLANT_VERTEX_SHADER = `#version 300 es
+precision highp float;
+
+in vec2 a_corner;
+in vec3 a_position;
+in float a_energy;
+
+uniform vec2 u_world;
+uniform vec2 u_scale;
+uniform float u_radius;
+uniform float u_max_energy;
+
+out vec2 v_corner;
+out float v_fullness;
+
+void main() {
+  v_corner = a_corner;
+  v_fullness = clamp(a_energy / u_max_energy, 0.0, 1.0);
+
+  vec2 world = a_position.xy + a_corner * u_radius;
+  vec2 unit = world / u_world;
+  gl_Position = vec4(unit * 2.0 * u_scale - u_scale, 0.0, 1.0);
+}`;
+
+const PLANT_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+in vec2 v_corner;
+in float v_fullness;
+uniform vec3 u_color;
+out vec4 fragment;
+
+void main() {
+  if (dot(v_corner, v_corner) > 1.0) discard;
+  // An emptied site stays visible rather than blinking out: it persists and regrows
+  // (spec §5.1), and a larder that vanished as it was eaten would make a starving world
+  // look like an empty one.
+  fragment = vec4(u_color * (0.18 + 0.82 * v_fullness), 1.0);
+}`;
+
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
@@ -90,7 +138,7 @@ function link(gl, vertexSource, fragmentSource) {
  * Throws when WebGL2 is unavailable rather than falling back to canvas2d: a silent
  * downgrade to something that cannot hold the frame rate reads as "the sim is slow".
  */
-export function createRenderer(canvas, { worldSize, capacity }) {
+export function createRenderer(canvas, { worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy }) {
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL2 is unavailable in this browser');
 
@@ -103,10 +151,17 @@ export function createRenderer(canvas, { worldSize, capacity }) {
     offset: gl.getUniformLocation(program, 'u_offset'),
   };
 
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
+  const plantProgram = link(gl, PLANT_VERTEX_SHADER, PLANT_FRAGMENT_SHADER);
+  const plantUniforms = {
+    world: gl.getUniformLocation(plantProgram, 'u_world'),
+    scale: gl.getUniformLocation(plantProgram, 'u_scale'),
+    radius: gl.getUniformLocation(plantProgram, 'u_radius'),
+    color: gl.getUniformLocation(plantProgram, 'u_color'),
+    maxEnergy: gl.getUniformLocation(plantProgram, 'u_max_energy'),
+  };
 
-  // The quad every instance is drawn from: a triangle strip of four corners.
+  // The quad every instance is drawn from: a triangle strip of four corners, shared by
+  // both programs.
   const corners = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, corners);
   gl.bufferData(
@@ -114,25 +169,28 @@ export function createRenderer(canvas, { worldSize, capacity }) {
     new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]),
     gl.STATIC_DRAW,
   );
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
   const cornerAttr = gl.getAttribLocation(program, 'a_corner');
   gl.enableVertexAttribArray(cornerAttr);
   gl.vertexAttribPointer(cornerAttr, 2, gl.FLOAT, false, 0, 0);
 
   /** One per-instance attribute, sized once at capacity and refilled each frame. */
-  function instanced(name, components, type, bytesPerComponent, normalized = false) {
+  function instancedFor(target, name, components, type, bytesPerComponent, slots, normalized = false) {
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-    gl.bufferData(
-      gl.ARRAY_BUFFER,
-      capacity * components * bytesPerComponent,
-      gl.DYNAMIC_DRAW,
-    );
-    const location = gl.getAttribLocation(program, name);
+    gl.bufferData(gl.ARRAY_BUFFER, slots * components * bytesPerComponent, gl.DYNAMIC_DRAW);
+    const location = gl.getAttribLocation(target, name);
     gl.enableVertexAttribArray(location);
     gl.vertexAttribPointer(location, components, type, normalized, 0, 0);
     gl.vertexAttribDivisor(location, 1);
     return buffer;
   }
+
+  const instanced = (name, components, type, bytes, normalized = false) =>
+    instancedFor(program, name, components, type, bytes, capacity, normalized);
 
   const attributes = {
     position: instanced('a_position', 3, gl.FLOAT, 4),
@@ -145,6 +203,22 @@ export function createRenderer(canvas, { worldSize, capacity }) {
   };
 
   gl.bindVertexArray(null);
+
+  // Plants get their own vertex array so neither program has to rebind the other's
+  // attributes every frame.
+  const plantVao = gl.createVertexArray();
+  gl.bindVertexArray(plantVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+  const plantCornerAttr = gl.getAttribLocation(plantProgram, 'a_corner');
+  gl.enableVertexAttribArray(plantCornerAttr);
+  gl.vertexAttribPointer(plantCornerAttr, 2, gl.FLOAT, false, 0, 0);
+
+  const plantAttributes = {
+    position: instancedFor(plantProgram, 'a_position', 3, gl.FLOAT, 4, plantCapacity),
+    energy: instancedFor(plantProgram, 'a_energy', 1, gl.FLOAT, 4, plantCapacity),
+  };
+  gl.bindVertexArray(null);
+
   gl.clearColor(0.055, 0.063, 0.078, 1);
 
   let width = 0;
@@ -173,35 +247,54 @@ export function createRenderer(canvas, { worldSize, capacity }) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       if (!views) return;
 
-      gl.useProgram(program);
-      gl.bindVertexArray(vao);
-
       const upload = (buffer, data) => {
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
       };
-      upload(attributes.position, views.position);
-      upload(attributes.size, views.size);
-      upload(attributes.signature, views.signature);
-      upload(attributes.alive, views.alive);
 
       // Letterbox rather than stretch: a world that changed shape with the window would
       // make distance mean something different along each axis, and every judgement
       // about clustering would be a judgement about the window.
       const fit = Math.min(width, height);
-      gl.uniform2f(uniforms.world, worldSize, worldSize);
-      gl.uniform2f(uniforms.scale, fit / width, fit / height);
-      gl.uniform2f(uniforms.offset, 0, 0);
+      const scaleX = fit / width;
+      const scaleY = fit / height;
 
+      // Plants first, so agents draw over the food rather than under it.
+      if (plantCapacity > 0) {
+        gl.useProgram(plantProgram);
+        gl.bindVertexArray(plantVao);
+        upload(plantAttributes.position, views.plantPosition);
+        upload(plantAttributes.energy, views.plantEnergy);
+        gl.uniform2f(plantUniforms.world, worldSize, worldSize);
+        gl.uniform2f(plantUniforms.scale, scaleX, scaleY);
+        gl.uniform1f(plantUniforms.radius, plantRadius);
+        gl.uniform1f(plantUniforms.maxEnergy, plantMaxEnergy);
+        gl.uniform3f(plantUniforms.color, plantColor[0], plantColor[1], plantColor[2]);
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity);
+      }
+
+      gl.useProgram(program);
+      gl.bindVertexArray(vao);
+      upload(attributes.position, views.position);
+      upload(attributes.size, views.size);
+      upload(attributes.signature, views.signature);
+      upload(attributes.alive, views.alive);
+      gl.uniform2f(uniforms.world, worldSize, worldSize);
+      gl.uniform2f(uniforms.scale, scaleX, scaleY);
+      gl.uniform2f(uniforms.offset, 0, 0);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+
       gl.bindVertexArray(null);
     },
 
     destroy() {
       gl.deleteProgram(program);
+      gl.deleteProgram(plantProgram);
       gl.deleteVertexArray(vao);
+      gl.deleteVertexArray(plantVao);
       gl.deleteBuffer(corners);
       for (const buffer of Object.values(attributes)) gl.deleteBuffer(buffer);
+      for (const buffer of Object.values(plantAttributes)) gl.deleteBuffer(buffer);
     },
   };
 }

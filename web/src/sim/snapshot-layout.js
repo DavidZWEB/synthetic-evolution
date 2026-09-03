@@ -37,7 +37,7 @@ export const HEADER_BYTES = HEADER.LENGTH * 4;
  * any base — which is what makes double-buffering a change of base rather than a second
  * layout.
  */
-export function frameLayout(capacity) {
+export function frameLayout(capacity, plantCapacity = 0) {
   let offset = 0;
   const wide = (count) => {
     const field = { offset, length: count };
@@ -53,18 +53,26 @@ export function frameLayout(capacity) {
     species: wide(capacity),
     partOffset: wide(capacity),
     partCount: wide(capacity),
+    plantPosition: wide(plantCapacity * 3),
+    plantEnergy: wide(plantCapacity),
     alive: { offset, length: capacity },
   };
   offset += capacity;
 
   layout.bytes = offset;
   layout.capacity = capacity;
+  layout.plantCapacity = plantCapacity;
   return layout;
 }
 
 /** What one agent costs across a frame. Should be 57 (spec §7.5). */
 export function bytesPerAgent() {
-  return frameLayout(1).bytes;
+  return frameLayout(1, 0).bytes;
+}
+
+/** What one plant costs: a position and how much it holds. Should be 16. */
+export function bytesPerPlant() {
+  return frameLayout(0, 1).bytes;
 }
 
 /**
@@ -84,6 +92,8 @@ export function frameViews(buffer, base, layout) {
     species: u32(layout.species),
     partOffset: u32(layout.partOffset),
     partCount: u32(layout.partCount),
+    plantPosition: f32(layout.plantPosition),
+    plantEnergy: f32(layout.plantEnergy),
     alive: new Uint8Array(buffer, base + layout.alive.offset, layout.alive.length),
   };
 }
@@ -97,6 +107,8 @@ export const FIELDS = [
   'species',
   'partOffset',
   'partCount',
+  'plantPosition',
+  'plantEnergy',
   'alive',
 ];
 

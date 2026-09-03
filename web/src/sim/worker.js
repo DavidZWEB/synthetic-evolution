@@ -17,7 +17,7 @@
 
 import init, { Sim } from '../wasm/wasm.js';
 import { createWriter, preferredKind } from './transport.js';
-import { bytesPerAgent } from './snapshot-layout.js';
+import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
 
 /** Sim seconds per real second at speed 1, matching `world.dt` of 1/60 (spec §2.1). */
 const TICKS_PER_SECOND = 60;
@@ -47,13 +47,18 @@ let lastFrameAt = 0;
  */
 function assertLayoutsAgree(spans) {
   const capacity = spans.alive.len;
-  const wide = ['position', 'orientation', 'size', 'signature', 'species', 'part_offset', 'part_count'];
-  const bytes = wide.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
-  const expected = capacity * bytesPerAgent();
-  if (bytes !== expected) {
+  const agentFields = ['position', 'orientation', 'size', 'signature', 'species', 'part_offset', 'part_count'];
+  const agentBytes =
+    agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
+  const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
+
+  const expectedAgents = capacity * bytesPerAgent();
+  const expectedPlants = spans.plant_capacity * bytesPerPlant();
+  if (agentBytes !== expectedAgents || plantBytes !== expectedPlants) {
     throw new Error(
-      `snapshot layout disagrees: wasm says ${bytes} bytes for ${capacity} slots, ` +
-        `this side expects ${expected}`,
+      `snapshot layout disagrees: wasm says ${agentBytes}b for ${capacity} agents and ` +
+        `${plantBytes}b for ${spans.plant_capacity} plants; this side expects ` +
+        `${expectedAgents} and ${expectedPlants}`,
     );
   }
 }
@@ -78,6 +83,8 @@ function sourceViews() {
     species: at(spans.species, Uint32Array),
     partOffset: at(spans.part_offset, Uint32Array),
     partCount: at(spans.part_count, Uint32Array),
+    plantPosition: at(spans.plant_position, Float32Array),
+    plantEnergy: at(spans.plant_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
   };
   sourceBuffer = memory.buffer;
@@ -134,19 +141,28 @@ function stop() {
 }
 
 const handlers = {
-  async create({ seed, params, founders, capacity }) {
+  async create({ seed, params, founders }) {
     const wasm = await init();
     memory = wasm.memory;
 
     sim = new Sim(BigInt(seed), params ?? null);
     sim.seed_founders(founders);
 
+    // Sizes and the world's extent come from the world, not from the caller. A client
+    // holding its own copy of `world.size` draws a correct picture of the wrong world
+    // the moment either moves.
+    const hints = JSON.parse(sim.render_hints());
     const kind = preferredKind();
-    writer = createWriter(kind, capacity);
+    writer = createWriter(kind, hints.agent_capacity, hints.plant_capacity);
     source = null;
     sourceLayout = null;
 
-    postMessage({ kind: 'ready', transport: writer.handoff, isolated: kind === 'shared' });
+    postMessage({
+      kind: 'ready',
+      transport: writer.handoff,
+      isolated: kind === 'shared',
+      hints,
+    });
     publish();
   },
 

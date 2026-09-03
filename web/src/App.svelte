@@ -3,16 +3,13 @@
   import { createSim } from './sim/client.js';
   import { createRenderer } from './render/renderer.js';
 
-  /** Matches `WorldParams::size`. The renderer needs it to map world units to clip space. */
-  const WORLD_SIZE = 1000;
-  /** Matches `WorldParams::max_agents`, which is the slot count a frame carries. */
-  const CAPACITY = 5000;
-
   const SPEEDS = [1, 2, 5, 10, 25, 50, 100];
 
   let canvas;
   let sim = null;
+  /** Built from the world's own hints, so nothing here has a second copy of `world.size`. */
   let renderer = null;
+  let capacity = 0;
 
   let tick = $state(0n);
   let population = $state(0);
@@ -42,9 +39,26 @@
   }
 
   function start() {
-    sim = createSim({ seed, founders, capacity: CAPACITY });
-    sim.on('ready', (info) => {
-      transport = info.transport;
+    sim = createSim({ seed, founders });
+    sim.on('ready', ({ transport: kind, hints }) => {
+      transport = kind;
+      capacity = hints.agent_capacity;
+      // Rebuilt rather than reused: a reseed can carry different params, and a renderer
+      // holding the previous world's extent would draw a correct picture of the wrong one.
+      renderer?.destroy();
+      try {
+        renderer = createRenderer(canvas, {
+          worldSize: hints.world_size,
+          capacity: hints.agent_capacity,
+          plantCapacity: hints.plant_capacity,
+          plantRadius: hints.plant_radius,
+          plantColor: hints.plant_signature,
+          plantMaxEnergy: hints.plant_max_energy,
+        });
+      } catch (error) {
+        failure = String(error);
+        return;
+      }
       sim.setSpeed(speed);
     });
     sim.on('error', (message) => {
@@ -53,12 +67,6 @@
   }
 
   onMount(() => {
-    try {
-      renderer = createRenderer(canvas, { worldSize: WORLD_SIZE, capacity: CAPACITY });
-    } catch (error) {
-      failure = String(error);
-      return;
-    }
     start();
 
     // The renderer runs on its own clock and draws whatever the latest frame is. It never
@@ -71,7 +79,7 @@
     const loop = () => {
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
-      renderer.draw(frame?.views ?? null, CAPACITY);
+      renderer?.draw(frame?.views ?? null, capacity);
       if (frame) {
         tick = frame.tick;
         population = frame.population;
@@ -126,7 +134,7 @@
     </span>
 
     <label>seed <input type="number" bind:value={seed} min="0" /></label>
-    <label>founders <input type="number" bind:value={founders} min="1" max={CAPACITY} /></label>
+    <label>founders <input type="number" bind:value={founders} min="1" /></label>
     <button onclick={reseed}>reseed</button>
   </footer>
 </main>

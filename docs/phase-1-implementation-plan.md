@@ -723,6 +723,27 @@ deliberately and reports, and `client.js` listens for `onerror` and `onmessageer
 well, because a worker-level throw reaches neither the page console nor any handler by
 default.
 
+*Plants are in the snapshot, though spec §2.2b's field list is agent state only.* That
+list has a hole rather than an opinion: it never says how food reaches the renderer, and
+Phase 1 succeeds when agents visibly move toward it (spec §8), judged by a human
+watching. A world whose food is invisible cannot be judged on that criterion at all —
+which is what the first working build was, and it took someone looking at it to notice.
+16 bytes per plant against the agent's 57, and an emptied site keeps drawing at low
+brightness rather than blinking out, because it persists and regrows (spec §5.1). The
+depleted patch a starving population leaves behind is then visible, which is the
+observation the criterion is actually about.
+
+*Plant positions travel every frame even though sites never move.* Sending them once
+would be cheaper and is what "fixed sites" invites, but relocating a depleted site is
+already named in `plants` as a change an M12 run might call for, and a renderer holding
+cached positions would draw food where none is.
+
+*The renderer is built from the world's own hints, not from constants in the client.*
+`world.size` and the two capacities were duplicated in `App.svelte`, which draws a
+correct picture of the wrong world the moment either moves — and `set_params` exists
+precisely so params can move. `Sim::render_hints` reports them, and the renderer is
+rebuilt on every reseed because a reseed can carry different ones.
+
 *The `alive` attribute is not normalized.* It cost an hour: a `UNSIGNED_BYTE` attribute
 declared normalized divides by 255, and the flag is 1 rather than 255, so every agent's
 radius became four thousandths of its size. The world renders as empty — no error
