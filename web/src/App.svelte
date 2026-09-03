@@ -76,12 +76,9 @@
     // explicit listener in `onMount` rather than an `onwheel` attribute, which Svelte
     // registers passively and where preventDefault would be ignored.
     event.preventDefault();
-    // Scroll down to zoom in, up to zoom out — pushing the world away and pulling it
-    // closer, rather than driving a magnification slider.
-    //
-    // Exponential in the delta, so a trackpad's many small events and a mouse wheel's few
-    // large ones cover the same ground at the same speed.
-    renderer?.zoomAt(event.clientX, event.clientY, Math.exp(event.deltaY * 0.0015));
+    // Exponential in the wheel delta, so a trackpad's many small events and a mouse
+    // wheel's few large ones cover the same ground at the same speed.
+    renderer?.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0015));
   }
 
   function resetView() {
