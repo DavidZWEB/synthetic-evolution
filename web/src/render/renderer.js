@@ -307,6 +307,15 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
   const wrap = (value) => ((value % worldSize) + worldSize) % worldSize;
 
   /**
+   * Holds zoom inside its range.
+   *
+   * The floor is a fitted world: past it the whole world is already on screen and zooming
+   * out only adds copies of it. Shared by every path that sets zoom so a restored view
+   * cannot land somewhere the wheel would refuse to reach.
+   */
+  const clampPpu = (ppu) => Math.min(Math.max(ppu, fitPpu()), fitPpu() * 400);
+
+  /**
    * A point in CSS pixels, as an offset in device pixels from the viewport's centre.
    *
    * Scaled by the backing store against the rect the browser actually laid out, not by
@@ -332,6 +341,27 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
   return {
     resize,
     camera,
+    worldSize,
+
+    /**
+     * The camera as a portable value: where it looks, and how magnified it is *relative to
+     * a fitted world*.
+     *
+     * Relative rather than absolute, because `ppu` is pixels per world unit and depends on
+     * the canvas size. Handing an absolute zoom to a renderer built at a different size
+     * would silently change the magnification.
+     */
+    view() {
+      return { x: camera.x, y: camera.y, zoom: camera.ppu / fitPpu() };
+    },
+
+    /** Restores a view taken from [`view`]. */
+    setView({ x, y, zoom }) {
+      resize();
+      camera.x = wrap(x);
+      camera.y = wrap(y);
+      camera.ppu = clampPpu(fitPpu() * zoom);
+    },
 
     /** Frames the whole world. */
     fit() {
@@ -355,9 +385,7 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
      */
     zoomAt(cssX, cssY, factor) {
       const anchor = screenToWorld(cssX, cssY);
-      // A floor at the fitted world: past it the whole world is already on screen and
-      // zooming further only adds copies of it.
-      const next = Math.min(Math.max(camera.ppu * factor, fitPpu()), fitPpu() * 400);
+      const next = clampPpu(camera.ppu * factor);
       if (next === camera.ppu) return;
 
       const { x, y } = toDevice(cssX, cssY);

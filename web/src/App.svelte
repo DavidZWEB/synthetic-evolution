@@ -109,6 +109,10 @@
       capacity = hints.agent_capacity;
       // Rebuilt rather than reused: a reseed can carry different params, and a renderer
       // holding the previous world's extent would draw a correct picture of the wrong one.
+      // The *view* survives that rebuild, so reseeding does not yank you back out to the
+      // whole world — watching one patch across several seeds is the point of the button.
+      const carried =
+        renderer && renderer.worldSize === hints.world_size ? renderer.view() : null;
       renderer?.destroy();
       try {
         renderer = createRenderer(canvas, {
@@ -123,7 +127,10 @@
         failure = String(error);
         return;
       }
-      renderer.fit();
+      // A world of a different size makes the old coordinates mean something else, so
+      // that is the one case worth reframing for.
+      if (carried) renderer.setView(carried);
+      else renderer.fit();
       sim.setSpeed(speed);
     });
     sim.on('error', (message) => {
