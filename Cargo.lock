@@ -699,6 +699,8 @@ name = "wasm"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "serde",
+ "serde_json",
  "sim-core",
  "wasm-bindgen",
  "wasm-bindgen-test",

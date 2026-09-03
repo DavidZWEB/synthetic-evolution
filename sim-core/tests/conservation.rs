@@ -19,7 +19,6 @@
 //! now exist — an agent eating a plant, and a parent splitting its tank with a child —
 //! and neither is recorded anywhere. If either is wrong, these tests say so.
 
-use glam::Vec3;
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
@@ -35,18 +34,7 @@ fn populated_with_fill(seed: u64, agents: u32, fill: f32) -> (World, SimParams) 
     params.plants.max_plants = 400;
     params.plants.initial_fill = fill;
     let mut world = World::new(seed, params.clone()).expect("valid params");
-    let size = params.world.size;
-    for i in 0..agents {
-        let angle = i as f32 * 2.399_963_2; // golden angle, so they spread out
-        let r = size * 0.4 * (i as f32 / agents.max(1) as f32);
-        world
-            .spawn_founder(Vec3::new(
-                size * 0.5 + r * sim_core::math::cos(angle),
-                size * 0.5 + r * sim_core::math::sin(angle),
-                0.0,
-            ))
-            .expect("pool has room");
-    }
+    assert_eq!(world.seed_founders(agents), agents, "pool has room");
     (world, params)
 }
 

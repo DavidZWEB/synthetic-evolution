@@ -22,6 +22,7 @@ use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{AgentId, InnovationId};
 use crate::ledger::EnergyLedger;
+use crate::math;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::{self, Sensor};
 use crate::plants::Plants;
@@ -388,6 +389,52 @@ impl World {
         self.parts.get(self.agents.parts[id.index()])
     }
 
+    /// Places `count` founders on a golden-angle spiral around the centre, and reports
+    /// how many the pool had room for.
+    ///
+    /// Where generation 0 starts is a property of the simulation, not of whichever shell
+    /// asked for it: the layout is folded into every seeded run, so two arrangements of
+    /// the same count are different experiments from the same seed. One definition here
+    /// means a headless sweep and the browser are running the same one.
+    ///
+    /// The **golden angle** spreads points evenly with no rings and no spokes, which a
+    /// grid or a fixed-radius circle would both hand generation 0 for free — a spatial
+    /// structure nothing in the ecology put there, and one that offspring inherit
+    /// through spatial viscosity (spec §5.4).
+    pub fn seed_founders(&mut self, count: u32) -> u32 {
+        /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
+        /// sunflower seeds pack without lining up.
+        const GOLDEN_ANGLE: f32 = 2.399_963_2;
+
+        let size = self.params.world.size;
+        let spread = self.params.world.founder_spread;
+        let mut placed = 0;
+        for i in 0..count {
+            let angle = i as f32 * GOLDEN_ANGLE;
+            let r = size * spread * (i as f32 / count.max(1) as f32);
+            let position = Vec3::new(
+                size * 0.5 + r * math::cos(angle),
+                size * 0.5 + r * math::sin(angle),
+                0.0,
+            );
+            if self.spawn_founder(position).is_some() {
+                placed += 1;
+            }
+        }
+        placed
+    }
+
+    /// Replaces the tunables.
+    ///
+    /// The policy — which fields may move on a running world and which are frozen by
+    /// what they sized — is `SimParams::check_retune`, where it can be read and tested
+    /// without a world to hand.
+    pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
+        self.params.check_retune(&params, self.hash.cell_size())?;
+        self.params = params;
+        Ok(())
+    }
+
     /// Queues a request from outside the simulation (spec §2.2b).
     ///
     /// Nothing happens here beyond the push: the command applies at the top of the tick
@@ -543,6 +590,35 @@ mod tests {
         let mut params = SimParams::default();
         params.world.max_agents = 32;
         World::new(7, params).expect("defaults are valid")
+    }
+
+    #[test]
+    fn retuning_a_world_delegates_to_the_policy_with_its_real_grid() {
+        // What is worth testing here is the wiring, not the rules: `check_retune` owns
+        // which fields may move and proves it against two structs. What only a world can
+        // show is that `set_params` passes it the grid cell this world was actually
+        // built with, so the sensing ceiling is the real one.
+        let mut world = small_world();
+        let cell = world.spatial_hash().cell_size();
+
+        let mut tuned = world.params().clone();
+        tuned.metabolism.base *= 2.0;
+        assert!(world.set_params(tuned.clone()).is_ok());
+        assert_eq!(world.params().metabolism.base, tuned.metabolism.base);
+
+        let mut at_the_ceiling = world.params().clone();
+        at_the_ceiling.sensing.vision_range = cell;
+        assert!(
+            world.set_params(at_the_ceiling).is_ok(),
+            "a full cell should fit"
+        );
+
+        let mut past_it = world.params().clone();
+        past_it.sensing.vision_range = cell * 1.01;
+        assert!(world.set_params(past_it).is_err(), "grew past its own grid");
+
+        // And nothing moved underneath it.
+        assert_eq!(world.pool().capacity(), small_world().pool().capacity());
     }
 
     #[test]

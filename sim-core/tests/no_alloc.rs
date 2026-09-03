@@ -285,3 +285,37 @@ fn draining_the_command_queue_never_allocates() {
         "draining the command queue allocated {observed} times after warmup"
     );
 }
+
+#[test]
+fn writing_the_render_snapshot_never_allocates() {
+    // Written once per tick for the life of a run (spec §2.2b). It is also the one
+    // buffer JS holds views over, so a reallocation here would not merely cost time —
+    // growing WASM memory detaches every existing view, silently (spec §7.3).
+    use sim_core::snapshot::Snapshot;
+
+    let mut params = SimParams::default();
+    params.world.max_agents = 2_000;
+    let mut world = World::new(23, params).expect("valid params");
+    for i in 0..2_000 {
+        world.spawn_founder(at(i)).expect("pool sized for 2k");
+    }
+    let mut snapshot = Snapshot::for_world(&world);
+    snapshot.update(&world);
+
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            world.step();
+            snapshot.update(&world);
+        }
+        std::hint::black_box(&snapshot);
+    });
+
+    assert_eq!(
+        observed, 0,
+        "writing the snapshot allocated {observed} times after warmup"
+    );
+    assert!(
+        snapshot.population() > 0,
+        "everything died; nothing was written"
+    );
+}
