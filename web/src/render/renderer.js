@@ -314,19 +314,23 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
   const clampPpu = (ppu) => Math.min(Math.max(ppu, fitPpu()), fitPpu() * 400);
 
   /**
-   * A point in CSS pixels, as an offset in device pixels from the viewport's centre.
+   * A point in CSS pixels, as an offset in device pixels from the viewport's centre —
+   * **in world orientation**, so y grows upward.
    *
-   * Scaled by the backing store against the rect the browser actually laid out, not by
-   * `devicePixelRatio`. Layout sizes are fractional and `canvas.width` is a whole number
-   * of pixels, so the two disagree by a fraction of a pixel — which is invisible until
-   * you anchor a zoom to the cursor, where it shows up as the world creeping out from
-   * under the pointer.
+   * The flip is the whole point. CSS pixels count y downward and clip space counts it
+   * upward, so a screen coordinate handed straight to the camera describes a world point
+   * mirrored about the centre line. Nothing about that is visible while zooming toward
+   * the middle of the screen; it shows up as dragging the world the wrong way vertically,
+   * and as a zoom anchored above what the cursor is actually over.
+   *
+   * Scaled by the backing store against the rect the browser laid out rather than by
+   * `devicePixelRatio`, since layout sizes are fractional and `canvas.width` is whole.
    */
   function toDevice(cssX, cssY) {
     const rect = canvas.getBoundingClientRect();
     return {
       x: (cssX - rect.left) * (width / rect.width) - width / 2,
-      y: (cssY - rect.top) * (height / rect.height) - height / 2,
+      y: -((cssY - rect.top) * (height / rect.height) - height / 2),
     };
   }
 
@@ -392,11 +396,17 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
       camera.y = wrap(anchor.y - y / next);
     },
 
-    /** Drags the view by a mouse delta in CSS pixels. */
+    /**
+     * Drags the view by a mouse delta in CSS pixels.
+     *
+     * The world follows the pointer: drag down and the world comes down with you. Both
+     * axes move the camera opposite to the drag, and y additionally flips because CSS
+     * counts it downward while the world counts it up.
+     */
     panBy(cssDx, cssDy) {
       const rect = canvas.getBoundingClientRect();
       camera.x = wrap(camera.x - (cssDx * (width / rect.width)) / camera.ppu);
-      camera.y = wrap(camera.y - (cssDy * (height / rect.height)) / camera.ppu);
+      camera.y = wrap(camera.y + (cssDy * (height / rect.height)) / camera.ppu);
     },
 
     screenToWorld,

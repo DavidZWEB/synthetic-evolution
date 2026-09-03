@@ -43,7 +43,15 @@
   };
 
   function onPointerDown(event) {
-    canvas.setPointerCapture(event.pointerId);
+    // Capture keeps a drag alive when the pointer leaves the canvas, but it is an
+    // enhancement rather than a precondition — and it throws for a pointer the browser
+    // no longer considers active. Letting that escape would abort the handler before the
+    // drag is even recorded, which reads as dragging having stopped working.
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Dragging still works; it just ends if the pointer leaves.
+    }
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointers.size === 2) pinchDistance = spread();
   }
