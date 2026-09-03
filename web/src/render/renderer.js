@@ -15,14 +15,18 @@
  * Agents are drawn as discs by discarding outside the unit circle in the fragment
  * shader. A texture would be one more thing to load before anything appears on screen.
  *
- * **The world wraps, so the picture has to.** Two things fall out of that. Both vertex
- * shaders place each instance at its nearest image to the camera centre — the same
- * minimum-image rule spatial.rs measures every distance with — so panning across the seam
- * is continuous rather than hitting a wall the picture invented. And the draw repeats per
- * *tile*, because minimum image alone only covers a viewport up to one world across:
- * wider than that and the extra width would be empty, which reads as an edge. A browser
- * window is rarely square and the world always is, so at rest there are usually three
- * tiles across and one down. Zoomed in there is one, and the loop costs nothing.
+ * **The world wraps, so the picture has to — but each agent is drawn once.** Both vertex
+ * shaders place every instance at its nearest image to the camera centre, the same
+ * minimum-image rule spatial.rs measures distance with, so panning across the seam is
+ * continuous rather than hitting a wall the picture invented.
+ *
+ * That places the whole population inside one world-sized band around the camera, so an
+ * agent never appears twice. The cost is that a viewport wider than the world has empty
+ * margins rather than the wrapped copies a torus strictly has — the alternative, tiling
+ * the draw, fills them by showing the same agent two or three times over, which makes a
+ * population look larger than it is and is worse for the one question this view exists to
+ * answer. The zoom floor stops just where the whole world is on screen, so the margins
+ * only ever appear on the long axis of a window the world does not match.
  */
 
 const VERTEX_SHADER = `#version 300 es
@@ -39,7 +43,6 @@ uniform float u_ppu;        // pixels per world unit
 uniform vec2 u_viewport;    // device pixels
 uniform float u_min_radius; // device pixels
 uniform float u_world;      // world extent, for the wrap
-uniform vec2 u_tile;        // which copy of the world this pass draws
 
 out vec2 v_corner;
 out vec3 v_color;
@@ -62,8 +65,7 @@ void main() {
   // A dead slot has alive = 0, so every radius term below multiplies to zero and the
   // quad has no area. Nothing is drawn and no branch was taken.
   float radius = max(a_size * u_ppu, u_min_radius) * a_alive;
-  vec2 offset = toward(a_position.xy, u_center, u_world) + u_tile * u_world;
-  vec2 pixels = offset * u_ppu + a_corner * radius;
+  vec2 pixels = toward(a_position.xy, u_center, u_world) * u_ppu + a_corner * radius;
   gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;
 
@@ -89,7 +91,6 @@ uniform float u_radius;      // world units
 uniform float u_min_radius;  // device pixels
 uniform float u_max_energy;
 uniform float u_world;
-uniform vec2 u_tile;
 
 out vec2 v_corner;
 out float v_fullness;
@@ -100,7 +101,6 @@ void main() {
 
   vec2 d = a_position.xy - u_center;
   d -= u_world * round(d / u_world);
-  d += u_tile * u_world;
 
   float radius = max(u_radius * u_ppu, u_min_radius);
   vec2 pixels = d * u_ppu + a_corner * radius;
@@ -181,7 +181,6 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
     viewport: gl.getUniformLocation(program, 'u_viewport'),
     minRadius: gl.getUniformLocation(program, 'u_min_radius'),
     world: gl.getUniformLocation(program, 'u_world'),
-    tile: gl.getUniformLocation(program, 'u_tile'),
   };
 
   const plantProgram = link(gl, PLANT_VERTEX_SHADER, PLANT_FRAGMENT_SHADER);
@@ -194,7 +193,6 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
     color: gl.getUniformLocation(plantProgram, 'u_color'),
     maxEnergy: gl.getUniformLocation(plantProgram, 'u_max_energy'),
     world: gl.getUniformLocation(plantProgram, 'u_world'),
-    tile: gl.getUniformLocation(plantProgram, 'u_tile'),
   };
 
   // The quad every instance is drawn from: a triangle strip of four corners, shared by
@@ -414,21 +412,6 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
       };
 
-      // How many copies of the world the viewport can see. One when zoomed in, more when
-      // the window is wider than the world is — which is most windows at rest, since the
-      // world is square and a browser is not.
-      const tilesX = Math.floor(width / (worldSize * camera.ppu) + 0.5);
-      const tilesY = Math.floor(height / (worldSize * camera.ppu) + 0.5);
-
-      const forEachTile = (uniform, drawTile) => {
-        for (let ty = -tilesY; ty <= tilesY; ty += 1) {
-          for (let tx = -tilesX; tx <= tilesX; tx += 1) {
-            gl.uniform2f(uniform, tx, ty);
-            drawTile();
-          }
-        }
-      };
-
       // Plants first, so agents draw over the food rather than under it.
       if (plantCapacity > 0) {
         gl.useProgram(plantProgram);
@@ -443,9 +426,7 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
         gl.uniform1f(plantUniforms.minRadius, MIN_RADIUS_PX);
         gl.uniform1f(plantUniforms.maxEnergy, plantMaxEnergy);
         gl.uniform3f(plantUniforms.color, plantColor[0], plantColor[1], plantColor[2]);
-        forEachTile(plantUniforms.tile, () =>
-          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity),
-        );
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity);
       }
 
       gl.useProgram(program);
@@ -459,7 +440,7 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
       gl.uniform2f(uniforms.viewport, width, height);
       gl.uniform1f(uniforms.world, worldSize);
       gl.uniform1f(uniforms.minRadius, MIN_RADIUS_PX);
-      forEachTile(uniforms.tile, () => gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count));
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 
       gl.bindVertexArray(null);
     },
