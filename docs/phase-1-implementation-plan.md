@@ -744,6 +744,15 @@ correct picture of the wrong world the moment either moves — and `set_params` 
 precisely so params can move. `Sim::render_hints` reports them, and the renderer is
 rebuilt on every reseed because a reseed can carry different ones.
 
+*The camera tiles the world rather than framing it.* The world is a torus and the
+renderer has to say so twice over. Both vertex shaders place each instance at its nearest
+image to the camera centre — the same minimum-image rule `spatial` measures every
+distance with — so panning across the seam is continuous instead of hitting a wall the
+picture invented. That alone only covers a viewport up to one world across, and a browser
+window is rarely square while the world always is, so the draw also repeats per tile.
+Without it the extra width is empty and reads as an edge. Zoomed in there is one tile and
+the loop costs nothing.
+
 *The `alive` attribute is not normalized.* It cost an hour: a `UNSIGNED_BYTE` attribute
 declared normalized divides by 255, and the flag is 1 rather than 255, so every agent's
 radius became four thousandths of its size. The world renders as empty — no error

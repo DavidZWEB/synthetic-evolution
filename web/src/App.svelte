@@ -20,6 +20,70 @@
   let founders = $state(2000);
   let seed = $state(42);
   let failure = $state(null);
+  /** Mirrors the renderer's camera for display. Written every frame, never read by it. */
+  let zoom = $state(1);
+
+  /**
+   * Pointers currently down, by id. One is a drag, two are a pinch.
+   *
+   * Pointer events rather than mouse events so a finger and a mouse take the same path —
+   * spec §7.7 expects people to open the link on a phone, and a viewer that can only be
+   * driven with a wheel is one they cannot use at all.
+   */
+  const pointers = new Map();
+  let pinchDistance = 0;
+
+  const spread = () => {
+    const [a, b] = [...pointers.values()];
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  const midpoint = () => {
+    const [a, b] = [...pointers.values()];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  };
+
+  function onPointerDown(event) {
+    canvas.setPointerCapture(event.pointerId);
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointers.size === 2) pinchDistance = spread();
+  }
+
+  function onPointerMove(event) {
+    const previous = pointers.get(event.pointerId);
+    if (!previous) return;
+    const next = { x: event.clientX, y: event.clientY };
+
+    if (pointers.size === 1) {
+      renderer?.panBy(next.x - previous.x, next.y - previous.y);
+    }
+    pointers.set(event.pointerId, next);
+
+    if (pointers.size === 2 && pinchDistance > 0) {
+      const distance = spread();
+      const centre = midpoint();
+      renderer?.zoomAt(centre.x, centre.y, distance / pinchDistance);
+      pinchDistance = distance;
+    }
+  }
+
+  function onPointerUp(event) {
+    pointers.delete(event.pointerId);
+    if (pointers.size < 2) pinchDistance = 0;
+  }
+
+  function onWheel(event) {
+    // The page must not scroll under the canvas, so this is not passive — hence the
+    // explicit listener in `onMount` rather than an `onwheel` attribute, which Svelte
+    // registers passively and where preventDefault would be ignored.
+    event.preventDefault();
+    // Exponential in the wheel delta, so a trackpad's many small events and a mouse
+    // wheel's few large ones cover the same ground at the same speed.
+    renderer?.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0015));
+  }
+
+  function resetView() {
+    renderer?.fit();
+  }
 
   function applySpeed(next) {
     speed = next;
@@ -59,6 +123,7 @@
         failure = String(error);
         return;
       }
+      renderer.fit();
       sim.setSpeed(speed);
     });
     sim.on('error', (message) => {
@@ -68,6 +133,10 @@
 
   onMount(() => {
     start();
+
+    // Registered here, not as an attribute: Svelte adds `onwheel` passively and a passive
+    // listener cannot preventDefault, so the page would scroll while you zoomed.
+    canvas.addEventListener('wheel', onWheel, { passive: false });
 
     // The renderer runs on its own clock and draws whatever the latest frame is. It never
     // waits for the sim and the sim never waits for it — which is what the snapshot being
@@ -80,6 +149,10 @@
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
       renderer?.draw(frame?.views ?? null, capacity);
+      // Read back rather than tracked alongside: the renderer owns the camera, and a
+      // second copy here would go stale the moment anything but an input moved it — a
+      // resize, a reseed, the zoom floor refusing a scroll.
+      zoom = renderer?.zoom() ?? 1;
       if (frame) {
         tick = frame.tick;
         population = frame.population;
@@ -97,6 +170,7 @@
 
     return () => {
       cancelAnimationFrame(handle);
+      canvas.removeEventListener('wheel', onWheel);
       sim?.destroy();
       renderer?.destroy();
     };
@@ -110,12 +184,21 @@
       <div><dt>tick</dt><dd>{tick}</dd></div>
       <div><dt>agents</dt><dd>{population}</dd></div>
       <div><dt>fps</dt><dd class:slow={fps > 0 && fps < 55}>{fps}</dd></div>
+      <div><dt>zoom</dt><dd>{zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}×</dd></div>
       <div><dt>transport</dt><dd class:degraded={transport === 'transferable'}>{transport ?? '…'}</dd></div>
     </dl>
   </header>
 
   <div class="stage">
-    <canvas bind:this={canvas}></canvas>
+    <canvas
+      bind:this={canvas}
+      class:dragging={pointers.size > 0}
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointercancel={onPointerUp}
+      ondblclick={resetView}
+    ></canvas>
     {#if failure}
       <p class="failure">{failure}</p>
     {/if}
@@ -136,6 +219,7 @@
     <label>seed <input type="number" bind:value={seed} min="0" /></label>
     <label>founders <input type="number" bind:value={founders} min="1" /></label>
     <button onclick={reseed}>reseed</button>
+    <button onclick={resetView}>reset view</button>
   </footer>
 </main>
 
@@ -186,7 +270,15 @@
   dd.degraded { color: #d08770; }
 
   .stage { position: relative; min-height: 0; }
-  canvas { display: block; width: 100%; height: 100%; }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    /* The browser's own pan and pinch would fight the camera for the same gestures. */
+    touch-action: none;
+  }
+  canvas.dragging { cursor: grabbing; }
 
   .failure {
     position: absolute;

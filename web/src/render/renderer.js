@@ -1,5 +1,5 @@
 /**
- * WebGL2 instanced renderer: one quad, drawn once per slot.
+ * WebGL2 instanced renderer: one quad, drawn once per slot, on a torus.
  *
  * WebGL2 rather than canvas2d, deliberately. canvas2d issues a draw call per agent and
  * falls over well before this phase's 5000; instancing issues one for the whole
@@ -14,6 +14,15 @@
  *
  * Agents are drawn as discs by discarding outside the unit circle in the fragment
  * shader. A texture would be one more thing to load before anything appears on screen.
+ *
+ * **The world wraps, so the picture has to.** Two things fall out of that. Both vertex
+ * shaders place each instance at its nearest image to the camera centre — the same
+ * minimum-image rule spatial.rs measures every distance with — so panning across the seam
+ * is continuous rather than hitting a wall the picture invented. And the draw repeats per
+ * *tile*, because minimum image alone only covers a viewport up to one world across:
+ * wider than that and the extra width would be empty, which reads as an edge. A browser
+ * window is rarely square and the world always is, so at rest there are usually three
+ * tiles across and one down. Zoomed in there is one, and the loop costs nothing.
  */
 
 const VERTEX_SHADER = `#version 300 es
@@ -25,24 +34,37 @@ in float a_size;
 in vec3 a_signature;
 in float a_alive;
 
-uniform vec2 u_world;
-uniform vec2 u_scale;
-uniform vec2 u_offset;
+uniform vec2 u_center;      // world units the viewport is centred on
+uniform float u_ppu;        // pixels per world unit
+uniform vec2 u_viewport;    // device pixels
+uniform float u_min_radius; // device pixels
+uniform float u_world;      // world extent, for the wrap
+uniform vec2 u_tile;        // which copy of the world this pass draws
 
 out vec2 v_corner;
 out vec3 v_color;
+
+// Offset from the camera to the *nearest image* of a point on the torus.
+//
+// The world wraps in x and y, so an agent at 999 and one at 1 are a couple of units
+// apart and must draw that way. This is the same minimum-image rule that spatial.rs
+// measures every distance with; without it the seam becomes a wall the picture invents
+// and the simulation does not have.
+vec2 toward(vec2 point, vec2 from, float extent) {
+  vec2 d = point - from;
+  return d - extent * round(d / extent);
+}
 
 void main() {
   v_corner = a_corner;
   v_color = a_signature;
 
-  // A dead slot has alive = 0, so its radius is 0 and its quad has no area. Nothing is
-  // drawn and no branch was taken.
-  float radius = a_size * a_alive;
-  vec2 world = a_position.xy + a_corner * radius;
-
-  vec2 unit = world / u_world;
-  gl_Position = vec4(unit * 2.0 * u_scale - u_scale + u_offset, 0.0, 1.0);
+  // A dead slot has alive = 0, so every radius term below multiplies to zero and the
+  // quad has no area. Nothing is drawn and no branch was taken.
+  float radius = max(a_size * u_ppu, u_min_radius) * a_alive;
+  vec2 offset = toward(a_position.xy, u_center, u_world) + u_tile * u_world;
+  vec2 pixels = offset * u_ppu + a_corner * radius;
+  gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;
 
 /**
@@ -60,10 +82,14 @@ in vec2 a_corner;
 in vec3 a_position;
 in float a_energy;
 
-uniform vec2 u_world;
-uniform vec2 u_scale;
-uniform float u_radius;
+uniform vec2 u_center;
+uniform float u_ppu;
+uniform vec2 u_viewport;
+uniform float u_radius;      // world units
+uniform float u_min_radius;  // device pixels
 uniform float u_max_energy;
+uniform float u_world;
+uniform vec2 u_tile;
 
 out vec2 v_corner;
 out float v_fullness;
@@ -72,9 +98,13 @@ void main() {
   v_corner = a_corner;
   v_fullness = clamp(a_energy / u_max_energy, 0.0, 1.0);
 
-  vec2 world = a_position.xy + a_corner * u_radius;
-  vec2 unit = world / u_world;
-  gl_Position = vec4(unit * 2.0 * u_scale - u_scale, 0.0, 1.0);
+  vec2 d = a_position.xy - u_center;
+  d -= u_world * round(d / u_world);
+  d += u_tile * u_world;
+
+  float radius = max(u_radius * u_ppu, u_min_radius);
+  vec2 pixels = d * u_ppu + a_corner * radius;
+  gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;
 
 const PLANT_FRAGMENT_SHADER = `#version 300 es
@@ -146,18 +176,25 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
   gl.useProgram(program);
 
   const uniforms = {
+    center: gl.getUniformLocation(program, 'u_center'),
+    ppu: gl.getUniformLocation(program, 'u_ppu'),
+    viewport: gl.getUniformLocation(program, 'u_viewport'),
+    minRadius: gl.getUniformLocation(program, 'u_min_radius'),
     world: gl.getUniformLocation(program, 'u_world'),
-    scale: gl.getUniformLocation(program, 'u_scale'),
-    offset: gl.getUniformLocation(program, 'u_offset'),
+    tile: gl.getUniformLocation(program, 'u_tile'),
   };
 
   const plantProgram = link(gl, PLANT_VERTEX_SHADER, PLANT_FRAGMENT_SHADER);
   const plantUniforms = {
-    world: gl.getUniformLocation(plantProgram, 'u_world'),
-    scale: gl.getUniformLocation(plantProgram, 'u_scale'),
+    center: gl.getUniformLocation(plantProgram, 'u_center'),
+    ppu: gl.getUniformLocation(plantProgram, 'u_ppu'),
+    viewport: gl.getUniformLocation(plantProgram, 'u_viewport'),
     radius: gl.getUniformLocation(plantProgram, 'u_radius'),
+    minRadius: gl.getUniformLocation(plantProgram, 'u_min_radius'),
     color: gl.getUniformLocation(plantProgram, 'u_color'),
     maxEnergy: gl.getUniformLocation(plantProgram, 'u_max_energy'),
+    world: gl.getUniformLocation(plantProgram, 'u_world'),
+    tile: gl.getUniformLocation(plantProgram, 'u_tile'),
   };
 
   // The quad every instance is drawn from: a triangle strip of four corners, shared by
@@ -223,23 +260,120 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
 
   let width = 0;
   let height = 0;
+  /** Device pixels per CSS pixel, for sizing the backing store. */
+  let ratio = 1;
+
+  /**
+   * The camera: where the viewport is centred, in world units, and how magnified it is.
+   *
+   * Held here rather than in the component because it is the projection — the same thing
+   * the shaders read — and a second copy anywhere is a chance for the picture and the
+   * pointer to disagree about where a click landed.
+   */
+  const camera = { x: worldSize / 2, y: worldSize / 2, ppu: 1 };
+
+  /** Zoom that exactly fits the world into the smaller viewport axis. */
+  function fitPpu() {
+    return Math.min(width, height) / worldSize;
+  }
+
+  /**
+   * Below a whole pixel an agent stops being drawn at all rather than drawn faintly, so
+   * zooming out far enough would empty the world for a reason that is nothing to do with
+   * the simulation. A floor keeps the population legible as a density instead.
+   */
+  const MIN_RADIUS_PX = 1.1;
 
   function resize() {
-    const ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
+    ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
     const next = {
       width: Math.max(1, Math.round(canvas.clientWidth * ratio)),
       height: Math.max(1, Math.round(canvas.clientHeight * ratio)),
     };
     if (next.width === width && next.height === height) return;
+
+    // Hold the zoom *relative to a fitted world* across a resize, so dragging the window
+    // reframes the view rather than magnifying it.
+    const relative = width === 0 ? 1 : camera.ppu / fitPpu();
     width = next.width;
     height = next.height;
     canvas.width = width;
     canvas.height = height;
     gl.viewport(0, 0, width, height);
+    camera.ppu = fitPpu() * relative;
+  }
+
+  /** Wraps a camera coordinate back onto the torus, so panning loops rather than ends. */
+  const wrap = (value) => ((value % worldSize) + worldSize) % worldSize;
+
+  /**
+   * A point in CSS pixels, as an offset in device pixels from the viewport's centre.
+   *
+   * Scaled by the backing store against the rect the browser actually laid out, not by
+   * `devicePixelRatio`. Layout sizes are fractional and `canvas.width` is a whole number
+   * of pixels, so the two disagree by a fraction of a pixel — which is invisible until
+   * you anchor a zoom to the cursor, where it shows up as the world creeping out from
+   * under the pointer.
+   */
+  function toDevice(cssX, cssY) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (cssX - rect.left) * (width / rect.width) - width / 2,
+      y: (cssY - rect.top) * (height / rect.height) - height / 2,
+    };
+  }
+
+  /** CSS pixels from the canvas's top-left, to a point in the world. */
+  function screenToWorld(cssX, cssY) {
+    const { x, y } = toDevice(cssX, cssY);
+    return { x: wrap(camera.x + x / camera.ppu), y: wrap(camera.y + y / camera.ppu) };
   }
 
   return {
     resize,
+    camera,
+
+    /** Frames the whole world. */
+    fit() {
+      resize();
+      camera.x = worldSize / 2;
+      camera.y = worldSize / 2;
+      camera.ppu = fitPpu();
+    },
+
+    /** How magnified the view is, as a multiple of the whole world fitting the viewport. */
+    zoom() {
+      return camera.ppu / fitPpu();
+    },
+
+    /**
+     * Zooms by `factor` about a point on screen, holding whatever is under it still.
+     *
+     * Anchoring to the cursor rather than the centre is what makes a wheel feel like a
+     * magnifier rather than a slider: the thing you were looking at is still the thing
+     * you are looking at.
+     */
+    zoomAt(cssX, cssY, factor) {
+      const anchor = screenToWorld(cssX, cssY);
+      // A floor at the fitted world: past it the whole world is already on screen and
+      // zooming further only adds copies of it.
+      const next = Math.min(Math.max(camera.ppu * factor, fitPpu()), fitPpu() * 400);
+      if (next === camera.ppu) return;
+
+      const { x, y } = toDevice(cssX, cssY);
+      camera.ppu = next;
+      camera.x = wrap(anchor.x - x / next);
+      camera.y = wrap(anchor.y - y / next);
+    },
+
+    /** Drags the view by a mouse delta in CSS pixels. */
+    panBy(cssDx, cssDy) {
+      const rect = canvas.getBoundingClientRect();
+      camera.x = wrap(camera.x - (cssDx * (width / rect.width)) / camera.ppu);
+      camera.y = wrap(camera.y - (cssDy * (height / rect.height)) / camera.ppu);
+    },
+
+    screenToWorld,
 
     /** Draws one frame's views. `count` is the slot count, not the population. */
     draw(views, count) {
@@ -252,12 +386,20 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
       };
 
-      // Letterbox rather than stretch: a world that changed shape with the window would
-      // make distance mean something different along each axis, and every judgement
-      // about clustering would be a judgement about the window.
-      const fit = Math.min(width, height);
-      const scaleX = fit / width;
-      const scaleY = fit / height;
+      // How many copies of the world the viewport can see. One when zoomed in, more when
+      // the window is wider than the world is — which is most windows at rest, since the
+      // world is square and a browser is not.
+      const tilesX = Math.floor(width / (worldSize * camera.ppu) + 0.5);
+      const tilesY = Math.floor(height / (worldSize * camera.ppu) + 0.5);
+
+      const forEachTile = (uniform, drawTile) => {
+        for (let ty = -tilesY; ty <= tilesY; ty += 1) {
+          for (let tx = -tilesX; tx <= tilesX; tx += 1) {
+            gl.uniform2f(uniform, tx, ty);
+            drawTile();
+          }
+        }
+      };
 
       // Plants first, so agents draw over the food rather than under it.
       if (plantCapacity > 0) {
@@ -265,12 +407,17 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
         gl.bindVertexArray(plantVao);
         upload(plantAttributes.position, views.plantPosition);
         upload(plantAttributes.energy, views.plantEnergy);
-        gl.uniform2f(plantUniforms.world, worldSize, worldSize);
-        gl.uniform2f(plantUniforms.scale, scaleX, scaleY);
+        gl.uniform2f(plantUniforms.center, camera.x, camera.y);
+        gl.uniform1f(plantUniforms.ppu, camera.ppu);
+        gl.uniform2f(plantUniforms.viewport, width, height);
+        gl.uniform1f(plantUniforms.world, worldSize);
         gl.uniform1f(plantUniforms.radius, plantRadius);
+        gl.uniform1f(plantUniforms.minRadius, MIN_RADIUS_PX);
         gl.uniform1f(plantUniforms.maxEnergy, plantMaxEnergy);
         gl.uniform3f(plantUniforms.color, plantColor[0], plantColor[1], plantColor[2]);
-        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity);
+        forEachTile(plantUniforms.tile, () =>
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity),
+        );
       }
 
       gl.useProgram(program);
@@ -279,10 +426,12 @@ export function createRenderer(canvas, { worldSize, capacity, plantCapacity, pla
       upload(attributes.size, views.size);
       upload(attributes.signature, views.signature);
       upload(attributes.alive, views.alive);
-      gl.uniform2f(uniforms.world, worldSize, worldSize);
-      gl.uniform2f(uniforms.scale, scaleX, scaleY);
-      gl.uniform2f(uniforms.offset, 0, 0);
-      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+      gl.uniform2f(uniforms.center, camera.x, camera.y);
+      gl.uniform1f(uniforms.ppu, camera.ppu);
+      gl.uniform2f(uniforms.viewport, width, height);
+      gl.uniform1f(uniforms.world, worldSize);
+      gl.uniform1f(uniforms.minRadius, MIN_RADIUS_PX);
+      forEachTile(uniforms.tile, () => gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count));
 
       gl.bindVertexArray(null);
     },
