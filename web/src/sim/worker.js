@@ -17,7 +17,7 @@
 
 import init, { Sim } from '../wasm/wasm.js';
 import { createWriter, preferredKind } from './transport.js';
-import { frameViews } from './snapshot-layout.js';
+import { bytesPerAgent } from './snapshot-layout.js';
 
 /** Sim seconds per real second at speed 1, matching `world.dt` of 1/60 (spec §2.1). */
 const TICKS_PER_SECOND = 60;
@@ -37,13 +37,37 @@ let speed = 1;
 let timer = null;
 let lastFrameAt = 0;
 
+/**
+ * Checks that the layout this side derives matches the one Rust actually wrote.
+ *
+ * Two modules describe the same bytes — `snapshot-layout.js` and
+ * `sim_core::snapshot` — and if they ever disagree the renderer draws one field as
+ * another with no error anywhere. Rust's spans carry the truth, so compare against them
+ * once rather than trusting two copies of an arithmetic to stay equal.
+ */
+function assertLayoutsAgree(spans) {
+  const capacity = spans.alive.len;
+  const wide = ['position', 'orientation', 'size', 'signature', 'species', 'part_offset', 'part_count'];
+  const bytes = wide.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
+  const expected = capacity * bytesPerAgent();
+  if (bytes !== expected) {
+    throw new Error(
+      `snapshot layout disagrees: wasm says ${bytes} bytes for ${capacity} slots, ` +
+        `this side expects ${expected}`,
+    );
+  }
+}
+
 /** Rebuilds the views onto WASM memory if it has moved under us. */
 function sourceViews() {
   if (source && sourceBuffer === memory.buffer) return source;
 
   // Offsets survive a grow — WASM memory keeps its contents and addresses — so only the
   // views need rebuilding, not the layout.
-  if (!sourceLayout) sourceLayout = JSON.parse(sim.snapshot_layout());
+  if (!sourceLayout) {
+    sourceLayout = JSON.parse(sim.snapshot_layout());
+    assertLayoutsAgree(sourceLayout);
+  }
   const spans = sourceLayout;
   const at = (span, Kind) => new Kind(memory.buffer, span.ptr, span.len);
   source = {
@@ -179,12 +203,30 @@ const handlers = {
   },
 };
 
+/**
+ * Resolves once the world exists. Everything else waits on it.
+ *
+ * `onmessage` is async and `create` awaits `init()`, so without this the runtime is free
+ * to dispatch the next message during that await — and a `play` arriving then would
+ * start the clock against a null `sim`. That is not hypothetical: it is what made a
+ * reseed followed quickly by play run exactly one tick and then stop.
+ */
+let created = null;
+
 onmessage = async (event) => {
-  const handler = handlers[event.data.kind];
+  const { kind } = event.data;
+  const handler = handlers[kind];
   if (!handler) return;
+
   try {
+    if (kind === 'create') {
+      created = handler(event.data);
+      await created;
+      return;
+    }
+    if (created) await created;
     await handler(event.data);
   } catch (error) {
-    postMessage({ kind: 'error', context: event.data.kind, message: String(error) });
+    postMessage({ kind: 'error', context: kind, message: String(error) });
   }
 };

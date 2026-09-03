@@ -59,7 +59,6 @@ function sharedWriter(layout) {
     frameViews(buffer, HEADER_BYTES, layout),
     frameViews(buffer, HEADER_BYTES + layout.bytes, layout),
   ];
-  Atomics.store(header, HEADER.CAPACITY, layout.capacity);
   Atomics.store(header, HEADER.ACTIVE, 0);
 
   return {
@@ -148,10 +147,6 @@ function sharedReader(handoff, layout) {
         fresh,
       };
     },
-
-    accept() {},
-    /** Nothing to give back: the worker never gave the buffer away. */
-    release: () => null,
   };
 }
 
@@ -184,7 +179,5 @@ function transferableReader(layout) {
       fresh = true;
       return returning;
     },
-
-    release: () => null,
   };
 }

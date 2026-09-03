@@ -23,9 +23,8 @@ export const HEADER = {
   TICK_LO: 1,
   TICK_HI: 2,
   POPULATION: 3,
-  CAPACITY: 4,
   /** Bumped on every publish, so a reader can tell a new frame from a repeated one. */
-  GENERATION: 5,
+  GENERATION: 4,
   LENGTH: 8,
 };
 
