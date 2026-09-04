@@ -55,7 +55,7 @@ scripts/setup.sh one command to make a fresh machine work
 | Understand the design | [docs/synthetic-evolution-spec.md](docs/synthetic-evolution-spec.md) §1–§2 |
 | Set up, add a dependency, or bump a toolchain | [docs/development.md](docs/development.md) |
 | Know what is being built right now | [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md) |
-| Change code in `sim-core` | [CLAUDE.md](CLAUDE.md) — the five invariants, first |
+| Change code in `sim-core` | [AGENTS.md](AGENTS.md) — the five invariants, first |
 
 ## The short version of the rules
 
@@ -63,4 +63,4 @@ scripts/setup.sh one command to make a fresh machine work
 platform. It does no I/O, holds no `static` mutable state, and does not allocate in the
 tick. Energy is conserved, offspring spawn near their parents, and there is no explicit
 fitness function. Each of those looks like a detail and is load-bearing —
-[CLAUDE.md](CLAUDE.md) explains why before you change one.
+[AGENTS.md](AGENTS.md) explains why before you change one.

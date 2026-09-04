@@ -116,7 +116,7 @@ flamegraph.svg
 .idea/
 .vscode/
 
-# Claude Code per-machine overrides; shared config would live in .claude/settings.json
+# Per-machine tool override; shared agent guidance lives in AGENTS.md
 .claude/settings.local.json
 ```
 
@@ -167,7 +167,7 @@ npm install three --prefix web           # updates package.json + package-lock.j
 
 Commit the lockfile change in the same commit as the manifest change. A manifest change without its lockfile change is what breaks the next machine.
 
-Before adding anything to `sim-core`, check it against the invariants in `CLAUDE.md`: no I/O, no allocation in the hot loop, deterministic. A crate that internally uses `HashMap` iteration order or platform floating-point math will silently break replay. This is a real constraint — audit dependencies in the sim core rather than assuming.
+Before adding anything to `sim-core`, check it against the invariants in `AGENTS.md`: no I/O, no allocation in the hot loop, deterministic. A crate that internally uses `HashMap` iteration order or platform floating-point math will silently break replay. This is a real constraint — audit dependencies in the sim core rather than assuming.
 
 ## Interesting seeds
 

@@ -25,5 +25,5 @@ flamegraph.svg
 .idea/
 .vscode/
 
-# Claude Code per-machine overrides; shared config would live in .claude/settings.json
+# Per-machine tool override; shared agent guidance lives in AGENTS.md
 .claude/settings.local.json
