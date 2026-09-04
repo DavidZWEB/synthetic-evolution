@@ -6,6 +6,7 @@
   import TimeSeries from './ui/TimeSeries.svelte';
   import { createInspectorController } from './inspect/controller.js';
   import { createSim } from './sim/client.js';
+  import { createRunValidation } from './sim/run-validation.js';
   import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
   import { appendMetric, metricFromMessage } from './telemetry/history.ts';
   import { createRenderer } from './render/renderer.js';
@@ -43,8 +44,6 @@
   let zoom = $state(1);
   let latestFrame = null;
   let runParams = null;
-  let validationRequest = 0;
-  let pendingRun = null;
   let validating = $state(false);
 
   const inspector = createInspectorController({
@@ -96,7 +95,6 @@
   function activateRun(next) {
     sim?.destroy();
     sim = null;
-    pendingRun = null;
     validating = false;
     seed = next.seed;
     founders = next.founders;
@@ -118,11 +116,18 @@
       activateRun(next);
       return;
     }
-    validationRequest += 1;
-    pendingRun = { ...next, requestId: validationRequest };
-    validating = true;
-    sim.validateRun(next.seed, next.founders, next.params, validationRequest);
+    runValidation.request(next);
   }
+
+  const runValidation = createRunValidation({
+    getSim: () => sim,
+    onPendingChange: (pending) => (validating = pending),
+    onAccepted: activateRun,
+    onRejected: (error) => {
+      failure = `url: ${error}`;
+      if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
+    },
+  });
 
   function updateRunUrl() {
     linkCopied = false;
@@ -204,22 +209,7 @@
       if (sim === nextSim) inspector.accept(message);
     });
     nextSim.on('validatedRun', (message) => {
-      if (
-        sim !== nextSim ||
-        message.requestId !== validationRequest ||
-        message.requestId !== pendingRun?.requestId
-      ) {
-        return;
-      }
-      validating = false;
-      const requested = pendingRun;
-      pendingRun = null;
-      if (message.error) {
-        failure = `url: ${message.error}`;
-        if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
-        return;
-      }
-      activateRun({ ...requested, params: message.params });
+      if (sim === nextSim) runValidation.accept(message);
     });
     nextSim.on('error', (message) => {
       if (sim !== nextSim) return;
@@ -249,6 +239,7 @@
       founders = initial.founders;
       runParams = initial.params;
     } catch (error) {
+      runValidation.cancel();
       failure = `url: ${String(error)}`;
       validUrl = false;
     }
