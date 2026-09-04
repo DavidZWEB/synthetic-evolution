@@ -7,9 +7,8 @@
 #
 # It does not run the tests itself. Production deploys are triggered by ci.yml
 # finishing, and only when it succeeded, so main can only reach the live site on a
-# commit whose suite passed. Preview environments still deploy straight off the pull
-# request, ungated — a red PR shows a failing check beside a working preview, which
-# is the point of a preview.
+# commit whose suite passed. Pull requests build in CI but do not deploy; the closed
+# event remains temporarily so previews created by older workflow revisions are removed.
 #
 # One consequence of workflow_run worth knowing before editing this file: GitHub
 # always runs the copy of it that is on the default branch. Changes to the production
@@ -22,7 +21,7 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [closed]
     branches: [main]
 
 # A second push to the same branch makes the first deploy irrelevant.
@@ -30,20 +29,15 @@ concurrency:
   group: swa-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# repo_token below is used only to comment the preview URL on the pull request.
-# Spelled out because a repository whose default workflow permissions are read-only
-# drops that comment with no error.
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   build_and_deploy:
     # A CI run that failed, was cancelled, or was skipped is not a green light.
     if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'pull_request' && github.event.action != 'closed')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
@@ -53,7 +47,7 @@ jobs:
       # necessarily what CI just passed.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -83,7 +77,6 @@ jobs:
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           # Vite's project root, and its build output relative to that root.
           app_location: web
@@ -101,7 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
-      # Tears down the per-PR preview site. No checkout or build needed.
+      # Tears down previews created before PR deployment was disabled. No checkout or
+      # build is needed, and this job can be removed once those previews are gone.
       - uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}

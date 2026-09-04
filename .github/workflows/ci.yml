@@ -60,6 +60,11 @@ jobs:
       - name: Test WASM boundary and determinism
         run: wasm-pack test --node shells/wasm
 
+      # Pull requests are not deployed, so CI owns proving the complete browser bundle
+      # can be produced from a clean checkout.
+      - name: Build web client
+        run: npm run build --prefix web
+
       # sim-core reaching for something that is not in wasm's std would otherwise not
       # surface until a deploy. Checking the target is cheap; it is not a substitute
       # for running the tests under wasm, which needs the cross-target hash harness.
