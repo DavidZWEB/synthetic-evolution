@@ -31,7 +31,7 @@ referenced in commit messages.
   The whole checklist is audited as one pass at M8.
 - The golden hash is not pinned until M8. M4–M8 all change behavior by construction. Every update
   after M8 is deliberate, in the same commit as the behavior change, with a note on why.
-- `sim-core` invariants (CLAUDE.md) apply from M0. M0 ships a lint test for the two that fail
+- `sim-core` invariants (AGENTS.md) apply from M0. M0 ships a lint test for the two that fail
   silently: no I/O, no platform transcendentals, no `thread_rng`.
 
 ---
@@ -103,7 +103,7 @@ Build-plan task 4, first half.
 
 - Typed-gene list per spec §3.1, serde. (`ts-rs` moved to M10: nothing consumes the
   generated TypeScript until the inspector exists, and derives with no consumer are
-  exactly the pre-building CLAUDE.md warns against.)
+  exactly the pre-building AGENTS.md warns against.)
 - Innovation counter as a field on `World`, never a `static`.
 - Fixed-topology builder: sensor→input neurons, hidden, oscillators, effector-source neurons.
 - Mutation operators: weight perturbation and weight reset only.
@@ -365,7 +365,7 @@ not coasting — that is the spec's calibration rather than a preference, and re
 the table onto a per-second footing is not something to do by arithmetic.
 
 *`k_brain` charges for disabled connections too.* Settled on `genome::brain_complexity`.
-What the term bounds is *genome* growth, not tick cost: CLAUDE.md's reason for it is that
+What the term bounds is *genome* growth, not tick cost: AGENTS.md's reason for it is that
 genomes bloat and the sim crawls, and what crawls is the 11 KB copied on every birth. A
 disabled gene costs all of that and saves only a multiply-add, so charging only for
 enabled ones would let a lineage accumulate thousands for free. The cost is that
@@ -400,7 +400,7 @@ fuller one beside it.
 refused, and deducting first would destroy energy on exactly the busiest tick of a run.
 
 *`world.rs` is over the size limit and the split belongs to M8.* It is 616 lines of code
-before this change, past the 500 that CLAUDE.md calls a split. The new logic went into
+before this change, past the 500 that AGENTS.md calls a split. The new logic went into
 `feeding.rs` and `reproduction.rs` so it only grew by wiring, but the real fix is M8
 lifting the eleven tick-step methods into `tick.rs`, which is that milestone's job
 anyway. Noted so it is a decision rather than a drift.
@@ -601,7 +601,7 @@ wasm agree" cannot decay into each target agreeing with itself.
 visibility to write an `impl` across two files, so lifting the eleven steps out of
 `world.rs` meant opening its fields to sibling modules. Nothing outside `sim-core` gains
 anything — the shells and the integration tests still go through the accessors — and the
-alternative was leaving a 1194-line file that CLAUDE.md calls a split at 500.
+alternative was leaving a 1194-line file that AGENTS.md calls a split at 500.
 
 *The steps stay `pub` alongside `step()`.* `steering.rs` drives perception through
 movement without the economy on purpose, so that what it measures is the sensorimotor
@@ -797,7 +797,7 @@ identifies a deliberately induced extinction and a deliberately induced monocult
 neighbour parity — all passing.
 
 **Judgment:** three or more seeds run side by side against the random-brain control, watched by a
-human. Not self-certifiable (CLAUDE.md, spec §7.8 tier 3).
+human. Not self-certifiable (AGENTS.md, spec §7.8 tier 3).
 
 If food-seeking does not emerge, check spec §10 before changing code. It is almost always
 metabolic cost too low, energy input too high, or mutation rate past error catastrophe — all
