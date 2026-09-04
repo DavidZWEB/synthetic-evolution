@@ -15,23 +15,22 @@
  * chooses *when* to step and how far, never what a step means.
  */
 
-import init, { Sim } from '../wasm/wasm.js';
+import init, { Sim, validate_params } from '../wasm/wasm.js';
 import { founderCount, parseSeed } from './inputs.js';
+import { createSnapshotPublisher } from './publisher.js';
 import { createTickScheduler } from './scheduler.js';
 import { createWriter, preferredKind } from './transport.js';
 import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
 
-const METRICS_INTERVAL_MS = 250;
-
 let sim = null;
 let memory = null;
 let writer = null;
+let publisher = null;
 
 /** Cached views over the snapshot inside WASM memory, and the buffer they belong to. */
 let source = null;
 let sourceBuffer = null;
 let sourceLayout = null;
-let lastMetricsAt = Number.NEGATIVE_INFINITY;
 
 /**
  * Checks that the layout this side derives matches the one Rust actually wrote.
@@ -43,7 +42,16 @@ let lastMetricsAt = Number.NEGATIVE_INFINITY;
  */
 function assertLayoutsAgree(spans) {
   const capacity = spans.alive.len;
-  const agentFields = ['position', 'orientation', 'size', 'signature', 'species', 'part_offset', 'part_count'];
+  const agentFields = [
+    'position',
+    'orientation',
+    'size',
+    'signature',
+    'species',
+    'part_offset',
+    'part_count',
+    'incarnation',
+  ];
   const agentBytes =
     agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
   const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
@@ -79,6 +87,7 @@ function sourceViews() {
     species: at(spans.species, Uint32Array),
     partOffset: at(spans.part_offset, Uint32Array),
     partCount: at(spans.part_count, Uint32Array),
+    incarnation: at(spans.incarnation, Uint32Array),
     plantPosition: at(spans.plant_position, Float32Array),
     plantEnergy: at(spans.plant_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
@@ -87,31 +96,13 @@ function sourceViews() {
   return source;
 }
 
-function publish(forceMetrics = false) {
-  const tick = sim.tick();
-  const population = sim.population();
-  const message = writer.publish(sourceViews(), tick, population);
-  if (message) postMessage(message, writer.transfer);
-
-  const now = performance.now();
-  if (forceMetrics || now - lastMetricsAt >= METRICS_INTERVAL_MS) {
-    lastMetricsAt = now;
-    postMessage({
-      kind: 'metrics',
-      tick: tick.toString(),
-      population,
-      meanEnergy: sim.mean_energy(),
-    });
-  }
-}
-
 function postError(context, error, fatal = false) {
   postMessage({ kind: 'error', context, message: String(error), fatal });
 }
 
 const scheduler = createTickScheduler({
   step: (ticks) => sim.step_many(ticks),
-  publish,
+  publish: () => publisher.publish(),
   onError: (error) => postError('tick', error, true),
   onRunningChange: (running) => postMessage({ kind: 'status', running }),
 });
@@ -140,7 +131,14 @@ const handlers = {
     source = null;
     sourceLayout = null;
     sourceBuffer = null;
-    lastMetricsAt = Number.NEGATIVE_INFINITY;
+    publisher = createSnapshotPublisher({
+      writer,
+      source: sourceViews,
+      tick: () => sim.tick(),
+      population: () => sim.population(),
+      meanEnergy: () => sim.mean_energy(),
+      send: (message, transfer) => postMessage(message, transfer),
+    });
     scheduler.setSecondsPerTick(hints.seconds_per_tick);
 
     postMessage({
@@ -150,7 +148,7 @@ const handlers = {
       hints,
       params: sim.params_json(),
     });
-    publish(true);
+    publisher.publish(true);
   },
 
   play() {
@@ -171,7 +169,7 @@ const handlers = {
       throw new RangeError('step count must be an integer between 1 and 10000');
     }
     sim.step_many(ticks);
-    publish(true);
+    publisher.publish(true);
   },
 
   setParams({ params }) {
@@ -185,6 +183,18 @@ const handlers = {
     }
   },
 
+  validateRun({ seed, params, founders, requestId }) {
+    try {
+      parseSeed(seed);
+      const normalized = validate_params(params ?? null);
+      const parsed = JSON.parse(normalized);
+      founderCount(founders, parsed.world.max_agents);
+      postMessage({ kind: 'validatedRun', requestId, params: normalized });
+    } catch (error) {
+      postMessage({ kind: 'validatedRun', requestId, error: String(error) });
+    }
+  },
+
   pushCommand({ command }) {
     try {
       sim.push_command(command);
@@ -193,17 +203,42 @@ const handlers = {
     }
   },
 
-  inspect({ index }) {
+  inspect({ index, incarnation, requestId }) {
     try {
-      postMessage({ kind: 'inspection', index, agent: sim.inspect_agent(index) });
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        index > 0xffffffff ||
+        !Number.isSafeInteger(incarnation) ||
+        incarnation < 1 ||
+        incarnation > 0xffffffff ||
+        !Number.isSafeInteger(requestId) ||
+        requestId < 1
+      ) {
+        throw new RangeError('invalid inspection identity');
+      }
+      postMessage({
+        kind: 'inspection',
+        index,
+        incarnation,
+        requestId,
+        agent: sim.inspect_agent(index, incarnation),
+      });
     } catch (error) {
-      postMessage({ kind: 'inspection', index, agent: null, message: String(error) });
+      postMessage({
+        kind: 'inspection',
+        index,
+        incarnation,
+        requestId,
+        agent: null,
+        message: String(error),
+      });
     }
   },
 
   /** A frame coming back from the renderer, for the transferable transport's pool. */
   recycle({ buffer }) {
-    writer.recycle?.(buffer);
+    publisher.recycle(buffer);
   },
 
   hash() {

@@ -24,5 +24,7 @@ export function pickAgent(views, capacity, point, worldSize, minimumRadius = 0) 
     }
   }
 
-  return picked;
+  return picked === null
+    ? null
+    : { index: picked, incarnation: views.incarnation[picked] };
 }

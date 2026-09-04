@@ -32,6 +32,7 @@
   {:else}
     <dl>
       <div><dt>tick</dt><dd>{inspection.tick}</dd></div>
+      <div><dt>incarnation</dt><dd>{inspection.incarnation}</dd></div>
       <div><dt>energy</dt><dd>{inspection.energy.toFixed(2)}</dd></div>
       <div><dt>age</dt><dd>{inspection.age}</dd></div>
       <div><dt>species</dt><dd>{inspection.species_id}</dd></div>

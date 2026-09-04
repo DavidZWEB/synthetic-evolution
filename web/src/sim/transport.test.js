@@ -18,6 +18,7 @@ function source(capacity, plantCapacity, marker) {
 }
 
 test('shared frame bases stay aligned for every capacity residue', () => {
+  assert.equal(frameLayout(1, 0).bytes, 61);
   for (const capacity of [5000, 5001, 5002, 5003]) {
     assert.doesNotThrow(() => createWriter(SHARED, capacity, 7), `${capacity} slots`);
   }
@@ -27,12 +28,13 @@ test('a leased shared frame stays immutable while newer frames publish', () => {
   const writer = createWriter(SHARED, 5, 2);
   const reader = createReader(writer.handoff);
 
-  writer.publish(source(5, 2, 1), 11n, 3);
+  assert.equal(writer.publish(source(5, 2, 1), 11n, 3), true);
   const first = reader.latest();
   assert.equal(first.fresh, true);
   assert.equal(first.tick, 11n);
   assert.equal(first.population, 3);
   assert.equal(first.views.position[0], 1);
+  assert.equal(first.views.incarnation[0], 1);
 
   writer.publish(source(5, 2, 2), 12n, 4);
   writer.publish(source(5, 2, 3), 13n, 5);

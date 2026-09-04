@@ -6,7 +6,7 @@
 //! grown WASM heap detaches every JS view over the snapshot (spec §7.3).
 //!
 //! Deliberately not here: what lives in those slots. This module knows only which
-//! indices are in use.
+//! indices are in use and which allocation of a reused index is current.
 
 use crate::ids::AgentId;
 
@@ -20,6 +20,8 @@ pub struct SlotPool {
     /// One byte per slot, matching the `Uint8Array` the render snapshot exports
     /// (spec §2.2b).
     alive: Vec<u8>,
+    /// Changes every time a slot is allocated, so observers can distinguish tenants.
+    incarnation: Vec<u32>,
     /// Stack of free indices. LIFO, so allocation is a pop rather than a scan — and
     /// deterministic, because deaths resolve in agent-index order (spec §2.4).
     free: Vec<u32>,
@@ -37,6 +39,7 @@ impl SlotPool {
         }
         Self {
             alive: vec![0u8; cap],
+            incarnation: vec![0u32; cap],
             free,
             live_count: 0,
         }
@@ -53,6 +56,11 @@ impl SlotPool {
             "free list handed out a live slot"
         );
         self.alive[index as usize] = 1;
+        let incarnation = &mut self.incarnation[index as usize];
+        *incarnation = incarnation.wrapping_add(1);
+        if *incarnation == 0 {
+            *incarnation = 1;
+        }
         self.live_count += 1;
         Some(AgentId::new(index))
     }
@@ -96,6 +104,18 @@ impl SlotPool {
     #[inline]
     pub fn alive_flags(&self) -> &[u8] {
         &self.alive
+    }
+
+    /// Allocation generation for a live slot.
+    #[inline]
+    pub fn incarnation(&self, id: AgentId) -> Option<u32> {
+        self.is_alive(id).then(|| self.incarnation[id.index()])
+    }
+
+    /// Raw generations in slot order, for the render snapshot.
+    #[inline]
+    pub fn incarnations(&self) -> &[u32] {
+        &self.incarnation
     }
 
     /// Live slots in ascending index order.
@@ -142,6 +162,7 @@ mod tests {
         let mut pool = SlotPool::with_capacity(2);
         let a = pool.alloc().unwrap();
         let b = pool.alloc().unwrap();
+        let first_incarnation = pool.incarnation(a).unwrap();
         assert!(pool.free(a));
         assert!(!pool.is_alive(a));
         assert_eq!(pool.live_count(), 1);
@@ -150,6 +171,7 @@ mod tests {
             Some(a),
             "the freed slot should come straight back"
         );
+        assert_ne!(pool.incarnation(a), Some(first_incarnation));
         assert!(pool.is_alive(b));
     }
 

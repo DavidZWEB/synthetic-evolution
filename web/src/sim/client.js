@@ -21,6 +21,7 @@ export function createSim({ seed, founders, params = null }) {
     params: [],
     hash: [],
     status: [],
+    validatedRun: [],
   };
   const emit = (kind, payload) => listeners[kind]?.forEach((fn) => fn(payload));
 
@@ -82,8 +83,11 @@ export function createSim({ seed, founders, params = null }) {
     stepOnce: (ticks = 1) => send('stepOnce', { ticks }),
     setParams: (json) => send('setParams', { params: json }),
     pushCommand: (json) => send('pushCommand', { command: json }),
-    inspect: (index) => send('inspect', { index }),
+    inspect: (index, incarnation, requestId) =>
+      send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
+    validateRun: (seed, founders, params, requestId) =>
+      send('validateRun', { seed, founders, params, requestId }),
 
     on(kind, fn) {
       listeners[kind]?.push(fn);

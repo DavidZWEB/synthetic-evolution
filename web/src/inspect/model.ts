@@ -9,6 +9,7 @@ import type { Gene } from '../generated/Gene';
 
 export interface Inspection {
   index: number;
+  incarnation: number;
   tick: number;
   energy: number;
   age: number;
@@ -35,6 +36,7 @@ function isInspection(value: unknown): value is Inspection {
   const geneKinds = new Set(['Neuron', 'Sensor', 'Effector', 'Connection', 'Body', 'Meta']);
   return (
     Number.isSafeInteger(value.index) &&
+    Number.isSafeInteger(value.incarnation) &&
     Number.isSafeInteger(value.tick) &&
     isFiniteNumber(value.energy) &&
     Number.isSafeInteger(value.age) &&

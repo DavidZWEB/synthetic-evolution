@@ -666,8 +666,8 @@ Build-plan task 8.
   presentable — sharing starts at Phase 2 (spec §8).
 
 **Keep the snapshot's sizing separate from the world's.** These two look like one decision and
-are not. The snapshot is 57 bytes per agent — 0.5% of per-agent state, 0.27 MB at the default
-5k and 2.7 MB even at Phase 7's 50k. World state is ~11.3 KB per agent, almost all of it
+are not. The snapshot is 61 bytes per agent — about 0.5% of per-agent state, 0.31 MB at the
+default 5k and 3.1 MB even at Phase 7's 50k. World state is ~11.3 KB per agent, almost all of it
 genome. Pre-allocating the snapshot at capacity is therefore free and should just be done.
 
 The reason that matters: §7.3's detach hazard is the argument for pre-allocating *everything*,
@@ -792,7 +792,9 @@ samples it; it is not added to the per-frame snapshot and costs nothing in headl
 Clicking uses the renderer's toroidal nearest-image rule and minimum displayed radius, then
 requests one agent's inspection JSON from the worker. The selected slot is highlighted and
 the panel refreshes its live neuron activations at human speed while keeping the full genome
-collapsed until requested. No genome or brain state is streamed for unselected agents.
+collapsed until requested. A per-slot incarnation in the snapshot prevents selection from
+silently following a recycled slot to a different agent. No genome or brain state is streamed
+for unselected agents.
 
 `ts-rs` derives on the Rust genome types generate the committed contract in
 `web/src/generated/`. The typed inspector model imports `Gene` from that output, and CI

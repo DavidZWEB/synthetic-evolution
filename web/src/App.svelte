@@ -4,7 +4,7 @@
   import InspectorPanel from './ui/InspectorPanel.svelte';
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
-  import { decodeInspection } from './inspect/model.ts';
+  import { createInspectorController } from './inspect/controller.js';
   import { createSim } from './sim/client.js';
   import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
   import { appendMetric, metricFromMessage } from './telemetry/history.ts';
@@ -12,7 +12,7 @@
   import { createPointerGestures } from './ui/pointer-gestures.js';
 
   const MAX_CHART_SAMPLES = 480;
-  const INSPECTION_INTERVAL_MS = 250;
+  const DEFAULT_RUN = { seed: '42', founders: 2000, params: null };
 
   let canvas;
   let sim = null;
@@ -42,28 +42,26 @@
   /** Mirrors the renderer's camera for display. Written every frame, never read by it. */
   let zoom = $state(1);
   let latestFrame = null;
-  let lastInspectionAt = Number.NEGATIVE_INFINITY;
   let runParams = null;
+  let validationRequest = 0;
+  let pendingRun = null;
+  let validating = $state(false);
 
-  function selectAgent(index) {
-    selectedIndex = index;
-    inspection = null;
-    inspectionMessage = null;
-    renderer?.select(index);
-    if (index !== null) {
-      lastInspectionAt = performance.now();
-      sim?.inspect(index);
-    }
-  }
-
-  function pickAt(cssX, cssY) {
-    selectAgent(renderer?.pick(latestFrame?.views ?? null, cssX, cssY) ?? null);
-  }
+  const inspector = createInspectorController({
+    getSim: () => sim,
+    getRenderer: () => renderer,
+    getFrame: () => latestFrame,
+    onChange: (next) => {
+      selectedIndex = next.selectedIndex;
+      inspection = next.inspection;
+      inspectionMessage = next.message;
+    },
+  });
 
   const gestures = createPointerGestures({
     getRenderer: () => renderer,
     onPointerCount: (count) => (pointerCount = count),
-    onClick: pickAt,
+    onClick: inspector.pickAt,
   });
 
   function onWheel(event) {
@@ -92,8 +90,17 @@
   }
 
   function reseed() {
+    requestRun({ seed, founders, params: runParams });
+  }
+
+  function activateRun(next) {
     sim?.destroy();
     sim = null;
+    pendingRun = null;
+    validating = false;
+    seed = next.seed;
+    founders = next.founders;
+    runParams = next.params;
     running = false;
     transport = null;
     capacity = 0;
@@ -102,8 +109,19 @@
     population = 0;
     meanEnergy = 0;
     metricSamples = [];
-    selectAgent(null);
+    inspector.select(null);
     start();
+  }
+
+  function requestRun(next) {
+    if (!sim || !transport) {
+      activateRun(next);
+      return;
+    }
+    validationRequest += 1;
+    pendingRun = { ...next, requestId: validationRequest };
+    validating = true;
+    sim.validateRun(next.seed, next.founders, next.params, validationRequest);
   }
 
   function updateRunUrl() {
@@ -119,12 +137,6 @@
   function start() {
     failure = null;
     transport = null;
-    try {
-      updateRunUrl();
-    } catch (error) {
-      failure = `run: ${String(error)}`;
-      return;
-    }
     const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
@@ -189,20 +201,25 @@
       }
     });
     nextSim.on('inspection', (message) => {
-      if (sim !== nextSim || message.index !== selectedIndex) return;
-      if (!message.agent) {
-        inspection = null;
-        inspectionMessage = message.message ?? 'agent is no longer alive';
-        renderer?.select(null);
+      if (sim === nextSim) inspector.accept(message);
+    });
+    nextSim.on('validatedRun', (message) => {
+      if (
+        sim !== nextSim ||
+        message.requestId !== validationRequest ||
+        message.requestId !== pendingRun?.requestId
+      ) {
         return;
       }
-      try {
-        inspection = decodeInspection(message.agent);
-        inspectionMessage = null;
-      } catch (error) {
-        inspection = null;
-        inspectionMessage = String(error);
+      validating = false;
+      const requested = pendingRun;
+      pendingRun = null;
+      if (message.error) {
+        failure = `url: ${message.error}`;
+        if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
+        return;
       }
+      activateRun({ ...requested, params: message.params });
     });
     nextSim.on('error', (message) => {
       if (sim !== nextSim) return;
@@ -227,16 +244,25 @@
     let validUrl = true;
     try {
       const shared = readRunUrl(globalThis.location.href, founders);
-      if (shared) {
-        seed = shared.seed;
-        founders = shared.founders;
-        runParams = shared.params;
-      }
+      const initial = shared ?? DEFAULT_RUN;
+      seed = initial.seed;
+      founders = initial.founders;
+      runParams = initial.params;
     } catch (error) {
       failure = `url: ${String(error)}`;
       validUrl = false;
     }
     if (validUrl) start();
+
+    const onHashChange = () => {
+      try {
+        requestRun(readRunUrl(globalThis.location.href, DEFAULT_RUN.founders) ?? DEFAULT_RUN);
+      } catch (error) {
+        failure = `url: ${String(error)}`;
+        if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
+      }
+    };
+    globalThis.addEventListener('hashchange', onHashChange);
 
     // Registered here, not as an attribute: Svelte adds `onwheel` passively and a passive
     // listener cannot preventDefault, so the page would scroll while you zoomed.
@@ -265,15 +291,7 @@
 
       frames += 1;
       const now = performance.now();
-      if (
-        frame?.fresh &&
-        selectedIndex !== null &&
-        !inspectionMessage &&
-        now - lastInspectionAt >= INSPECTION_INTERVAL_MS
-      ) {
-        lastInspectionAt = now;
-        sim?.inspect(selectedIndex);
-      }
+      inspector.poll(frame, now);
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;
@@ -284,6 +302,7 @@
 
     return () => {
       cancelAnimationFrame(handle);
+      globalThis.removeEventListener('hashchange', onHashChange);
       canvas.removeEventListener('wheel', onWheel);
       sim?.destroy();
       renderer?.destroy();
@@ -311,7 +330,7 @@
         {selectedIndex}
         {inspection}
         message={inspectionMessage}
-        onclose={() => selectAgent(null)}
+        onclose={() => inspector.select(null)}
       />
     {/if}
     {#if failure}
@@ -320,7 +339,7 @@
   </div>
 
   <ControlBar
-    ready={Boolean(transport)}
+    ready={Boolean(transport) && !validating}
     {running}
     {speed}
     {seed}

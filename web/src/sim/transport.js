@@ -89,13 +89,12 @@ function sharedWriter(layout) {
   return {
     kind: SHARED,
     handoff: { kind: SHARED, buffer, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
-    transfer: [],
 
     publish(source, tick, population) {
       const next = claimFreeFrame();
-      // A reader briefly holds two frames while swapping leases. Dropping this snapshot
-      // is safer than blocking the simulation; the next publish will supersede it.
-      if (next < 0) return null;
+      // With three frames and one reader, one frame must remain writable. Failing this
+      // invariant is a protocol bug, not a frame that can safely disappear.
+      if (next < 0) throw new Error('shared snapshot transport has no writable frame');
 
       try {
         copyFrame(source, frames[next]);
@@ -134,7 +133,7 @@ function sharedWriter(layout) {
           );
         }
       }
-      return null;
+      return true;
     },
   };
 }
@@ -147,18 +146,16 @@ function transferableWriter(layout) {
   return {
     kind: TRANSFERABLE,
     handoff: { kind: TRANSFERABLE, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
-    transfer: [],
 
-    /** Returns a message to post, or null when no buffer is free. */
+    /** Returns a message to post, or `false` when no buffer is free. */
     publish(source, tick, population) {
       const buffer = pool.pop();
       // Dropped rather than queued. The renderer already has a frame it has not drawn,
       // and holding this one would grow a backlog of states nobody will ever see while
       // the sim waits to hand it over.
-      if (!buffer) return null;
+      if (!buffer) return false;
 
       copyFrame(source, frameViews(buffer, 0, layout));
-      this.transfer = [buffer];
       return { kind: TRANSFERABLE, buffer, tick: tick.toString(), population };
     },
 

@@ -12,7 +12,7 @@
 
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use wasm::Sim;
+use wasm::{Sim, validate_params};
 
 fn sim(agents: u32) -> Sim {
     let mut sim = Sim::new(7, None).expect("defaults are valid");
@@ -46,6 +46,11 @@ fn bad_params_are_an_error_not_a_fallback() {
 
     // And an unknown field is itself an error, so a typo cannot silently do nothing.
     assert!(Sim::new(7, Some(r#"{"nonsense":1}"#.into())).is_err());
+    assert!(validate_params(Some(r#"{"nonsense":1}"#.into())).is_err());
+    let canonical =
+        validate_params(Some(r#"{ "world": { "dt": 0.02 } }"#.into())).expect("valid params");
+    let parsed: serde_json::Value = serde_json::from_str(&canonical).expect("canonical JSON");
+    assert_eq!(parsed["world"]["dt"], 0.02);
 }
 
 #[wasm_bindgen_test]
@@ -74,6 +79,7 @@ fn the_snapshot_spans_describe_the_buffer_they_claim_to() {
         ("species", 1),
         ("part_offset", 1),
         ("part_count", 1),
+        ("incarnation", 1),
     ] {
         let span = &l[field];
         assert_eq!(
@@ -137,10 +143,11 @@ fn a_command_crosses_the_boundary_and_applies() {
 fn inspecting_an_agent_returns_its_genome_and_live_activations() {
     let mut sim = sim(4);
     sim.step_many(10);
-    let json = sim.inspect_agent(0).expect("slot 0 is alive");
+    let json = sim.inspect_agent(0, 1).expect("slot 0 is alive");
     let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
 
     assert_eq!(v["index"], 0);
+    assert_eq!(v["incarnation"], 1);
     assert_eq!(v["tick"], 10);
     assert!(v["energy"].as_f64().expect("energy") > 0.0);
     assert_eq!(v["age"], 10);
@@ -155,15 +162,19 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
     );
     let genome = v["genome"].as_array().expect("genome");
     assert!(genome.len() > 100, "the default topology is 284 genes");
+    assert!(
+        sim.inspect_agent(0, 2).is_err(),
+        "a stale slot incarnation inspected its replacement"
+    );
 }
 
 #[wasm_bindgen_test]
 fn inspecting_an_empty_slot_is_an_error() {
     // Returning a plausible-looking zeroed agent would put a ghost in the inspector.
     let sim = sim(2);
-    assert!(sim.inspect_agent(50).is_err(), "slot 50 holds nothing");
+    assert!(sim.inspect_agent(50, 1).is_err(), "slot 50 holds nothing");
     assert!(
-        sim.inspect_agent(u32::MAX).is_err(),
+        sim.inspect_agent(u32::MAX, 1).is_err(),
         "past capacity entirely"
     );
 }
