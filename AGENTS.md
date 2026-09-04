@@ -78,6 +78,9 @@ This isn't style preference. Narrow signatures are what let you run systems in i
   has a home in `docs/synthetic-evolution-spec.md`; cite that. Where a rule genuinely
   has no spec section, state the reasoning in the comment rather than pointing at
   anything.
+- **Keep the spec authoritative.** If implementation needs a design change, discuss it
+  with a human first and update the spec in the same change. Do not leave the spec stale
+  and compensate with a long code comment explaining the divergence.
 
 - **Anything load-bearing and strange gets a comment naming the spec section.** This is the important one. Code like the `parentB` field, the clamped elevation param, or deferring births to step 10 all look like dead weight or arbitrary choices. Without an anchor, someone eventually tidies them away.
 
@@ -152,8 +155,8 @@ npm run wasm --prefix web            # rebuild bindings into web/src/wasm/
 npm run dev  --prefix web            # client on http://localhost:5173
 ```
 
-`npm run dev` does not rebuild the wasm bindings — run `npm run wasm` after changing
-`sim-core`. It gets chained into `dev` and `build` at M9, when the client imports them.
+`npm run dev` and `npm run build` rebuild the wasm bindings before Vite starts. Run
+`npm run wasm --prefix web` directly when only the generated bindings are needed.
 
 `cargo test --workspace` runs everything that can run natively, the golden hash
 included. It cannot run the cross-target half: `wasm-pack test --node shells/wasm`

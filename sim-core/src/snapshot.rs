@@ -1,10 +1,9 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
-//! Spec §2.2b's field list and nothing else — positions, orientation, size, signature,
-//! alive, species, and the part indirection. No energy, no genomes, no brain state. The
-//! buffer is written once per tick and read by the main thread at whatever rate it
-//! happens to be drawing, so every field added is bandwidth paid 60 times a second at
-//! whatever population the world is running.
+//! Spec §2.2b's render fields: agent appearance and identity plus plant position and
+//! current stock. No agent energy, genomes, or brain state. The buffer is written once
+//! per tick and read by the main thread at whatever rate it happens to be drawing, so
+//! every field added is bandwidth paid 60 times a second at the configured capacity.
 //!
 //! **Slot-indexed, not compacted.** Arrays are `capacity` long and `alive` says which
 //! entries are real, which costs a byte per slot and buys the thing compaction destroys:
@@ -27,6 +26,9 @@ use crate::world::World;
 /// 57 bytes per agent, and the arithmetic that makes pre-allocation obviously free rests
 /// on it staying that way.
 pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4;
+
+/// Bytes one plant occupies: its position and current stock (spec §2.2b).
+pub const BYTES_PER_PLANT: usize = 12 + 4;
 
 /// A frame's worth of world state, in struct-of-arrays form.
 ///
@@ -51,12 +53,19 @@ pub struct Snapshot {
     /// rewritten rather than extended (spec §3.5, §9.1).
     part_offset: Vec<u32>,
     part_count: Vec<u32>,
+    plant_capacity: u32,
+    plant_position: Vec<f32>,
+    /// What each site currently holds. An emptied plant stays in the world and stays
+    /// drawable — the site persists and regrows (spec §5.1) — so this is what tells a
+    /// fat one from a bare one.
+    plant_energy: Vec<f32>,
 }
 
 impl Snapshot {
     /// Allocates every array at capacity. The only allocation this type ever does.
-    pub fn new(capacity: u32) -> Self {
+    pub fn new(capacity: u32, plant_capacity: u32) -> Self {
         let n = capacity as usize;
+        let p = plant_capacity as usize;
         Self {
             tick: 0,
             capacity,
@@ -69,12 +78,15 @@ impl Snapshot {
             species: vec![0; n],
             part_offset: vec![0; n],
             part_count: vec![0; n],
+            plant_capacity,
+            plant_position: vec![0.0; p * 3],
+            plant_energy: vec![0.0; p],
         }
     }
 
     /// A snapshot sized for `world`, which is the only size it can usefully be.
     pub fn for_world(world: &World) -> Self {
-        Self::new(world.pool().capacity())
+        Self::new(world.pool().capacity(), world.plants().len() as u32)
     }
 
     /// Projects the world into this buffer, overwriting whatever it held.
@@ -120,6 +132,21 @@ impl Snapshot {
             self.species[i] = agents.species_id[i];
             self.part_offset[i] = agents.parts[i].offset();
             self.part_count[i] = agents.parts[i].len();
+        }
+
+        // Every plant, every frame. There is no alive flag to respect: a site that has
+        // been eaten to nothing is still there and still regrows (spec §5.1).
+        let plants = world.plants();
+        for (i, (&position, &energy)) in plants
+            .position()
+            .iter()
+            .zip(plants.energy().iter())
+            .enumerate()
+        {
+            self.plant_position[i * 3] = position.x;
+            self.plant_position[i * 3 + 1] = position.y;
+            self.plant_position[i * 3 + 2] = position.z;
+            self.plant_energy[i] = energy;
         }
     }
 
@@ -185,6 +212,22 @@ impl Snapshot {
     pub fn part_count(&self) -> &[u32] {
         &self.part_count
     }
+
+    #[inline]
+    pub fn plant_capacity(&self) -> u32 {
+        self.plant_capacity
+    }
+
+    /// `x, y, z` per plant.
+    #[inline]
+    pub fn plant_position(&self) -> &[f32] {
+        &self.plant_position
+    }
+
+    #[inline]
+    pub fn plant_energy(&self) -> &[f32] {
+        &self.plant_energy
+    }
 }
 
 #[cfg(test)]
@@ -207,11 +250,48 @@ mod tests {
     }
 
     #[test]
+    fn the_larder_travels_with_the_frame() {
+        // Depleted sites persist and regrow, so they remain in the frame at zero stock
+        // rather than disappearing (spec §2.2b, §5.1).
+        let mut world = world_of(2, 8);
+        let mut snap = Snapshot::for_world(&world);
+        snap.update(&world);
+
+        assert_eq!(snap.plant_capacity(), world.plants().len() as u32);
+        assert!(snap.plant_capacity() > 0, "no plants to draw");
+        assert_eq!(
+            snap.plant_position().len(),
+            snap.plant_capacity() as usize * 3
+        );
+
+        // Stocked at construction, so the very first frame already has food in it.
+        assert!(snap.plant_energy().iter().all(|&e| e > 0.0));
+        for (i, &position) in world.plants().position().iter().enumerate() {
+            assert_eq!(snap.plant_position()[i * 3], position.x);
+        }
+
+        // And an eaten site stays drawable rather than disappearing.
+        for _ in 0..200 {
+            world.step();
+        }
+        snap.update(&world);
+        assert_eq!(snap.plant_capacity(), world.plants().len() as u32);
+    }
+
+    #[test]
+    fn one_plant_costs_sixteen_bytes() {
+        let snap = Snapshot::new(1, 1);
+        let bytes = snap.plant_position().len() * 4 + snap.plant_energy().len() * 4;
+        assert_eq!(bytes, BYTES_PER_PLANT);
+        assert_eq!(bytes, 16);
+    }
+
+    #[test]
     fn one_agent_costs_the_budgeted_fifty_seven_bytes() {
         // Spec §7.5 budgets the snapshot at 57 bytes per agent, and the argument that
         // pre-allocating it at capacity is free rests on that number. A field added
         // without noticing is bandwidth paid 60 times a second forever.
-        let snap = Snapshot::new(1);
+        let snap = Snapshot::new(1, 0);
         let bytes = snap.position().len() * 4
             + snap.orientation().len() * 4
             + snap.size().len() * 4

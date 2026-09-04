@@ -35,6 +35,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install project toolchains and dependencies
+        run: ./scripts/setup.sh --skip-tests
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -46,6 +53,17 @@ jobs:
       # for the determinism invariants all live in here.
       - name: Test
         run: cargo test --workspace
+
+      - name: Test web transport
+        run: npm test --prefix web
+
+      - name: Test WASM boundary and determinism
+        run: wasm-pack test --node shells/wasm
+
+      # Pull requests are not deployed, so CI owns proving the complete browser bundle
+      # can be produced from a clean checkout.
+      - name: Build web client
+        run: npm run build --prefix web
 
       # sim-core reaching for something that is not in wasm's std would otherwise not
       # surface until a deploy. Checking the target is cheap; it is not a substitute

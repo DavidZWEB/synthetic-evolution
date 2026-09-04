@@ -21,7 +21,8 @@ referenced in commit messages.
 | M6 Sensors and effectors | done |
 | M7 World and economy | done; larder fixed, `k_sensor` unit open — see the budget pass |
 | M8 The tick | done |
-| M9–M12 | not started |
+| M9 WASM shell and renderer | shell, worker, transport and renderer done; sim does not hold 1× at 5k |
+| M10–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -675,7 +676,99 @@ boundary. Wiring the transport so it reads the world arenas directly would coupl
 buffer to the expensive one and make the pool impossible to grow later without breaking every
 view. Spec §7.5 has the measurements.
 
-**Done when:** 5k agents render at 60fps with the sim at 1× and at 100×.
+**Done when:** 5k agents render at 60fps with the sim at 1× and at 100×. **Half met, and
+the half that is not is `sim-core`, not the renderer.** Measured in Chrome on an M-series
+Mac, release wasm (`opt-level = 3`, `lto = "fat"`), 1000×1000 world, default params:
+
+| live agents | sim ticks/s at 1× | render fps |
+|---:|---:|---:|
+| 585 | 60.8 | 120 |
+| 1406 | 59.2 | 120 |
+| 5000 | **18.0** | 120 |
+
+The renderer holds 120fps at every population and at every speed, drawing all 5000 slots
+each frame — it is nowhere near its limit, and the criterion's rendering half has real
+headroom. What cannot hold 1× is the tick: somewhere between 1400 and 5000 agents it
+falls off 60/s, and at 5000 it manages 18. Spec §2.2c predicts where that goes —
+perception is 60–80% of tick cost and the only phase that touches the spatial hash — but
+predicting is not measuring, and nothing here has profiled it.
+
+Left as a measurement rather than an optimisation. Phase 7 is the performance milestone
+and owns SIMD and `rayon`; reaching for either now would be optimising `sim-core` against
+a number, which is the loop CLAUDE.md keeps separate from tuning for good reason. The
+population also cannot *stay* at 5000 under the shipped economy — it starves in ~400
+ticks — so 5k is a stress figure rather than a steady state anything currently reaches.
+
+**Decisions taken here.**
+
+*Both transports copy once, in the worker.* Spec §7.3's zero-copy read is a view straight
+onto WASM linear memory, which the main thread can only take if that memory is *shared* —
+and that needs a threads-enabled build (`--shared-memory`, atomics) that arrives with
+`wasm-bindgen-rayon` at Phase 7. Until then the worker owns its memory alone and one copy
+per frame is the floor rather than a shortcut. What the shared transport still buys is
+not the copy: the renderer never blocks on a message, and the writer drops a superseded
+frame instead of stalling if every slot is briefly busy. Both paths were exercised — the
+fallback by forcing it, since a fallback nobody has run is a guess.
+
+The shared path uses three state-tracked frames rather than an unleased double buffer.
+The renderer holds one frame until the next animation frame; the worker cycles through
+the other two and publishes frame-local metadata with the payload. That lease is what
+prevents a second publish from overwriting arrays while WebGL is still uploading them.
+
+*The snapshot is slot-indexed, so the renderer draws capacity, not population.* A dead
+slot has `alive = 0` and the vertex shader multiplies the radius by it, collapsing the
+quad to no area. That keeps the draw one call over a fixed instance count rather than a
+per-frame compaction pass on the CPU, and it is why the render cost does not fall as the
+population does.
+
+*A throw inside the worker's timer loop used to vanish.* The loop reschedules at its end,
+so one exception stopped the clock while the renderer went on drawing the last frame at
+full rate — a frozen world that looks exactly like a paused one. It now stops
+deliberately and reports, and `client.js` listens for `onerror` and `onmessageerror` as
+well, because a worker-level throw reaches neither the page console nor any handler by
+default.
+
+*Catch-up is time-sliced rather than unbounded.* At 5k agents the sim cannot meet 1×, so
+elapsed-time debt grows while a batch is running. Turning all of that debt into one
+`step_many` call made pause and commands wait behind tens of seconds of work at high
+speeds. The scheduler now measures tick cost, caps both debt and batch size, and yields
+between batches. Requested speed is best-effort when throughput is lower; worker
+responsiveness is not.
+
+*Plants are in the snapshot.* Spec §2.2b includes their position and current stock so
+Phase 1's food-seeking criterion is observable. An emptied site stays visible at low
+brightness because it persists and regrows (spec §5.1).
+
+*Plant positions travel every frame even though sites never move.* Sending them once
+would be cheaper and is what "fixed sites" invites, but relocating a depleted site is
+already named in `plants` as a change an M12 run might call for, and a renderer holding
+cached positions would draw food where none is.
+
+*The renderer is built from the world's own hints, not from constants in the client.*
+`world.size` and the two capacities were duplicated in `App.svelte`, which draws a
+correct picture of the wrong world the moment either moves — and `set_params` exists
+precisely so params can move. `Sim::render_hints` reports them, and the renderer is
+rebuilt on every reseed because a reseed can carry different ones.
+
+*The camera wraps but does not repeat.* The world is a torus, so both vertex shaders place
+each instance at its nearest image to the camera centre — the same minimum-image rule
+`spatial` measures every distance with. Panning across the seam is then continuous rather
+than hitting a wall the picture invented, which is the case that matters, because it is
+the one you meet while actually watching something.
+
+Tiling the draw to fill a wide viewport with the wrapped copies a torus strictly has was
+tried and removed. It is more faithful to the geometry and worse for the only question
+this view exists to answer: the same agent appears two or three times, which makes a
+population look larger than it is and a cluster look like several. Minimum image alone
+puts every agent in one world-sized band around the camera, so each is drawn exactly once,
+and the zoom floor stops where the whole world is on screen. The cost is empty margins on
+the long axis of a window whose shape the world does not match — visible, and honest about
+what is there.
+
+*The `alive` attribute is not normalized.* It cost an hour: a `UNSIGNED_BYTE` attribute
+declared normalized divides by 255, and the flag is 1 rather than 255, so every agent's
+radius became four thousandths of its size. The world renders as empty — no error
+anywhere, and nothing to grep for.
 
 ## M10 — Instrumentation
 

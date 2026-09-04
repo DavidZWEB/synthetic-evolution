@@ -70,6 +70,30 @@ struct Layout {
     species: Span,
     part_offset: Span,
     part_count: Span,
+    /// Slots in the plant arrays. Fixed for the life of a world, like `capacity`.
+    plant_capacity: u32,
+    /// `x, y, z` per plant.
+    plant_position: Span,
+    /// What each site holds, so a fat plant draws differently from a bare one.
+    plant_energy: Span,
+}
+
+/// What a renderer needs that is not per-frame: the extent it is drawing into, and how
+/// to draw a plant.
+///
+/// Read from the world rather than agreed by convention. A client with its own copy of
+/// `world.size` draws a correct picture of the wrong world the moment either moves.
+#[derive(Serialize)]
+struct RenderHints {
+    world_size: f32,
+    /// Simulated seconds advanced by one fixed tick.
+    seconds_per_tick: f32,
+    agent_capacity: u32,
+    plant_capacity: u32,
+    plant_radius: f32,
+    plant_signature: [f32; 3],
+    /// What a full site holds, so a renderer can show how full one is.
+    plant_max_energy: f32,
 }
 
 fn span<T>(slice: &[T]) -> Span {
@@ -168,8 +192,26 @@ impl Sim {
             species: span(self.snapshot.species()),
             part_offset: span(self.snapshot.part_offset()),
             part_count: span(self.snapshot.part_count()),
+            plant_capacity: self.snapshot.plant_capacity(),
+            plant_position: span(self.snapshot.plant_position()),
+            plant_energy: span(self.snapshot.plant_energy()),
         };
         serde_json::to_string(&layout).map_err(|e| js_error("layout", e))
+    }
+
+    /// Everything a renderer needs that does not change frame to frame.
+    pub fn render_hints(&self) -> Result<String, JsError> {
+        let params = self.world.params();
+        let hints = RenderHints {
+            world_size: params.world.size,
+            seconds_per_tick: params.world.dt,
+            agent_capacity: self.snapshot.capacity(),
+            plant_capacity: self.snapshot.plant_capacity(),
+            plant_radius: params.plants.radius,
+            plant_signature: params.plants.signature,
+            plant_max_energy: params.plants.max_energy,
+        };
+        serde_json::to_string(&hints).map_err(|e| js_error("render hints", e))
     }
 
     pub fn tick(&self) -> u64 {

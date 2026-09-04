@@ -44,7 +44,7 @@ Three specific things do most of the work:
 
 Non-negotiable properties:
 
-- **The sim never touches the DOM or Three.js.** It owns world state outright and publishes a narrow render snapshot into a double-buffered `SharedArrayBuffer` (see §2.2). The renderer reads whatever the latest complete snapshot is.
+- **The sim never touches the DOM or Three.js.** It owns world state outright and publishes a narrow render snapshot into a leased triple-buffered `SharedArrayBuffer` (see §2.2). The renderer reads whatever the latest complete snapshot is.
 - **Sim rate is decoupled from frame rate.** Fixed timestep (e.g. 60 ticks/sec of sim time). At 1× the renderer sees every tick; at 1000× it samples. Headless mode disables the renderer entirely and runs as fast as the CPU allows overnight.
 - **Fully deterministic given a seed.** Same seed + same params = byte-identical run. This is worth real effort: without it you cannot debug an emergent behavior you saw once, and you cannot share interesting worlds as a seed + param blob.
 - The sim core is a black box behind a narrow interface (`step()`, `snapshot()`, `serialize()`). This is what lets you rewrite it in Rust/WASM in month three without touching anything else.
@@ -81,15 +81,18 @@ Two of these look like over-engineering for a 2D sim with spherical agents, and 
 
 Fixed-capacity pools with a free list. Never allocate in the loop. Brains and genomes are variable-size, so they live in separate arenas with per-agent offset/length indices.
 
-#### (b) Render snapshot — the SharedArrayBuffer, double-buffered
+#### (b) Render snapshot — the SharedArrayBuffer, leased and triple-buffered
 
 A narrow projection of (a), containing only what's needed to draw a frame:
 
 ```
-positions, orientation, size, signature, alive, speciesId, partOffset, partCount
+agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount
+plants: positions, energy
 ```
 
-That's it. No energy history, no genomes, no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+Plant energy is the current stock, used to show whether a persistent site is full or depleted (§5.1); it is not a history. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+
+Three frames are required because the renderer must lease one while it issues uploads. The worker publishes into either remaining frame and only reclaims an older published frame after the replacement is complete. An unleased two-frame flip can overwrite the renderer's live typed-array view after two worker publications, producing a frame assembled from different ticks.
 
 Inspector data (full genome, live brain activations, lineage) is **pulled on demand** for the one selected agent via a request on the command queue, not streamed for everybody.
 
