@@ -94,7 +94,14 @@ fn retuning_goes_through_but_resizing_does_not() {
 
     let mut tuned = params.clone();
     tuned["metabolism"]["base"] = serde_json::json!(0.02);
+    tuned["world"]["dt"] = serde_json::json!(1.0 / 30.0);
     assert!(sim.set_params(&tuned.to_string()).is_ok());
+    let hints: serde_json::Value =
+        serde_json::from_str(&sim.render_hints().expect("hints serialize")).expect("valid JSON");
+    let dt = hints["seconds_per_tick"]
+        .as_f64()
+        .expect("seconds_per_tick");
+    assert!((dt - 1.0 / 30.0).abs() < 1e-6);
 
     // The pool, the arenas and the snapshot are sized once, and JS holds views over
     // them. Accepting this would detach every one of them (spec §7.3).

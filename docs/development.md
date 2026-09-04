@@ -144,16 +144,17 @@ Read the script rather than trusting a copy pasted here; a duplicated script dri
 {
   "scripts": {
     "wasm": "wasm-pack build ../shells/wasm --target web --out-dir ../../web/src/wasm",
-    "dev": "vite",
-    "build": "vite build",
+    "test": "node --test",
+    "dev": "npm run wasm && vite",
+    "build": "npm run wasm && vite build",
     "preview": "vite preview"
   }
 }
 ```
 
-The WASM build has to run before Vite, since Vite imports its output — so `wasm` gets chained into `dev` and `build` (`"dev": "npm run wasm && vite"`) **at M9**, when the client first imports the bindings. Not before: nothing in `web/` imports them yet, and a 30-second wasm build on every `npm run dev` for output nobody reads is friction with no payoff.
-
-Either way, `dev` will not rebuild WASM when Rust files change — run `npm run wasm` again after editing `sim-core`. (`cargo watch` can automate that later; not worth the setup now.)
+The WASM build has to run before Vite, since M9's worker imports its output. Chaining it
+into both entry points means `dev` and `build` work from a clean checkout and cannot
+silently use stale local bindings.
 
 ## Adding a dependency
 

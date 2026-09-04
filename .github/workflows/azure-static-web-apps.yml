@@ -74,10 +74,9 @@ jobs:
       - name: Set up toolchains and install dependencies
         run: ./scripts/setup.sh --skip-tests
 
-      - name: Build wasm bindings
-        run: npm run wasm --prefix web
-
-      - name: Build client
+      # The build script generates the gitignored wasm bindings before invoking Vite,
+      # matching the clean-checkout path developers use.
+      - name: Build wasm and client
         run: npm run build --prefix web
 
       - name: Deploy

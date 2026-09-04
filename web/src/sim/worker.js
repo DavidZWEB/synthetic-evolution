@@ -16,12 +16,10 @@
  */
 
 import init, { Sim } from '../wasm/wasm.js';
+import { founderCount, parseSeed } from './inputs.js';
+import { createTickScheduler } from './scheduler.js';
 import { createWriter, preferredKind } from './transport.js';
 import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
-
-/** Sim seconds per real second at speed 1, matching `world.dt` of 1/60 (spec §2.1). */
-const TICKS_PER_SECOND = 60;
-const FRAME_MS = 1000 / 60;
 
 let sim = null;
 let memory = null;
@@ -31,11 +29,6 @@ let writer = null;
 let source = null;
 let sourceBuffer = null;
 let sourceLayout = null;
-
-let running = false;
-let speed = 1;
-let timer = null;
-let lastFrameAt = 0;
 
 /**
  * Checks that the layout this side derives matches the one Rust actually wrote.
@@ -96,66 +89,42 @@ function publish() {
   if (message) postMessage(message, writer.transfer);
 }
 
-function frame() {
-  timer = null;
-  if (!running) return;
-
-  try {
-    advance();
-  } catch (error) {
-    // A throw here used to stop the clock and nothing else: the loop reschedules at the
-    // end, so one exception froze the sim at whatever tick it reached while the renderer
-    // went on drawing that frame at full rate. Silent, and indistinguishable from a
-    // paused world.
-    stop();
-    postMessage({ kind: 'error', context: 'tick', message: String(error) });
-    return;
-  }
-
-  timer = setTimeout(frame, FRAME_MS);
+function postError(context, error, fatal = false) {
+  postMessage({ kind: 'error', context, message: String(error), fatal });
 }
 
-function advance() {
-  const now = performance.now();
-  // Ticks owed since the last frame, so a slow frame catches up rather than silently
-  // running the world slower than the speed says.
-  const elapsed = Math.min(now - lastFrameAt, 250);
-  lastFrameAt = now;
-  const ticks = Math.max(1, Math.round((elapsed / 1000) * TICKS_PER_SECOND * speed));
-
-  sim.step_many(ticks);
-  publish();
-}
-
-function start() {
-  if (running) return;
-  running = true;
-  lastFrameAt = performance.now();
-  timer = setTimeout(frame, 0);
-}
-
-function stop() {
-  running = false;
-  if (timer !== null) clearTimeout(timer);
-  timer = null;
-}
+const scheduler = createTickScheduler({
+  step: (ticks) => sim.step_many(ticks),
+  publish,
+  onError: (error) => postError('tick', error, true),
+  onRunningChange: (running) => postMessage({ kind: 'status', running }),
+});
 
 const handlers = {
   async create({ seed, params, founders }) {
     const wasm = await init();
     memory = wasm.memory;
 
-    sim = new Sim(BigInt(seed), params ?? null);
-    sim.seed_founders(founders);
+    const nextSim = new Sim(parseSeed(seed), params ?? null);
+    let hints;
+    try {
+      hints = JSON.parse(nextSim.render_hints());
+      nextSim.seed_founders(founderCount(founders, hints.agent_capacity));
+    } catch (error) {
+      nextSim.free();
+      throw error;
+    }
+    sim = nextSim;
 
     // Sizes and the world's extent come from the world, not from the caller. A client
     // holding its own copy of `world.size` draws a correct picture of the wrong world
     // the moment either moves.
-    const hints = JSON.parse(sim.render_hints());
     const kind = preferredKind();
     writer = createWriter(kind, hints.agent_capacity, hints.plant_capacity);
     source = null;
     sourceLayout = null;
+    sourceBuffer = null;
+    scheduler.setSecondsPerTick(hints.seconds_per_tick);
 
     postMessage({
       kind: 'ready',
@@ -167,29 +136,34 @@ const handlers = {
   },
 
   play() {
-    start();
+    scheduler.start();
   },
 
   pause() {
-    stop();
+    scheduler.stop();
   },
 
   setSpeed({ value }) {
-    speed = Math.max(0, value);
+    scheduler.setSpeed(value);
   },
 
   /** Steps a fixed number of ticks while paused, for frame-by-frame inspection. */
   stepOnce({ ticks }) {
-    sim.step_many(Math.max(1, ticks | 0));
+    if (!Number.isSafeInteger(ticks) || ticks < 1 || ticks > 10_000) {
+      throw new RangeError('step count must be an integer between 1 and 10000');
+    }
+    sim.step_many(ticks);
     publish();
   },
 
   setParams({ params }) {
     try {
       sim.set_params(params);
-      postMessage({ kind: 'params', params: sim.params_json() });
+      const hints = JSON.parse(sim.render_hints());
+      scheduler.setSecondsPerTick(hints.seconds_per_tick);
+      postMessage({ kind: 'params', params: sim.params_json(), hints });
     } catch (error) {
-      postMessage({ kind: 'error', context: 'set_params', message: String(error) });
+      postError('set_params', error);
     }
   },
 
@@ -197,7 +171,7 @@ const handlers = {
     try {
       sim.push_command(command);
     } catch (error) {
-      postMessage({ kind: 'error', context: 'push_command', message: String(error) });
+      postError('push_command', error);
     }
   },
 
@@ -232,7 +206,10 @@ let created = null;
 onmessage = async (event) => {
   const { kind } = event.data;
   const handler = handlers[kind];
-  if (!handler) return;
+  if (!handler) {
+    postError('message', `unknown worker message kind: ${String(kind)}`);
+    return;
+  }
 
   try {
     if (kind === 'create') {
@@ -243,6 +220,6 @@ onmessage = async (event) => {
     if (created) await created;
     await handler(event.data);
   } catch (error) {
-    postMessage({ kind: 'error', context: kind, message: String(error) });
+    postError(kind, error, kind === 'create');
   }
 };

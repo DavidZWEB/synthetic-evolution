@@ -15,27 +15,49 @@
  * a test can compare.
  */
 
-/** Ints at the head of a shared frame buffer, before either of the two frames. */
+/** Three frames let the writer keep publishing while the renderer leases one to draw. */
+export const SHARED_FRAME_COUNT = 3;
+
+/** Lifecycle of one frame in the shared transport. */
+export const FRAME_STATE = {
+  FREE: 0,
+  WRITING: 1,
+  PUBLISHED: 2,
+  READING: 3,
+};
+
+/**
+ * Ints at the head of a shared frame buffer.
+ *
+ * Metadata belongs to its frame rather than to the buffer as a whole. The writer stores
+ * it before publishing that frame's state, so a reader can never pair one frame's arrays
+ * with another frame's tick or population.
+ */
 export const HEADER = {
-  /** Which of the two frames holds the most recently published one: 0 or 1. */
-  ACTIVE: 0,
-  /** Tick, split because `Atomics` works on 32-bit lanes and a tick is 64 bits. */
+  GENERATION: 0,
+  FRAMES: 1,
+  FRAME_LENGTH: 5,
+  STATE: 0,
   TICK_LO: 1,
   TICK_HI: 2,
   POPULATION: 3,
-  /** Bumped on every publish, so a reader can tell a new frame from a repeated one. */
-  GENERATION: 4,
-  LENGTH: 8,
+  FRAME_GENERATION: 4,
+  LENGTH: 1 + SHARED_FRAME_COUNT * 5,
 };
 
 export const HEADER_BYTES = HEADER.LENGTH * 4;
+
+/** Header lane for one field of one shared frame. */
+export function frameHeader(frame, field) {
+  return HEADER.FRAMES + frame * HEADER.FRAME_LENGTH + field;
+}
 
 /**
  * Offsets and lengths of every array within one frame, for `capacity` slots.
  *
  * Offsets are relative to the start of the frame, so the same table serves a frame at
- * any base — which is what makes double-buffering a change of base rather than a second
- * layout.
+ * any base — which is what makes adding transport frames a change of stride rather than
+ * a second layout.
  */
 export function frameLayout(capacity, plantCapacity = 0) {
   let offset = 0;
@@ -60,6 +82,9 @@ export function frameLayout(capacity, plantCapacity = 0) {
   offset += capacity;
 
   layout.bytes = offset;
+  // The logical payload ends in `alive`, but every frame base must still align the
+  // four-byte fields in the next frame.
+  layout.stride = Math.ceil(offset / 4) * 4;
   layout.capacity = capacity;
   layout.plantCapacity = plantCapacity;
   return layout;

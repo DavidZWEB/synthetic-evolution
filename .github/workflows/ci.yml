@@ -35,6 +35,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -46,6 +50,9 @@ jobs:
       # for the determinism invariants all live in here.
       - name: Test
         run: cargo test --workspace
+
+      - name: Test web transport
+        run: npm test --prefix web
 
       # sim-core reaching for something that is not in wasm's std would otherwise not
       # surface until a deploy. Checking the target is cheap; it is not a substitute

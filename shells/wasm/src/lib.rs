@@ -86,6 +86,8 @@ struct Layout {
 #[derive(Serialize)]
 struct RenderHints {
     world_size: f32,
+    /// Simulated seconds advanced by one fixed tick.
+    seconds_per_tick: f32,
     agent_capacity: u32,
     plant_capacity: u32,
     plant_radius: f32,
@@ -202,6 +204,7 @@ impl Sim {
         let params = self.world.params();
         let hints = RenderHints {
             world_size: params.world.size,
+            seconds_per_tick: params.world.dt,
             agent_capacity: self.snapshot.capacity(),
             plant_capacity: self.snapshot.plant_capacity(),
             plant_radius: params.plants.radius,

@@ -408,6 +408,11 @@ impl World {
 
         let size = self.params.world.size;
         let spread = self.params.world.founder_spread;
+        // A shell can request more founders than the fixed pool holds. Stop at the
+        // boundary rather than spending billions of iterations constructing genomes
+        // that allocation is guaranteed to reject.
+        let available = self.pool.capacity().saturating_sub(self.population());
+        let count = count.min(available);
         let mut placed = 0;
         for i in 0..count {
             let angle = i as f32 * GOLDEN_ANGLE;
@@ -647,6 +652,14 @@ mod tests {
         let mut params = SimParams::default();
         params.world.dt = 0.0;
         assert!(World::new(1, params).is_err());
+    }
+
+    #[test]
+    fn seeding_stops_when_the_fixed_pool_is_full() {
+        let mut world = small_world();
+        assert_eq!(world.seed_founders(u32::MAX), 32);
+        assert_eq!(world.population(), 32);
+        assert_eq!(world.seed_founders(u32::MAX), 0);
     }
 
     #[test]

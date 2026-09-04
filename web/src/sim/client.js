@@ -12,7 +12,8 @@ export function createSim({ seed, founders, params = null }) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
   let reader = null;
-  const listeners = { ready: [], inspection: [], error: [], params: [], hash: [] };
+  let destroyed = false;
+  const listeners = { ready: [], inspection: [], error: [], params: [], hash: [], status: [] };
   const emit = (kind, payload) => listeners[kind]?.forEach((fn) => fn(payload));
 
   worker.onmessage = (event) => {
@@ -39,15 +40,21 @@ export function createSim({ seed, founders, params = null }) {
   // simply stops and the renderer keeps drawing the last frame it saw.
   worker.onerror = (event) => {
     event.preventDefault();
-    emit('error', { context: 'worker', message: event.message ?? String(event) });
+    emit('error', { context: 'worker', message: event.message ?? String(event), fatal: true });
   };
   worker.onmessageerror = () => {
-    emit('error', { context: 'worker', message: 'a message could not be deserialised' });
+    emit('error', {
+      context: 'worker',
+      message: 'a message could not be deserialised',
+      fatal: true,
+    });
   };
 
   worker.postMessage({ kind: 'create', seed, params, founders });
 
-  const send = (kind, payload = {}) => worker.postMessage({ kind, ...payload });
+  const send = (kind, payload = {}) => {
+    if (!destroyed) worker.postMessage({ kind, ...payload });
+  };
 
   return {
     /** The most recent frame, or null before the first has arrived. */
@@ -73,6 +80,12 @@ export function createSim({ seed, founders, params = null }) {
       };
     },
 
-    destroy: () => worker.terminate(),
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      reader?.release?.();
+      reader = null;
+      worker.terminate();
+    },
   };
 }

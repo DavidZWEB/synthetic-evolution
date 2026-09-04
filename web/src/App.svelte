@@ -18,7 +18,9 @@
   let running = $state(false);
   let speed = $state(1);
   let founders = $state(2000);
-  let seed = $state(42);
+  // Keep this as text until the worker parses it as u64. A JavaScript number silently
+  // aliases distinct seeds above 2^53, which breaks seed-addressed reproducibility.
+  let seed = $state('42');
   let failure = $state(null);
   /** Mirrors the renderer's camera for display. Written every frame, never read by it. */
   let zoom = $state(1);
@@ -99,31 +101,37 @@
   }
 
   function toggle() {
-    running = !running;
-    if (running) sim.play();
-    else sim.pause();
+    if (!sim) return;
+    if (running) sim.pause();
+    else sim.play();
   }
 
   function reseed() {
     sim?.destroy();
+    sim = null;
     running = false;
+    transport = null;
+    capacity = 0;
     start();
   }
 
   function start() {
-    sim = createSim({ seed, founders });
-    sim.on('ready', ({ transport: kind, hints }) => {
-      transport = kind;
-      capacity = hints.agent_capacity;
+    failure = null;
+    transport = null;
+    const nextSim = createSim({ seed, founders });
+    sim = nextSim;
+
+    nextSim.on('ready', ({ transport: kind, hints }) => {
+      if (sim !== nextSim) return;
       // Rebuilt rather than reused: a reseed can carry different params, and a renderer
       // holding the previous world's extent would draw a correct picture of the wrong one.
       // The *view* survives that rebuild, so reseeding does not yank you back out to the
       // whole world — watching one patch across several seeds is the point of the button.
       const carried =
         renderer && renderer.worldSize === hints.world_size ? renderer.view() : null;
-      renderer?.destroy();
+      let nextRenderer;
       try {
-        renderer = createRenderer(canvas, {
+        nextRenderer = createRenderer(canvas, {
           worldSize: hints.world_size,
           capacity: hints.agent_capacity,
           plantCapacity: hints.plant_capacity,
@@ -133,16 +141,39 @@
         });
       } catch (error) {
         failure = String(error);
+        nextSim.destroy();
+        sim = null;
         return;
       }
+      renderer?.destroy();
+      renderer = nextRenderer;
       // A world of a different size makes the old coordinates mean something else, so
       // that is the one case worth reframing for.
       if (carried) renderer.setView(carried);
       else renderer.fit();
-      sim.setSpeed(speed);
+      capacity = hints.agent_capacity;
+      transport = kind;
+      failure = null;
+      nextSim.setSpeed(speed);
     });
-    sim.on('error', (message) => {
+    nextSim.on('status', ({ running: nextRunning }) => {
+      if (sim === nextSim) running = nextRunning;
+    });
+    nextSim.on('params', ({ hints }) => {
+      if (sim !== nextSim) return;
+      renderer?.setRenderHints({
+        plantRadius: hints.plant_radius,
+        plantColor: hints.plant_signature,
+        plantMaxEnergy: hints.plant_max_energy,
+      });
+    });
+    nextSim.on('error', (message) => {
+      if (sim !== nextSim) return;
       failure = `${message.context}: ${message.message}`;
+      if (message.fatal) {
+        running = false;
+        transport = null;
+      }
     });
   }
 
@@ -163,7 +194,7 @@
     const loop = () => {
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
-      renderer?.draw(frame?.views ?? null, capacity);
+      renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false);
       // Read back rather than tracked alongside: the renderer owns the camera, and a
       // second copy here would go stale the moment anything but an input moved it — a
       // resize, a reseed, the zoom floor refusing a scroll.
@@ -231,7 +262,16 @@
       {/each}
     </span>
 
-    <label>seed <input type="number" bind:value={seed} min="0" /></label>
+    <label>
+      seed
+      <input
+        type="number"
+        value={seed}
+        min="0"
+        step="1"
+        oninput={(event) => (seed = event.currentTarget.value)}
+      />
+    </label>
     <label>founders <input type="number" bind:value={founders} min="1" /></label>
     <button onclick={reseed}>reseed</button>
     <button onclick={resetView}>reset view</button>

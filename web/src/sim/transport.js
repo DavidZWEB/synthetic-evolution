@@ -4,9 +4,9 @@
  * Two implementations, chosen once at startup from `crossOriginIsolated` and never
  * branched on again (spec §7.7):
  *
- * - **shared** — a `SharedArrayBuffer` both threads hold. The worker writes the inactive
- *   frame and flips an atomic index; the renderer reads whichever is active, at its own
- *   rate, without waiting for a message. Needs cross-origin isolation.
+ * - **shared** — a `SharedArrayBuffer` both threads hold. The worker publishes into one
+ *   of three state-tracked frames and the renderer leases the newest complete one while
+ *   drawing. Needs cross-origin isolation.
  * - **transferable** — pooled `ArrayBuffer`s ping-ponged by `postMessage`. Ownership
  *   moves rather than copies, so the transfer itself is cheap, but the renderer only
  *   holds a frame between messages and the worker must wait for one to come back.
@@ -20,11 +20,20 @@
  * KB — immaterial, and the same order as the fallback's copy the spec already accepts.
  *
  * What the shared transport still buys over the fallback is not the copy count: it is
- * that the renderer never blocks on a message and never runs out of buffers, so a slow
- * frame drops instead of stalling the sim.
+ * that the renderer never blocks on a message; a frame drops instead of stalling the
+ * sim if every shared slot is briefly leased or in flight.
  */
 
-import { HEADER, HEADER_BYTES, frameLayout, frameViews, copyFrame } from './snapshot-layout.js';
+import {
+  FRAME_STATE,
+  HEADER,
+  HEADER_BYTES,
+  SHARED_FRAME_COUNT,
+  copyFrame,
+  frameHeader,
+  frameLayout,
+  frameViews,
+} from './snapshot-layout.js';
 
 export const SHARED = 'shared';
 export const TRANSFERABLE = 'transferable';
@@ -52,14 +61,30 @@ export function createWriter(kind, capacity, plantCapacity) {
 }
 
 function sharedWriter(layout) {
-  // Two frames after the header, so a reader is never looking at the one being written.
-  const buffer = new SharedArrayBuffer(HEADER_BYTES + layout.bytes * 2);
+  const buffer = new SharedArrayBuffer(HEADER_BYTES + layout.stride * SHARED_FRAME_COUNT);
   const header = new Int32Array(buffer, 0, HEADER.LENGTH);
-  const frames = [
-    frameViews(buffer, HEADER_BYTES, layout),
-    frameViews(buffer, HEADER_BYTES + layout.bytes, layout),
-  ];
-  Atomics.store(header, HEADER.ACTIVE, 0);
+  const frames = Array.from({ length: SHARED_FRAME_COUNT }, (_, frame) =>
+    frameViews(buffer, HEADER_BYTES + layout.stride * frame, layout),
+  );
+
+  const stateAt = (frame) => frameHeader(frame, HEADER.STATE);
+  const generationAt = (frame) => frameHeader(frame, HEADER.FRAME_GENERATION);
+
+  function claimFreeFrame() {
+    for (let frame = 0; frame < SHARED_FRAME_COUNT; frame += 1) {
+      if (
+        Atomics.compareExchange(
+          header,
+          stateAt(frame),
+          FRAME_STATE.FREE,
+          FRAME_STATE.WRITING,
+        ) === FRAME_STATE.FREE
+      ) {
+        return frame;
+      }
+    }
+    return -1;
+  }
 
   return {
     kind: SHARED,
@@ -67,15 +92,48 @@ function sharedWriter(layout) {
     transfer: [],
 
     publish(source, tick, population) {
-      // Into the frame nobody is reading, then flip. The reader only ever follows
-      // ACTIVE, so it cannot observe a half-written frame.
-      const next = 1 - Atomics.load(header, HEADER.ACTIVE);
-      copyFrame(source, frames[next]);
-      Atomics.store(header, HEADER.TICK_LO, Number(tick & 0xffffffffn) | 0);
-      Atomics.store(header, HEADER.TICK_HI, Number(tick >> 32n) | 0);
-      Atomics.store(header, HEADER.POPULATION, population);
-      Atomics.add(header, HEADER.GENERATION, 1);
-      Atomics.store(header, HEADER.ACTIVE, next);
+      const next = claimFreeFrame();
+      // A reader briefly holds two frames while swapping leases. Dropping this snapshot
+      // is safer than blocking the simulation; the next publish will supersede it.
+      if (next < 0) return null;
+
+      try {
+        copyFrame(source, frames[next]);
+      } catch (error) {
+        Atomics.store(header, stateAt(next), FRAME_STATE.FREE);
+        throw error;
+      }
+
+      const generation = (Atomics.add(header, HEADER.GENERATION, 1) + 1) >>> 0;
+      Atomics.store(
+        header,
+        frameHeader(next, HEADER.TICK_LO),
+        Number(tick & 0xffffffffn) | 0,
+      );
+      Atomics.store(
+        header,
+        frameHeader(next, HEADER.TICK_HI),
+        Number((tick >> 32n) & 0xffffffffn) | 0,
+      );
+      Atomics.store(header, frameHeader(next, HEADER.POPULATION), population);
+      Atomics.store(header, generationAt(next), generation | 0);
+
+      // This release-store publishes payload and metadata together. A reader owns the
+      // frame until it returns the state to FREE, so the worker cannot overwrite arrays
+      // while WebGL is uploading them.
+      Atomics.store(header, stateAt(next), FRAME_STATE.PUBLISHED);
+
+      // Once `next` is visible, any older frame not leased by the reader is redundant.
+      for (let frame = 0; frame < SHARED_FRAME_COUNT; frame += 1) {
+        if (frame !== next) {
+          Atomics.compareExchange(
+            header,
+            stateAt(frame),
+            FRAME_STATE.PUBLISHED,
+            FRAME_STATE.FREE,
+          );
+        }
+      }
       return null;
     },
   };
@@ -121,11 +179,49 @@ export function createReader(handoff) {
 
 function sharedReader(handoff, layout) {
   const header = new Int32Array(handoff.buffer, 0, HEADER.LENGTH);
-  const frames = [
-    frameViews(handoff.buffer, HEADER_BYTES, layout),
-    frameViews(handoff.buffer, HEADER_BYTES + layout.bytes, layout),
-  ];
-  let lastGeneration = -1;
+  const frames = Array.from({ length: SHARED_FRAME_COUNT }, (_, frame) =>
+    frameViews(handoff.buffer, HEADER_BYTES + layout.stride * frame, layout),
+  );
+  const stateAt = (frame) => frameHeader(frame, HEADER.STATE);
+  let held = -1;
+  let heldGeneration = null;
+
+  // Generation is a wrapping u32. Published frames are only a few generations apart,
+  // so the half-range rule gives a stable ordering even across wraparound.
+  const newerThan = (candidate, reference) => {
+    if (reference === null) return true;
+    const distance = (candidate - reference) >>> 0;
+    return distance !== 0 && distance < 0x80000000;
+  };
+
+  function newestPublished() {
+    let newest = -1;
+    let generation = heldGeneration;
+    for (let frame = 0; frame < SHARED_FRAME_COUNT; frame += 1) {
+      if (Atomics.load(header, stateAt(frame)) !== FRAME_STATE.PUBLISHED) continue;
+      const candidate = Atomics.load(
+        header,
+        frameHeader(frame, HEADER.FRAME_GENERATION),
+      ) >>> 0;
+      if (newerThan(candidate, generation)) {
+        newest = frame;
+        generation = candidate;
+      }
+    }
+    return { frame: newest, generation };
+  }
+
+  function heldSnapshot(fresh) {
+    if (held < 0) return null;
+    return {
+      views: frames[held],
+      tick:
+        (BigInt(Atomics.load(header, frameHeader(held, HEADER.TICK_HI)) >>> 0) << 32n) |
+        BigInt(Atomics.load(header, frameHeader(held, HEADER.TICK_LO)) >>> 0),
+      population: Atomics.load(header, frameHeader(held, HEADER.POPULATION)),
+      fresh,
+    };
+  }
 
   return {
     kind: SHARED,
@@ -133,19 +229,35 @@ function sharedReader(handoff, layout) {
 
     /** The most recently published frame. Never null once one has been published. */
     latest() {
-      const generation = Atomics.load(header, HEADER.GENERATION);
-      if (generation === 0) return null;
-      const active = Atomics.load(header, HEADER.ACTIVE);
-      const fresh = generation !== lastGeneration;
-      lastGeneration = generation;
-      return {
-        views: frames[active],
-        tick:
-          (BigInt(Atomics.load(header, HEADER.TICK_HI) >>> 0) << 32n) |
-          BigInt(Atomics.load(header, HEADER.TICK_LO) >>> 0),
-        population: Atomics.load(header, HEADER.POPULATION),
-        fresh,
-      };
+      // The writer may reclaim a published frame between discovery and acquisition.
+      // Retry against the new state rather than returning an older frame as fresh.
+      for (let attempt = 0; attempt < SHARED_FRAME_COUNT; attempt += 1) {
+        const newest = newestPublished();
+        if (newest.frame < 0) return heldSnapshot(false);
+        if (
+          Atomics.compareExchange(
+            header,
+            stateAt(newest.frame),
+            FRAME_STATE.PUBLISHED,
+            FRAME_STATE.READING,
+          ) !== FRAME_STATE.PUBLISHED
+        ) {
+          continue;
+        }
+
+        const previous = held;
+        held = newest.frame;
+        heldGeneration = newest.generation;
+        if (previous >= 0) Atomics.store(header, stateAt(previous), FRAME_STATE.FREE);
+        return heldSnapshot(true);
+      }
+      return heldSnapshot(false);
+    },
+
+    release() {
+      if (held >= 0) Atomics.store(header, stateAt(held), FRAME_STATE.FREE);
+      held = -1;
+      heldGeneration = null;
     },
   };
 }
@@ -177,6 +289,13 @@ function transferableReader(layout) {
         population: message.population,
       };
       fresh = true;
+      return returning;
+    },
+
+    release() {
+      const returning = held?.buffer ?? null;
+      held = null;
+      fresh = false;
       return returning;
     },
   };

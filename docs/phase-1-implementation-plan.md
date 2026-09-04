@@ -706,9 +706,14 @@ onto WASM linear memory, which the main thread can only take if that memory is *
 and that needs a threads-enabled build (`--shared-memory`, atomics) that arrives with
 `wasm-bindgen-rayon` at Phase 7. Until then the worker owns its memory alone and one copy
 per frame is the floor rather than a shortcut. What the shared transport still buys is
-not the copy: the renderer never blocks on a message and never runs out of buffers, so a
-slow frame drops instead of stalling the sim. Both paths were exercised — the fallback by
-forcing it, since a fallback nobody has run is a guess.
+not the copy: the renderer never blocks on a message, and the writer drops a superseded
+frame instead of stalling if every slot is briefly busy. Both paths were exercised — the
+fallback by forcing it, since a fallback nobody has run is a guess.
+
+The shared path uses three state-tracked frames rather than an unleased double buffer.
+The renderer holds one frame until the next animation frame; the worker cycles through
+the other two and publishes frame-local metadata with the payload. That lease is what
+prevents a second publish from overwriting arrays while WebGL is still uploading them.
 
 *The snapshot is slot-indexed, so the renderer draws capacity, not population.* A dead
 slot has `alive = 0` and the vertex shader multiplies the radius by it, collapsing the
@@ -722,6 +727,13 @@ full rate — a frozen world that looks exactly like a paused one. It now stops
 deliberately and reports, and `client.js` listens for `onerror` and `onmessageerror` as
 well, because a worker-level throw reaches neither the page console nor any handler by
 default.
+
+*Catch-up is time-sliced rather than unbounded.* At 5k agents the sim cannot meet 1×, so
+elapsed-time debt grows while a batch is running. Turning all of that debt into one
+`step_many` call made pause and commands wait behind tens of seconds of work at high
+speeds. The scheduler now measures tick cost, caps both debt and batch size, and yields
+between batches. Requested speed is best-effort when throughput is lower; worker
+responsiveness is not.
 
 *Plants are in the snapshot, though spec §2.2b's field list is agent state only.* That
 list has a hole rather than an opinion: it never says how food reaches the renderer, and
