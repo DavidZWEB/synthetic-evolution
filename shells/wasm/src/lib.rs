@@ -222,6 +222,11 @@ impl Sim {
         self.world.population()
     }
 
+    /// Mean energy of the living population, sampled on demand by the UI.
+    pub fn mean_energy(&self) -> f64 {
+        self.world.mean_agent_energy()
+    }
+
     /// The world's fingerprint. Exposed so a browser run can be compared against a
     /// headless one on the same seed without shipping the whole state (spec §7.8).
     pub fn state_hash(&self) -> u64 {

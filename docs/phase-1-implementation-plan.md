@@ -22,7 +22,8 @@ referenced in commit messages.
 | M7 World and economy | done; larder fixed, `k_sensor` unit open — see the budget pass |
 | M8 The tick | done |
 | M9 WASM shell and renderer | shell, worker, transport and renderer done; sim does not hold 1× at 5k |
-| M10–M12 | not started |
+| M10 Instrumentation | done |
+| M11–M12 | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -783,6 +784,24 @@ Build-plan task 9.
 - Seed URL encoding. Speed control including pause.
 
 **Done when:** you can watch a run, pause, click an agent, and read its brain.
+
+**Implemented.** The browser samples population and mean live-agent energy four times per
+wall-clock second into a bounded canvas chart. Mean energy is computed only when the worker
+samples it; it is not added to the per-frame snapshot and costs nothing in headless runs.
+
+Clicking uses the renderer's toroidal nearest-image rule and minimum displayed radius, then
+requests one agent's inspection JSON from the worker. The selected slot is highlighted and
+the panel refreshes its live neuron activations at human speed while keeping the full genome
+collapsed until requested. No genome or brain state is streamed for unselected agents.
+
+`ts-rs` derives on the Rust genome types generate the committed contract in
+`web/src/generated/`. The typed inspector model imports `Gene` from that output, and CI
+regenerates the bindings and rejects drift.
+
+The URL fragment carries the exact decimal `u64` seed, founder count, and canonical params
+JSON. It is updated only for the active world, so editing an input does not make the copied
+link claim to represent a run that has not been reseeded yet. A target tick remains optional
+and unset until checkpoint/load support can make opening one practical.
 
 ## M11 — Headless telemetry
 

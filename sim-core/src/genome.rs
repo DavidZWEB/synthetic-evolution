@@ -39,6 +39,8 @@ pub const SENSOR_CHANNELS: usize = 4;
 
 /// What a neuron does with its accumulated input.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum Activation {
     #[default]
     Sigmoid,
@@ -53,6 +55,8 @@ pub enum Activation {
 /// Sensor modalities available in Phase 1. The catalog in spec §4.1 is larger; the
 /// rest arrive with the phases that need them, as new variants.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum Modality {
     /// Params `[azimuth, elevation, range, fov]`. Returns distance and the signature
     /// RGB of the first hit.
@@ -77,6 +81,8 @@ impl Modality {
 
 /// Effector actions available in Phase 1. Spec §4.2 lists more.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum Action {
     #[default]
     Thrust,
@@ -89,6 +95,8 @@ pub enum Action {
 
 /// Body traits carried genetically rather than as fixed agent fields.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum BodyTrait {
     #[default]
     Size,
@@ -102,6 +110,8 @@ pub enum BodyTrait {
 /// Traits governing the genome's own evolution. Present and inherited in Phase 1; no
 /// operator mutates them yet, the same treatment sensor `elevation` gets (spec §3.3).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum MetaTrait {
     #[default]
     MutationRate,
@@ -110,6 +120,8 @@ pub enum MetaTrait {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct NeuronGene {
     pub id: InnovationId,
     pub bias: f32,
@@ -122,6 +134,8 @@ pub struct NeuronGene {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct ConnectionGene {
     pub id: InnovationId,
     pub from: InnovationId,
@@ -133,6 +147,8 @@ pub struct ConnectionGene {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct SensorGene {
     pub id: InnovationId,
     pub modality: Modality,
@@ -150,6 +166,8 @@ pub struct SensorGene {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct EffectorGene {
     pub id: InnovationId,
     pub action: Action,
@@ -159,12 +177,16 @@ pub struct EffectorGene {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct BodyGene {
     pub trait_: BodyTrait,
     pub value: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub struct MetaGene {
     pub trait_: MetaTrait,
     pub value: f32,
@@ -172,6 +194,8 @@ pub struct MetaGene {
 
 /// One gene. `Copy`, so copying a genome at birth is a `memcpy` and allocates nothing.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
 pub enum Gene {
     Neuron(NeuronGene),
     Sensor(SensorGene),

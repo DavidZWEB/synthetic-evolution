@@ -136,7 +136,8 @@ sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above app
                  conservation, steering, forward_compat, and golden
 shells/wasm/     wasm-bindgen bindings, snapshot pointer export
 shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
-web/             Vite + Svelte 5 client. src/wasm/ is wasm-pack output, never committed
+web/             Vite + Svelte 5 client. src/generated/ is committed ts-rs output;
+                 src/wasm/ is wasm-pack output and never committed
 ```
 
 `world.rs` and `tick.rs` write two halves of one `impl`, which is why `World`'s fields
@@ -152,6 +153,8 @@ cargo test --workspace               # unit tests, invariant scan, no-alloc, gol
 wasm-pack test --node shells/wasm    # the other half of the hash: wasm agrees with native
 cargo run -p native -- --seed 42 --ticks 100000
 npm run wasm --prefix web            # rebuild bindings into web/src/wasm/
+npm test --prefix web                # Node tests for browser-independent client logic
+npm run check --prefix web           # TypeScript and Svelte diagnostics
 npm run dev  --prefix web            # client on http://localhost:5173
 ```
 

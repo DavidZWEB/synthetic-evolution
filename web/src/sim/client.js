@@ -13,7 +13,15 @@ export function createSim({ seed, founders, params = null }) {
 
   let reader = null;
   let destroyed = false;
-  const listeners = { ready: [], inspection: [], error: [], params: [], hash: [], status: [] };
+  const listeners = {
+    ready: [],
+    inspection: [],
+    metrics: [],
+    error: [],
+    params: [],
+    hash: [],
+    status: [],
+  };
   const emit = (kind, payload) => listeners[kind]?.forEach((fn) => fn(payload));
 
   worker.onmessage = (event) => {
@@ -21,7 +29,12 @@ export function createSim({ seed, founders, params = null }) {
 
     if (message.kind === 'ready') {
       reader = createReader(message.transport);
-      emit('ready', { transport: reader.kind, capacity: reader.capacity, hints: message.hints });
+      emit('ready', {
+        transport: reader.kind,
+        capacity: reader.capacity,
+        hints: message.hints,
+        params: message.params,
+      });
       return;
     }
 

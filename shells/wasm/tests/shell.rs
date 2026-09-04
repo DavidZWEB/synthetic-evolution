@@ -29,6 +29,7 @@ fn a_new_sim_starts_empty_at_tick_zero() {
     let sim = Sim::new(7, None).expect("defaults are valid");
     assert_eq!(sim.tick(), 0);
     assert_eq!(sim.population(), 0);
+    assert_eq!(sim.mean_energy(), 0.0);
 }
 
 #[wasm_bindgen_test]
@@ -50,6 +51,7 @@ fn bad_params_are_an_error_not_a_fallback() {
 #[wasm_bindgen_test]
 fn stepping_advances_the_tick_and_the_snapshot() {
     let mut sim = sim(16);
+    assert!(sim.mean_energy() > 0.0);
     assert_eq!(layout(&sim)["tick"], 0);
     sim.step_many(25);
     assert_eq!(sim.tick(), 25);

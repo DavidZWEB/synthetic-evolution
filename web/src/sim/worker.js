@@ -21,6 +21,8 @@ import { createTickScheduler } from './scheduler.js';
 import { createWriter, preferredKind } from './transport.js';
 import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
 
+const METRICS_INTERVAL_MS = 250;
+
 let sim = null;
 let memory = null;
 let writer = null;
@@ -29,6 +31,7 @@ let writer = null;
 let source = null;
 let sourceBuffer = null;
 let sourceLayout = null;
+let lastMetricsAt = Number.NEGATIVE_INFINITY;
 
 /**
  * Checks that the layout this side derives matches the one Rust actually wrote.
@@ -84,9 +87,22 @@ function sourceViews() {
   return source;
 }
 
-function publish() {
-  const message = writer.publish(sourceViews(), sim.tick(), sim.population());
+function publish(forceMetrics = false) {
+  const tick = sim.tick();
+  const population = sim.population();
+  const message = writer.publish(sourceViews(), tick, population);
   if (message) postMessage(message, writer.transfer);
+
+  const now = performance.now();
+  if (forceMetrics || now - lastMetricsAt >= METRICS_INTERVAL_MS) {
+    lastMetricsAt = now;
+    postMessage({
+      kind: 'metrics',
+      tick: tick.toString(),
+      population,
+      meanEnergy: sim.mean_energy(),
+    });
+  }
 }
 
 function postError(context, error, fatal = false) {
@@ -124,6 +140,7 @@ const handlers = {
     source = null;
     sourceLayout = null;
     sourceBuffer = null;
+    lastMetricsAt = Number.NEGATIVE_INFINITY;
     scheduler.setSecondsPerTick(hints.seconds_per_tick);
 
     postMessage({
@@ -131,8 +148,9 @@ const handlers = {
       transport: writer.handoff,
       isolated: kind === 'shared',
       hints,
+      params: sim.params_json(),
     });
-    publish();
+    publish(true);
   },
 
   play() {
@@ -153,7 +171,7 @@ const handlers = {
       throw new RangeError('step count must be an integer between 1 and 10000');
     }
     sim.step_many(ticks);
-    publish();
+    publish(true);
   },
 
   setParams({ params }) {
@@ -177,9 +195,9 @@ const handlers = {
 
   inspect({ index }) {
     try {
-      postMessage({ kind: 'inspection', agent: sim.inspect_agent(index) });
+      postMessage({ kind: 'inspection', index, agent: sim.inspect_agent(index) });
     } catch (error) {
-      postMessage({ kind: 'inspection', agent: null, message: String(error) });
+      postMessage({ kind: 'inspection', index, agent: null, message: String(error) });
     }
   },
 

@@ -1,9 +1,18 @@
 <script>
   import { onMount } from 'svelte';
+  import ControlBar from './ui/ControlBar.svelte';
+  import InspectorPanel from './ui/InspectorPanel.svelte';
+  import StatusBar from './ui/StatusBar.svelte';
+  import TimeSeries from './ui/TimeSeries.svelte';
+  import { decodeInspection } from './inspect/model.ts';
   import { createSim } from './sim/client.js';
+  import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
+  import { appendMetric, metricFromMessage } from './telemetry/history.ts';
   import { createRenderer } from './render/renderer.js';
+  import { createPointerGestures } from './ui/pointer-gestures.js';
 
-  const SPEEDS = [1, 2, 5, 10, 25, 50, 100];
+  const MAX_CHART_SAMPLES = 480;
+  const INSPECTION_INTERVAL_MS = 250;
 
   let canvas;
   let sim = null;
@@ -13,6 +22,8 @@
 
   let tick = $state(0n);
   let population = $state(0);
+  let meanEnergy = $state(0);
+  let metricSamples = $state([]);
   let transport = $state(null);
   let fps = $state(0);
   let running = $state(false);
@@ -22,67 +33,38 @@
   // aliases distinct seeds above 2^53, which breaks seed-addressed reproducibility.
   let seed = $state('42');
   let failure = $state(null);
+  let shareUrl = $state('');
+  let linkCopied = $state(false);
+  let selectedIndex = $state(null);
+  let inspection = $state(null);
+  let inspectionMessage = $state(null);
+  let pointerCount = $state(0);
   /** Mirrors the renderer's camera for display. Written every frame, never read by it. */
   let zoom = $state(1);
+  let latestFrame = null;
+  let lastInspectionAt = Number.NEGATIVE_INFINITY;
+  let runParams = null;
 
-  /**
-   * Pointers currently down, by id. One is a drag, two are a pinch.
-   *
-   * Pointer events rather than mouse events so a finger and a mouse take the same path —
-   * spec §7.7 expects people to open the link on a phone, and a viewer that can only be
-   * driven with a wheel is one they cannot use at all.
-   */
-  const pointers = new Map();
-   let pointerCount = $state(0);
-   let pinchDistance = 0;
-
-  const spread = () => {
-    const [a, b] = [...pointers.values()];
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  };
-  const midpoint = () => {
-    const [a, b] = [...pointers.values()];
-    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  };
-
-  function onPointerDown(event) {
-    // Capture keeps a drag alive when the pointer leaves the canvas, but it is an
-    // enhancement rather than a precondition — and it throws for a pointer the browser
-    // no longer considers active. Letting that escape would abort the handler before the
-    // drag is even recorded, which reads as dragging having stopped working.
-    try {
-      canvas.setPointerCapture(event.pointerId);
-    } catch {
-      // Dragging still works; it just ends if the pointer leaves.
-    }
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    pointerCount = pointers.size;
-    if (pointers.size === 2) pinchDistance = spread();
-  }
-
-  function onPointerMove(event) {
-    const previous = pointers.get(event.pointerId);
-    if (!previous) return;
-    const next = { x: event.clientX, y: event.clientY };
-
-    if (pointers.size === 1) {
-      renderer?.panBy(next.x - previous.x, next.y - previous.y);
-    }
-    pointers.set(event.pointerId, next);
-
-    if (pointers.size === 2 && pinchDistance > 0) {
-      const distance = spread();
-      const centre = midpoint();
-      renderer?.zoomAt(centre.x, centre.y, distance / pinchDistance);
-      pinchDistance = distance;
+  function selectAgent(index) {
+    selectedIndex = index;
+    inspection = null;
+    inspectionMessage = null;
+    renderer?.select(index);
+    if (index !== null) {
+      lastInspectionAt = performance.now();
+      sim?.inspect(index);
     }
   }
 
-  function onPointerUp(event) {
-    pointers.delete(event.pointerId);
-    pointerCount = pointers.size;
-    if (pointers.size < 2) pinchDistance = 0;
+  function pickAt(cssX, cssY) {
+    selectAgent(renderer?.pick(latestFrame?.views ?? null, cssX, cssY) ?? null);
   }
+
+  const gestures = createPointerGestures({
+    getRenderer: () => renderer,
+    onPointerCount: (count) => (pointerCount = count),
+    onClick: pickAt,
+  });
 
   function onWheel(event) {
     // The page must not scroll under the canvas, so this is not passive — hence the
@@ -115,17 +97,41 @@
     running = false;
     transport = null;
     capacity = 0;
+    latestFrame = null;
+    tick = 0n;
+    population = 0;
+    meanEnergy = 0;
+    metricSamples = [];
+    selectAgent(null);
     start();
+  }
+
+  function updateRunUrl() {
+    linkCopied = false;
+    shareUrl = writeRunUrl(globalThis.location.href, {
+      seed,
+      founders,
+      params: runParams,
+    });
+    globalThis.history.replaceState(null, '', shareUrl);
   }
 
   function start() {
     failure = null;
     transport = null;
-    const nextSim = createSim({ seed, founders });
+    try {
+      updateRunUrl();
+    } catch (error) {
+      failure = `run: ${String(error)}`;
+      return;
+    }
+    const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
-    nextSim.on('ready', ({ transport: kind, hints }) => {
+    nextSim.on('ready', ({ transport: kind, hints, params }) => {
       if (sim !== nextSim) return;
+      runParams = params;
+      updateRunUrl();
       // Rebuilt rather than reused: a reseed can carry different params, and a renderer
       // holding the previous world's extent would draw a correct picture of the wrong one.
       // The *view* survives that rebuild, so reseeding does not yank you back out to the
@@ -162,13 +168,41 @@
     nextSim.on('status', ({ running: nextRunning }) => {
       if (sim === nextSim) running = nextRunning;
     });
-    nextSim.on('params', ({ hints }) => {
+    nextSim.on('params', ({ hints, params }) => {
       if (sim !== nextSim) return;
+      runParams = params;
+      updateRunUrl();
       renderer?.setRenderHints({
         plantRadius: hints.plant_radius,
         plantColor: hints.plant_signature,
         plantMaxEnergy: hints.plant_max_energy,
       });
+    });
+    nextSim.on('metrics', (message) => {
+      if (sim !== nextSim) return;
+      try {
+        const sample = metricFromMessage(message);
+        meanEnergy = sample.meanEnergy;
+        metricSamples = appendMetric(metricSamples, sample, MAX_CHART_SAMPLES);
+      } catch (error) {
+        failure = `metrics: ${String(error)}`;
+      }
+    });
+    nextSim.on('inspection', (message) => {
+      if (sim !== nextSim || message.index !== selectedIndex) return;
+      if (!message.agent) {
+        inspection = null;
+        inspectionMessage = message.message ?? 'agent is no longer alive';
+        renderer?.select(null);
+        return;
+      }
+      try {
+        inspection = decodeInspection(message.agent);
+        inspectionMessage = null;
+      } catch (error) {
+        inspection = null;
+        inspectionMessage = String(error);
+      }
     });
     nextSim.on('error', (message) => {
       if (sim !== nextSim) return;
@@ -180,8 +214,29 @@
     });
   }
 
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      linkCopied = true;
+    } catch (error) {
+      failure = `share: ${String(error)}`;
+    }
+  }
+
   onMount(() => {
-    start();
+    let validUrl = true;
+    try {
+      const shared = readRunUrl(globalThis.location.href, founders);
+      if (shared) {
+        seed = shared.seed;
+        founders = shared.founders;
+        runParams = shared.params;
+      }
+    } catch (error) {
+      failure = `url: ${String(error)}`;
+      validUrl = false;
+    }
+    if (validUrl) start();
 
     // Registered here, not as an attribute: Svelte adds `onwheel` passively and a passive
     // listener cannot preventDefault, so the page would scroll while you zoomed.
@@ -197,6 +252,7 @@
     const loop = () => {
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
+      latestFrame = frame;
       renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false);
       // Read back rather than tracked alongside: the renderer owns the camera, and a
       // second copy here would go stale the moment anything but an input moved it — a
@@ -209,6 +265,15 @@
 
       frames += 1;
       const now = performance.now();
+      if (
+        frame?.fresh &&
+        selectedIndex !== null &&
+        !inspectionMessage &&
+        now - lastInspectionAt >= INSPECTION_INTERVAL_MS
+      ) {
+        lastInspectionAt = now;
+        sim?.inspect(selectedIndex);
+      }
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;
@@ -227,58 +292,50 @@
 </script>
 
 <main>
-  <header>
-    <h1>Synthetic Evolution</h1>
-    <dl>
-      <div><dt>tick</dt><dd>{tick}</dd></div>
-      <div><dt>agents</dt><dd>{population}</dd></div>
-      <div><dt>fps</dt><dd class:slow={fps > 0 && fps < 55}>{fps}</dd></div>
-      <div><dt>zoom</dt><dd>{zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}×</dd></div>
-      <div><dt>transport</dt><dd class:degraded={transport === 'transferable'}>{transport ?? '…'}</dd></div>
-    </dl>
-  </header>
+  <StatusBar {tick} {population} {meanEnergy} {fps} {zoom} {transport} />
 
   <div class="stage">
     <canvas
       bind:this={canvas}
       class:dragging={pointerCount > 0}
-      onpointerdown={onPointerDown}
-      onpointermove={onPointerMove}
-      onpointerup={onPointerUp}
-      onpointercancel={onPointerUp}
+      onpointerdown={gestures.down}
+      onpointermove={gestures.move}
+      onpointerup={gestures.up}
+      onpointercancel={gestures.cancel}
+      onclick={gestures.click}
       ondblclick={resetView}
     ></canvas>
+    <TimeSeries samples={metricSamples} />
+    {#if selectedIndex !== null}
+      <InspectorPanel
+        {selectedIndex}
+        {inspection}
+        message={inspectionMessage}
+        onclose={() => selectAgent(null)}
+      />
+    {/if}
     {#if failure}
       <p class="failure">{failure}</p>
     {/if}
   </div>
 
-  <footer>
-    <button onclick={toggle} disabled={!transport}>{running ? 'pause' : 'play'}</button>
-    <button onclick={() => sim?.stepOnce(1)} disabled={!transport || running}>step</button>
-
-    <span class="speeds">
-      {#each SPEEDS as option}
-        <button class:active={speed === option} onclick={() => applySpeed(option)}>
-          {option}×
-        </button>
-      {/each}
-    </span>
-
-    <label>
-      seed
-      <input
-        type="text"
-        inputmode="numeric"
-        pattern="[0-9]*"
-        value={seed}
-        oninput={(event) => (seed = event.currentTarget.value)}
-      />
-    </label>
-    <label>founders <input type="number" bind:value={founders} min="1" /></label>
-    <button onclick={reseed}>reseed</button>
-    <button onclick={resetView}>reset view</button>
-  </footer>
+  <ControlBar
+    ready={Boolean(transport)}
+    {running}
+    {speed}
+    {seed}
+    {founders}
+    {shareUrl}
+    {linkCopied}
+    ontoggle={toggle}
+    onstep={() => sim?.stepOnce(1)}
+    onspeed={applySpeed}
+    onseed={(value) => (seed = value)}
+    onfounders={(value) => (founders = value)}
+    onreseed={reseed}
+    oncopy={copyLink}
+    onreset={resetView}
+  />
 </main>
 
 <style>
@@ -294,38 +351,6 @@
     display: grid;
     grid-template-rows: auto 1fr auto;
   }
-
-  header,
-  footer {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.6rem 1rem;
-    background: #14161a;
-    border-color: #23262d;
-    border-style: solid;
-    border-width: 0;
-  }
-  header { border-bottom-width: 1px; }
-  footer { border-top-width: 1px; flex-wrap: wrap; }
-
-  h1 {
-    font-size: 0.95rem;
-    font-weight: 600;
-    margin: 0;
-    letter-spacing: 0.02em;
-  }
-
-  dl {
-    display: flex;
-    gap: 1.25rem;
-    margin: 0 0 0 auto;
-  }
-  dl div { display: flex; gap: 0.4rem; }
-  dt { color: #6b7280; }
-  dd { margin: 0; color: #a3be8c; font-variant-numeric: tabular-nums; }
-  dd.slow { color: #d08770; }
-  dd.degraded { color: #d08770; }
 
   .stage { position: relative; min-height: 0; }
   canvas {
@@ -345,29 +370,4 @@
     color: #bf616a;
   }
 
-  button {
-    font: inherit;
-    color: #d8dee9;
-    background: #1c1f26;
-    border: 1px solid #2b2f38;
-    border-radius: 3px;
-    padding: 0.25rem 0.6rem;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) { background: #242832; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.active { background: #3b4252; border-color: #4c566a; }
-
-  .speeds { display: flex; gap: 0.25rem; }
-
-  label { color: #6b7280; display: flex; gap: 0.35rem; align-items: center; }
-  input {
-    font: inherit;
-    width: 5rem;
-    color: #d8dee9;
-    background: #1c1f26;
-    border: 1px solid #2b2f38;
-    border-radius: 3px;
-    padding: 0.2rem 0.4rem;
-  }
 </style>
