@@ -735,15 +735,9 @@ speeds. The scheduler now measures tick cost, caps both debt and batch size, and
 between batches. Requested speed is best-effort when throughput is lower; worker
 responsiveness is not.
 
-*Plants are in the snapshot, though spec §2.2b's field list is agent state only.* That
-list has a hole rather than an opinion: it never says how food reaches the renderer, and
-Phase 1 succeeds when agents visibly move toward it (spec §8), judged by a human
-watching. A world whose food is invisible cannot be judged on that criterion at all —
-which is what the first working build was, and it took someone looking at it to notice.
-16 bytes per plant against the agent's 57, and an emptied site keeps drawing at low
-brightness rather than blinking out, because it persists and regrows (spec §5.1). The
-depleted patch a starving population leaves behind is then visible, which is the
-observation the criterion is actually about.
+*Plants are in the snapshot.* Spec §2.2b includes their position and current stock so
+Phase 1's food-seeking criterion is observable. An emptied site stays visible at low
+brightness because it persists and regrows (spec §5.1).
 
 *Plant positions travel every frame even though sites never move.* Sending them once
 would be cheaper and is what "fixed sites" invites, but relocating a depleted site is

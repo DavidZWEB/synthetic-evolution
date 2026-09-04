@@ -33,7 +33,8 @@
    * driven with a wheel is one they cannot use at all.
    */
   const pointers = new Map();
-  let pinchDistance = 0;
+   let pointerCount = $state(0);
+   let pinchDistance = 0;
 
   const spread = () => {
     const [a, b] = [...pointers.values()];
@@ -55,6 +56,7 @@
       // Dragging still works; it just ends if the pointer leaves.
     }
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    pointerCount = pointers.size;
     if (pointers.size === 2) pinchDistance = spread();
   }
 
@@ -78,6 +80,7 @@
 
   function onPointerUp(event) {
     pointers.delete(event.pointerId);
+    pointerCount = pointers.size;
     if (pointers.size < 2) pinchDistance = 0;
   }
 
@@ -238,7 +241,7 @@
   <div class="stage">
     <canvas
       bind:this={canvas}
-      class:dragging={pointers.size > 0}
+      class:dragging={pointerCount > 0}
       onpointerdown={onPointerDown}
       onpointermove={onPointerMove}
       onpointerup={onPointerUp}

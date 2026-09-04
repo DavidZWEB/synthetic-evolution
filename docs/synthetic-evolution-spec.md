@@ -86,10 +86,11 @@ Fixed-capacity pools with a free list. Never allocate in the loop. Brains and ge
 A narrow projection of (a), containing only what's needed to draw a frame:
 
 ```
-positions, orientation, size, signature, alive, speciesId, partOffset, partCount
+agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount
+plants: positions, energy
 ```
 
-That's it. No energy history, no genomes, no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+Plant energy is the current stock, used to show whether a persistent site is full or depleted (§5.1); it is not a history. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
 
 Three frames are required because the renderer must lease one while it issues uploads. The worker publishes into either remaining frame and only reclaims an older published frame after the replacement is complete. An unleased two-frame flip can overwrite the renderer's live typed-array view after two worker publications, producing a frame assembled from different ticks.
 

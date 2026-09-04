@@ -1,10 +1,9 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
-//! Spec §2.2b's field list and nothing else — positions, orientation, size, signature,
-//! alive, species, and the part indirection. No energy, no genomes, no brain state. The
-//! buffer is written once per tick and read by the main thread at whatever rate it
-//! happens to be drawing, so every field added is bandwidth paid 60 times a second at
-//! whatever population the world is running.
+//! Spec §2.2b's render fields: agent appearance and identity plus plant position and
+//! current stock. No agent energy, genomes, or brain state. The buffer is written once
+//! per tick and read by the main thread at whatever rate it happens to be drawing, so
+//! every field added is bandwidth paid 60 times a second at the configured capacity.
 //!
 //! **Slot-indexed, not compacted.** Arrays are `capacity` long and `alive` says which
 //! entries are real, which costs a byte per slot and buys the thing compaction destroys:
@@ -28,18 +27,7 @@ use crate::world::World;
 /// on it staying that way.
 pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4;
 
-/// Bytes one plant occupies: a position and how much it holds.
-///
-/// **Plants are in the snapshot even though spec §2.2b's field list is agent state
-/// only.** That list has a hole rather than an opinion — it never says how food reaches
-/// the renderer, and Phase 1's success criterion is that agents visibly move toward it
-/// (spec §8), judged by a human watching. A world whose food is invisible cannot be
-/// judged on that at all.
-///
-/// Position travels every frame rather than once at startup, even though plants are
-/// fixed sites today. Relocating a depleted site is named in `plants` as a change an
-/// M12 run might call for, and a renderer that had cached positions would then draw
-/// food where none is.
+/// Bytes one plant occupies: its position and current stock (spec §2.2b).
 pub const BYTES_PER_PLANT: usize = 12 + 4;
 
 /// A frame's worth of world state, in struct-of-arrays form.
@@ -263,9 +251,8 @@ mod tests {
 
     #[test]
     fn the_larder_travels_with_the_frame() {
-        // Phase 1 succeeds when agents visibly move toward food (spec §8), and that is
-        // judged by a human watching. Food the renderer cannot draw makes the criterion
-        // unjudgeable, which is why plants are here despite §2.2b's field list.
+        // Depleted sites persist and regrow, so they remain in the frame at zero stock
+        // rather than disappearing (spec §2.2b, §5.1).
         let mut world = world_of(2, 8);
         let mut snap = Snapshot::for_world(&world);
         snap.update(&world);
