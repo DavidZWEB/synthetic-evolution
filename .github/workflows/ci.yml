@@ -39,6 +39,9 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Install project toolchains and dependencies
+        run: ./scripts/setup.sh --skip-tests
+
       - name: Format
         run: cargo fmt --all --check
 
@@ -53,6 +56,9 @@ jobs:
 
       - name: Test web transport
         run: npm test --prefix web
+
+      - name: Test WASM boundary and determinism
+        run: wasm-pack test --node shells/wasm
 
       # sim-core reaching for something that is not in wasm's std would otherwise not
       # surface until a deploy. Checking the target is cheap; it is not a substitute

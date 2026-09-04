@@ -61,3 +61,36 @@ test('invalid runtime timing values are rejected at the worker boundary', () => 
     assert.throws(() => scheduler.setSecondsPerTick(dt), /finite positive/);
   }
 });
+
+test('zero speed discards work already queued at the old speed', () => {
+  let clock = 0;
+  const timers = [];
+  let ticksRun = 0;
+  const scheduler = createTickScheduler({
+    step(ticks) {
+      ticksRun += ticks;
+      clock += 100;
+    },
+    publish() {},
+    onError(error) {
+      assert.fail(error);
+    },
+    onRunningChange() {},
+    now: () => clock,
+    schedule(callback) {
+      timers.push(callback);
+      return timers.length;
+    },
+    cancel() {},
+  });
+
+  scheduler.setSpeed(100);
+  scheduler.start();
+  clock = 20;
+  timers.shift()();
+  assert.equal(ticksRun, 1);
+
+  scheduler.setSpeed(0);
+  timers.shift()();
+  assert.equal(ticksRun, 1, 'queued debt advanced the simulation at zero speed');
+});

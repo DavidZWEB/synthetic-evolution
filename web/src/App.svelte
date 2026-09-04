@@ -265,10 +265,10 @@
     <label>
       seed
       <input
-        type="number"
+        type="text"
+        inputmode="numeric"
+        pattern="[0-9]*"
         value={seed}
-        min="0"
-        step="1"
         oninput={(event) => (seed = event.currentTarget.value)}
       />
     </label>

@@ -122,7 +122,9 @@ export function createTickScheduler({
       if (!Number.isFinite(value) || value < 0) {
         throw new TypeError('speed must be a finite non-negative number');
       }
+      if (running) accrue(now());
       speed = value;
+      if (speed === 0) debt = 0;
       capDebt();
     },
 
@@ -130,6 +132,7 @@ export function createTickScheduler({
       if (!Number.isFinite(value) || value <= 0) {
         throw new TypeError('seconds per tick must be a finite positive number');
       }
+      if (running) accrue(now());
       secondsPerTick = value;
       capDebt();
     },
