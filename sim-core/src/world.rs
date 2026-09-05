@@ -509,6 +509,23 @@ impl World {
         self.plants.total_energy() + agents
     }
 
+    /// Mean energy held by living agents, for on-demand instrumentation.
+    ///
+    /// Agent-index order keeps the aggregate reproducible, and doing the scan only when
+    /// a shell asks keeps telemetry out of the simulation hot loop (spec §7.8).
+    pub fn mean_agent_energy(&self) -> f64 {
+        let population = self.population();
+        if population == 0 {
+            return 0.0;
+        }
+        let total: f64 = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.energy[id.index()] as f64)
+            .sum();
+        total / population as f64
+    }
+
     #[inline]
     pub fn ledger(&self) -> &EnergyLedger {
         &self.ledger
@@ -660,6 +677,21 @@ mod tests {
         assert_eq!(world.seed_founders(u32::MAX), 32);
         assert_eq!(world.population(), 32);
         assert_eq!(world.seed_founders(u32::MAX), 0);
+    }
+
+    #[test]
+    fn mean_agent_energy_uses_only_live_slots() {
+        let mut world = small_world();
+        assert_eq!(world.mean_agent_energy(), 0.0);
+        let a = world.spawn_founder(Vec3::ZERO).expect("pool has room");
+        let b = world
+            .spawn_founder(Vec3::new(1.0, 0.0, 0.0))
+            .expect("pool has room");
+        world.agents_mut().energy[a.index()] = 10.0;
+        world.agents_mut().energy[b.index()] = 30.0;
+        assert_eq!(world.mean_agent_energy(), 20.0);
+        world.despawn(a);
+        assert_eq!(world.mean_agent_energy(), 30.0);
     }
 
     #[test]

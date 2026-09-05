@@ -1,9 +1,10 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
 //! Spec §2.2b's render fields: agent appearance and identity plus plant position and
-//! current stock. No agent energy, genomes, or brain state. The buffer is written once
-//! per tick and read by the main thread at whatever rate it happens to be drawing, so
-//! every field added is bandwidth paid 60 times a second at the configured capacity.
+//! current stock. A slot incarnation lets click selection survive free-list reuse without
+//! exposing private agent state. No agent energy, genomes, or brain state. The buffer is
+//! written once per tick and read by the main thread at whatever rate it happens to be
+//! drawing, so every field added is bandwidth paid 60 times a second at capacity.
 //!
 //! **Slot-indexed, not compacted.** Arrays are `capacity` long and `alive` says which
 //! entries are real, which costs a byte per slot and buys the thing compaction destroys:
@@ -13,7 +14,7 @@
 //!
 //! **Sized once, at capacity, and never grown.** Growing WASM memory detaches every JS
 //! typed-array view over it, silently (spec §7.3). This is the buffer JS actually views,
-//! and at 57 bytes per agent it is 0.5% of per-agent state — 0.27 MB at the default 5000
+//! and at 61 bytes per agent it is 0.5% of per-agent state — 0.31 MB at the default 5000
 //! — so pre-allocating it is free and removes the hazard rather than managing it.
 //!
 //! Deliberately not here: inspector data. A genome, a lineage, and live activations are
@@ -23,9 +24,9 @@
 use crate::world::World;
 
 /// Bytes one agent occupies across every array here. Spec §7.5 budgets the snapshot at
-/// 57 bytes per agent, and the arithmetic that makes pre-allocation obviously free rests
+/// 61 bytes per agent, and the arithmetic that makes pre-allocation obviously free rests
 /// on it staying that way.
-pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4;
+pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4 + 4;
 
 /// Bytes one plant occupies: its position and current stock (spec §2.2b).
 pub const BYTES_PER_PLANT: usize = 12 + 4;
@@ -53,6 +54,8 @@ pub struct Snapshot {
     /// rewritten rather than extended (spec §3.5, §9.1).
     part_offset: Vec<u32>,
     part_count: Vec<u32>,
+    /// Allocation generation for each slot, so a recycled index is a new identity.
+    incarnation: Vec<u32>,
     plant_capacity: u32,
     plant_position: Vec<f32>,
     /// What each site currently holds. An emptied plant stays in the world and stays
@@ -78,6 +81,7 @@ impl Snapshot {
             species: vec![0; n],
             part_offset: vec![0; n],
             part_count: vec![0; n],
+            incarnation: vec![0; n],
             plant_capacity,
             plant_position: vec![0.0; p * 3],
             plant_energy: vec![0.0; p],
@@ -107,6 +111,8 @@ impl Snapshot {
         // Every slot's flag, then only the live slots' data. `alive_flags` is already
         // one byte per slot in pool order, so this is a copy rather than a scan.
         self.alive.copy_from_slice(world.pool().alive_flags());
+        self.incarnation
+            .copy_from_slice(world.pool().incarnations());
 
         let agents = world.agents();
         for id in world.pool().iter_live() {
@@ -214,6 +220,11 @@ impl Snapshot {
     }
 
     #[inline]
+    pub fn incarnation(&self) -> &[u32] {
+        &self.incarnation
+    }
+
+    #[inline]
     pub fn plant_capacity(&self) -> u32 {
         self.plant_capacity
     }
@@ -287,8 +298,8 @@ mod tests {
     }
 
     #[test]
-    fn one_agent_costs_the_budgeted_fifty_seven_bytes() {
-        // Spec §7.5 budgets the snapshot at 57 bytes per agent, and the argument that
+    fn one_agent_costs_the_budgeted_sixty_one_bytes() {
+        // Spec §7.5 budgets the snapshot at 61 bytes per agent, and the argument that
         // pre-allocating it at capacity is free rests on that number. A field added
         // without noticing is bandwidth paid 60 times a second forever.
         let snap = Snapshot::new(1, 0);
@@ -299,9 +310,10 @@ mod tests {
             + snap.alive().len()
             + snap.species().len() * 4
             + snap.part_offset().len() * 4
-            + snap.part_count().len() * 4;
+            + snap.part_count().len() * 4
+            + snap.incarnation().len() * 4;
         assert_eq!(bytes, BYTES_PER_AGENT);
-        assert_eq!(bytes, 57);
+        assert_eq!(bytes, 61);
     }
 
     #[test]
@@ -324,6 +336,7 @@ mod tests {
             assert_eq!(snap.size()[i], world.agents().size[i]);
             assert_eq!(snap.signature()[i * 3], world.agents().signature[i].x);
             assert_eq!(snap.part_count()[i], 1, "one part per agent in V1");
+            assert_eq!(snap.incarnation()[i], world.pool().incarnation(id).unwrap());
         }
     }
 

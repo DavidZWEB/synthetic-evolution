@@ -35,6 +35,7 @@ rand = { version = "0.9", default-features = false }
 rand_pcg = { version = "0.9", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 
 [profile.release]
 opt-level = 3

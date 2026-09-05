@@ -57,6 +57,12 @@ jobs:
       - name: Test web transport
         run: npm test --prefix web
 
+      - name: Check generated web types
+        run: |
+          npm run types --prefix web
+          npm run check --prefix web
+          git diff --exit-code -- web/src/generated
+
       - name: Test WASM boundary and determinism
         run: wasm-pack test --node shells/wasm
 

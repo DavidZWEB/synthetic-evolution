@@ -17,7 +17,9 @@ macro_rules! define_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
+        #[cfg_attr(test, derive(ts_rs::TS))]
         #[serde(transparent)]
+        #[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
         pub struct $name(u32);
 
         impl $name {

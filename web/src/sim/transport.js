@@ -89,13 +89,12 @@ function sharedWriter(layout) {
   return {
     kind: SHARED,
     handoff: { kind: SHARED, buffer, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
-    transfer: [],
 
     publish(source, tick, population) {
       const next = claimFreeFrame();
-      // A reader briefly holds two frames while swapping leases. Dropping this snapshot
-      // is safer than blocking the simulation; the next publish will supersede it.
-      if (next < 0) return null;
+      // The reader briefly leases both old and new frames while swapping. If the writer
+      // owns the third at that instant, publication is retried after this turn.
+      if (next < 0) return false;
 
       try {
         copyFrame(source, frames[next]);
@@ -134,7 +133,7 @@ function sharedWriter(layout) {
           );
         }
       }
-      return null;
+      return true;
     },
   };
 }
@@ -147,18 +146,16 @@ function transferableWriter(layout) {
   return {
     kind: TRANSFERABLE,
     handoff: { kind: TRANSFERABLE, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
-    transfer: [],
 
-    /** Returns a message to post, or null when no buffer is free. */
+    /** Returns a message to post, or `false` when no buffer is free. */
     publish(source, tick, population) {
       const buffer = pool.pop();
       // Dropped rather than queued. The renderer already has a frame it has not drawn,
       // and holding this one would grow a backlog of states nobody will ever see while
       // the sim waits to hand it over.
-      if (!buffer) return null;
+      if (!buffer) return false;
 
       copyFrame(source, frameViews(buffer, 0, layout));
-      this.transfer = [buffer];
       return { kind: TRANSFERABLE, buffer, tick: tick.toString(), population };
     },
 
@@ -264,6 +261,8 @@ function sharedReader(handoff, layout) {
 
 function transferableReader(layout) {
   let held = null;
+  let pending = null;
+  let recyclable = null;
   let fresh = false;
 
   return {
@@ -271,6 +270,12 @@ function transferableReader(layout) {
     capacity: layout.capacity,
 
     latest() {
+      if (pending) {
+        recyclable = held?.buffer ?? null;
+        held = pending;
+        pending = null;
+        fresh = true;
+      }
       if (!held) return null;
       const wasFresh = fresh;
       fresh = false;
@@ -279,24 +284,29 @@ function transferableReader(layout) {
 
     /** Takes ownership of a frame that arrived by `postMessage`. */
     accept(message) {
-      // Whatever we were holding goes back, so the worker's pool never drains to
-      // nothing and the sim never blocks waiting for a buffer.
-      const returning = held ? held.buffer : null;
-      held = {
+      // A held frame may still be referenced by picking until the next animation read.
+      // Only a pending frame, which was never handed out, is safe to supersede now.
+      const returning = pending?.buffer ?? null;
+      pending = {
         buffer: message.buffer,
         views: frameViews(message.buffer, 0, layout),
         tick: BigInt(message.tick),
         population: message.population,
       };
-      fresh = true;
+      return returning;
+    },
+
+    takeRecycle() {
+      const returning = recyclable;
+      recyclable = null;
       return returning;
     },
 
     release() {
-      const returning = held?.buffer ?? null;
       held = null;
+      pending = null;
+      recyclable = null;
       fresh = false;
-      return returning;
     },
   };
 }

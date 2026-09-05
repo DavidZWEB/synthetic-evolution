@@ -15,8 +15,9 @@
  * chooses *when* to step and how far, never what a step means.
  */
 
-import init, { Sim } from '../wasm/wasm.js';
+import init, { Sim, validate_params } from '../wasm/wasm.js';
 import { founderCount, parseSeed } from './inputs.js';
+import { createSnapshotPublisher } from './publisher.js';
 import { createTickScheduler } from './scheduler.js';
 import { createWriter, preferredKind } from './transport.js';
 import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
@@ -24,6 +25,7 @@ import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
 let sim = null;
 let memory = null;
 let writer = null;
+let publisher = null;
 
 /** Cached views over the snapshot inside WASM memory, and the buffer they belong to. */
 let source = null;
@@ -40,7 +42,16 @@ let sourceLayout = null;
  */
 function assertLayoutsAgree(spans) {
   const capacity = spans.alive.len;
-  const agentFields = ['position', 'orientation', 'size', 'signature', 'species', 'part_offset', 'part_count'];
+  const agentFields = [
+    'position',
+    'orientation',
+    'size',
+    'signature',
+    'species',
+    'part_offset',
+    'part_count',
+    'incarnation',
+  ];
   const agentBytes =
     agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
   const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
@@ -76,6 +87,7 @@ function sourceViews() {
     species: at(spans.species, Uint32Array),
     partOffset: at(spans.part_offset, Uint32Array),
     partCount: at(spans.part_count, Uint32Array),
+    incarnation: at(spans.incarnation, Uint32Array),
     plantPosition: at(spans.plant_position, Float32Array),
     plantEnergy: at(spans.plant_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
@@ -84,18 +96,13 @@ function sourceViews() {
   return source;
 }
 
-function publish() {
-  const message = writer.publish(sourceViews(), sim.tick(), sim.population());
-  if (message) postMessage(message, writer.transfer);
-}
-
 function postError(context, error, fatal = false) {
   postMessage({ kind: 'error', context, message: String(error), fatal });
 }
 
 const scheduler = createTickScheduler({
   step: (ticks) => sim.step_many(ticks),
-  publish,
+  publish: () => publisher.publish(),
   onError: (error) => postError('tick', error, true),
   onRunningChange: (running) => postMessage({ kind: 'status', running }),
 });
@@ -105,11 +112,14 @@ const handlers = {
     const wasm = await init();
     memory = wasm.memory;
 
-    const nextSim = new Sim(parseSeed(seed), params ?? null);
+    const normalizedSeed = parseSeed(seed);
+    const nextSim = new Sim(normalizedSeed, params ?? null);
     let hints;
+    let normalizedFounders;
     try {
       hints = JSON.parse(nextSim.render_hints());
-      nextSim.seed_founders(founderCount(founders, hints.agent_capacity));
+      normalizedFounders = founderCount(founders, hints.agent_capacity);
+      nextSim.seed_founders(normalizedFounders);
     } catch (error) {
       nextSim.free();
       throw error;
@@ -124,15 +134,36 @@ const handlers = {
     source = null;
     sourceLayout = null;
     sourceBuffer = null;
+    const initialMessages = [];
+    let sendPublication = (message, transfer) => initialMessages.push({ message, transfer });
+    publisher = createSnapshotPublisher({
+      writer,
+      source: sourceViews,
+      tick: () => sim.tick(),
+      population: () => sim.population(),
+      meanEnergy: () => sim.mean_energy(),
+      send: (message, transfer) => sendPublication(message, transfer),
+    });
     scheduler.setSecondsPerTick(hints.seconds_per_tick);
 
+    // Complete every fallible view/copy operation before announcing the world. Messages
+    // queue locally so the transferable frame cannot arrive before its reader exists.
+    publisher.publish(true);
     postMessage({
       kind: 'ready',
       transport: writer.handoff,
       isolated: kind === 'shared',
       hints,
+      run: {
+        seed: normalizedSeed.toString(),
+        founders: normalizedFounders,
+        params: sim.params_json(),
+      },
     });
-    publish();
+    sendPublication = (message, transfer) => postMessage(message, transfer);
+    for (const { message, transfer } of initialMessages) {
+      postMessage(message, transfer);
+    }
   },
 
   play() {
@@ -153,7 +184,7 @@ const handlers = {
       throw new RangeError('step count must be an integer between 1 and 10000');
     }
     sim.step_many(ticks);
-    publish();
+    publisher.publish(true);
   },
 
   setParams({ params }) {
@@ -167,6 +198,18 @@ const handlers = {
     }
   },
 
+  validateRun({ seed, params, founders, requestId }) {
+    try {
+      parseSeed(seed);
+      const normalized = validate_params(params ?? null);
+      const parsed = JSON.parse(normalized);
+      founderCount(founders, parsed.world.max_agents);
+      postMessage({ kind: 'validatedRun', requestId, params: normalized });
+    } catch (error) {
+      postMessage({ kind: 'validatedRun', requestId, error: String(error) });
+    }
+  },
+
   pushCommand({ command }) {
     try {
       sim.push_command(command);
@@ -175,17 +218,42 @@ const handlers = {
     }
   },
 
-  inspect({ index }) {
+  inspect({ index, incarnation, requestId }) {
     try {
-      postMessage({ kind: 'inspection', agent: sim.inspect_agent(index) });
+      if (
+        !Number.isSafeInteger(index) ||
+        index < 0 ||
+        index > 0xffffffff ||
+        !Number.isSafeInteger(incarnation) ||
+        incarnation < 1 ||
+        incarnation > 0xffffffff ||
+        !Number.isSafeInteger(requestId) ||
+        requestId < 1
+      ) {
+        throw new RangeError('invalid inspection identity');
+      }
+      postMessage({
+        kind: 'inspection',
+        index,
+        incarnation,
+        requestId,
+        agent: sim.inspect_agent(index, incarnation),
+      });
     } catch (error) {
-      postMessage({ kind: 'inspection', agent: null, message: String(error) });
+      postMessage({
+        kind: 'inspection',
+        index,
+        incarnation,
+        requestId,
+        agent: null,
+        message: String(error),
+      });
     }
   },
 
   /** A frame coming back from the renderer, for the transferable transport's pool. */
   recycle({ buffer }) {
-    writer.recycle?.(buffer);
+    publisher.recycle(buffer);
   },
 
   hash() {

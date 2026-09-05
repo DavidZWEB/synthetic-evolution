@@ -39,6 +39,27 @@ fn js_error(context: &str, detail: impl core::fmt::Display) -> JsError {
     JsError::new(&format!("{context}: {detail}"))
 }
 
+fn parse_params(params_json: Option<&str>) -> Result<SimParams, JsError> {
+    let params = match params_json {
+        Some(json) => serde_json::from_str(json).map_err(|e| js_error("bad params", e))?,
+        None => SimParams::default(),
+    };
+    params
+        .validate()
+        .map_err(|e| js_error("invalid params", e.0))?;
+    Ok(params)
+}
+
+/// Validates and canonicalizes params without allocating a world.
+///
+/// Used before replacing a running browser world so a malformed shared URL cannot
+/// destroy the valid simulation already on screen.
+#[wasm_bindgen]
+pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
+    let params = parse_params(params_json.as_deref())?;
+    serde_json::to_string(&params).map_err(|e| js_error("params", e))
+}
+
 /// Where one snapshot array lives in WASM memory, right now.
 #[derive(Serialize)]
 struct Span {
@@ -70,6 +91,8 @@ struct Layout {
     species: Span,
     part_offset: Span,
     part_count: Span,
+    /// Allocation generation per slot; changes when a dead slot is reused.
+    incarnation: Span,
     /// Slots in the plant arrays. Fixed for the life of a world, like `capacity`.
     plant_capacity: u32,
     /// `x, y, z` per plant.
@@ -107,7 +130,9 @@ fn span<T>(slice: &[T]) -> Span {
 #[derive(Serialize)]
 struct Inspection<'a> {
     index: u32,
-    tick: u64,
+    incarnation: u32,
+    /// Decimal text because JSON numbers cannot represent every u64 exactly.
+    tick: String,
     energy: f32,
     age: u32,
     size: f32,
@@ -141,10 +166,8 @@ impl Sim {
     /// something it cannot see.
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
-        let params = match params_json.as_deref() {
-            Some(json) => serde_json::from_str(json).map_err(|e| js_error("bad params", e))?,
-            None => SimParams::default(),
-        };
+        let params = parse_params(params_json.as_deref())?;
+        // `parse_params` validates before the world allocates its fixed-capacity stores.
         let world = World::new(seed, params).map_err(|e| js_error("invalid params", e.0))?;
         let snapshot = Snapshot::for_world(&world);
         Ok(Sim { world, snapshot })
@@ -192,6 +215,7 @@ impl Sim {
             species: span(self.snapshot.species()),
             part_offset: span(self.snapshot.part_offset()),
             part_count: span(self.snapshot.part_count()),
+            incarnation: span(self.snapshot.incarnation()),
             plant_capacity: self.snapshot.plant_capacity(),
             plant_position: span(self.snapshot.plant_position()),
             plant_energy: span(self.snapshot.plant_energy()),
@@ -220,6 +244,11 @@ impl Sim {
 
     pub fn population(&self) -> u32 {
         self.world.population()
+    }
+
+    /// Mean energy of the living population, sampled on demand by the UI.
+    pub fn mean_energy(&self) -> f64 {
+        self.world.mean_agent_energy()
     }
 
     /// The world's fingerprint. Exposed so a browser run can be compared against a
@@ -257,18 +286,24 @@ impl Sim {
     /// Everything the inspector shows for one agent, as JSON.
     ///
     /// Pulled for the one selected agent rather than streamed for everybody: this is
-    /// kilobytes per agent against the snapshot's 57 bytes, and it is read at the rate a
+    /// kilobytes per agent against the snapshot's 61 bytes, and it is read at the rate a
     /// human clicks (spec §2.2b).
-    pub fn inspect_agent(&self, index: u32) -> Result<String, JsError> {
+    pub fn inspect_agent(&self, index: u32, incarnation: u32) -> Result<String, JsError> {
         let id = AgentId::new(index);
         if index >= self.world.pool().capacity() || !self.world.pool().is_alive(id) {
             return Err(JsError::new(&format!("no live agent at slot {index}")));
+        }
+        if self.world.pool().incarnation(id) != Some(incarnation) {
+            return Err(JsError::new(&format!(
+                "agent at slot {index} has been replaced"
+            )));
         }
         let agents = self.world.agents();
         let i = id.index();
         let inspection = Inspection {
             index,
-            tick: self.world.tick_count(),
+            incarnation,
+            tick: self.world.tick_count().to_string(),
             energy: agents.energy[i],
             age: agents.age[i],
             size: agents.size[i],

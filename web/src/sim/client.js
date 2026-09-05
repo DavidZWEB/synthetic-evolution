@@ -13,7 +13,16 @@ export function createSim({ seed, founders, params = null }) {
 
   let reader = null;
   let destroyed = false;
-  const listeners = { ready: [], inspection: [], error: [], params: [], hash: [], status: [] };
+  const listeners = {
+    ready: [],
+    inspection: [],
+    metrics: [],
+    error: [],
+    params: [],
+    hash: [],
+    status: [],
+    validatedRun: [],
+  };
   const emit = (kind, payload) => listeners[kind]?.forEach((fn) => fn(payload));
 
   worker.onmessage = (event) => {
@@ -21,12 +30,17 @@ export function createSim({ seed, founders, params = null }) {
 
     if (message.kind === 'ready') {
       reader = createReader(message.transport);
-      emit('ready', { transport: reader.kind, capacity: reader.capacity, hints: message.hints });
+      emit('ready', {
+        transport: reader.kind,
+        capacity: reader.capacity,
+        hints: message.hints,
+        run: message.run,
+      });
       return;
     }
 
-    // A frame arriving by transfer. Hand back whatever we were holding so the worker's
-    // pool never drains and the sim never waits on the renderer.
+    // A frame arriving by transfer. `accept` only returns a superseded pending buffer;
+    // a frame already handed to rendering stays attached until the next animation read.
     if (message.kind === 'transferable') {
       const returning = reader?.accept(message);
       if (returning) worker.postMessage({ kind: 'recycle', buffer: returning }, [returning]);
@@ -58,7 +72,12 @@ export function createSim({ seed, founders, params = null }) {
 
   return {
     /** The most recent frame, or null before the first has arrived. */
-    latest: () => reader?.latest() ?? null,
+    latest() {
+      const frame = reader?.latest() ?? null;
+      const returning = reader?.takeRecycle?.();
+      if (returning) worker.postMessage({ kind: 'recycle', buffer: returning }, [returning]);
+      return frame;
+    },
     get transport() {
       return reader?.kind ?? null;
     },
@@ -69,8 +88,11 @@ export function createSim({ seed, founders, params = null }) {
     stepOnce: (ticks = 1) => send('stepOnce', { ticks }),
     setParams: (json) => send('setParams', { params: json }),
     pushCommand: (json) => send('pushCommand', { command: json }),
-    inspect: (index) => send('inspect', { index }),
+    inspect: (index, incarnation, requestId) =>
+      send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
+    validateRun: (seed, founders, params, requestId) =>
+      send('validateRun', { seed, founders, params, requestId }),
 
     on(kind, fn) {
       listeners[kind]?.push(fn);

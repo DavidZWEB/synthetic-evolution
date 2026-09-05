@@ -10,7 +10,7 @@
  * over a non-multiple-of-4 offset throws, and putting `alive` in the middle would make
  * every array after it depend on the capacity being even.
  *
- * The totals here must match `sim_core::snapshot::BYTES_PER_AGENT` (57). The Rust side
+ * The totals here must match `sim_core::snapshot::BYTES_PER_AGENT` (61). The Rust side
  * pins that number with a test; this side derives it, and `bytesPerAgent` below is what
  * a test can compare.
  */
@@ -75,6 +75,7 @@ export function frameLayout(capacity, plantCapacity = 0) {
     species: wide(capacity),
     partOffset: wide(capacity),
     partCount: wide(capacity),
+    incarnation: wide(capacity),
     plantPosition: wide(plantCapacity * 3),
     plantEnergy: wide(plantCapacity),
     alive: { offset, length: capacity },
@@ -90,7 +91,7 @@ export function frameLayout(capacity, plantCapacity = 0) {
   return layout;
 }
 
-/** What one agent costs across a frame. Should be 57 (spec §7.5). */
+/** What one agent costs across a frame. Should be 61 (spec §7.5). */
 export function bytesPerAgent() {
   return frameLayout(1, 0).bytes;
 }
@@ -117,6 +118,7 @@ export function frameViews(buffer, base, layout) {
     species: u32(layout.species),
     partOffset: u32(layout.partOffset),
     partCount: u32(layout.partCount),
+    incarnation: u32(layout.incarnation),
     plantPosition: f32(layout.plantPosition),
     plantEnergy: f32(layout.plantEnergy),
     alive: new Uint8Array(buffer, base + layout.alive.offset, layout.alive.length),
@@ -132,6 +134,7 @@ export const FIELDS = [
   'species',
   'partOffset',
   'partCount',
+  'incarnation',
   'plantPosition',
   'plantEnergy',
   'alive',

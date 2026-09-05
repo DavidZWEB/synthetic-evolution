@@ -31,116 +31,13 @@
 
 import { createCamera } from './camera.js';
 import { createProgram } from './gl-program.js';
-
-const VERTEX_SHADER = `#version 300 es
-precision highp float;
-
-in vec2 a_corner;
-in vec3 a_position;
-in float a_size;
-in vec3 a_signature;
-in float a_alive;
-
-uniform vec2 u_center;      // world units the viewport is centred on
-uniform float u_ppu;        // pixels per world unit
-uniform vec2 u_viewport;    // device pixels
-uniform float u_min_radius; // device pixels
-uniform float u_world;      // world extent, for the wrap
-
-out vec2 v_corner;
-out vec3 v_color;
-
-// Offset from the camera to the *nearest image* of a point on the torus.
-//
-// The world wraps in x and y, so an agent at 999 and one at 1 are a couple of units
-// apart and must draw that way. This is the same minimum-image rule that spatial.rs
-// measures every distance with; without it the seam becomes a wall the picture invents
-// and the simulation does not have.
-vec2 toward(vec2 point, vec2 from, float extent) {
-  vec2 d = point - from;
-  return d - extent * round(d / extent);
-}
-
-void main() {
-  v_corner = a_corner;
-  v_color = a_signature;
-
-  // A dead slot has alive = 0, so every radius term below multiplies to zero and the
-  // quad has no area. Nothing is drawn and no branch was taken.
-  float radius = max(a_size * u_ppu, u_min_radius) * a_alive;
-  vec2 pixels = toward(a_position.xy, u_center, u_world) * u_ppu + a_corner * radius;
-  gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
-}`;
-
-/**
- * Plants: the same quad, sized by a uniform radius and shaded by how much the site holds.
- *
- * A separate program rather than a branch in the agent shader. Plants differ in every
- * respect that matters to a draw — one radius for all of them, colour from a parameter
- * rather than a gene, and no orientation — and folding them together would mean uploading
- * per-plant copies of values that are the same for every one.
- */
-const PLANT_VERTEX_SHADER = `#version 300 es
-precision highp float;
-
-in vec2 a_corner;
-in vec3 a_position;
-in float a_energy;
-
-uniform vec2 u_center;
-uniform float u_ppu;
-uniform vec2 u_viewport;
-uniform float u_radius;      // world units
-uniform float u_min_radius;  // device pixels
-uniform float u_max_energy;
-uniform float u_world;
-
-out vec2 v_corner;
-out float v_fullness;
-
-void main() {
-  v_corner = a_corner;
-  v_fullness = clamp(a_energy / u_max_energy, 0.0, 1.0);
-
-  vec2 d = a_position.xy - u_center;
-  d -= u_world * round(d / u_world);
-
-  float radius = max(u_radius * u_ppu, u_min_radius);
-  vec2 pixels = d * u_ppu + a_corner * radius;
-  gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
-}`;
-
-const PLANT_FRAGMENT_SHADER = `#version 300 es
-precision highp float;
-
-in vec2 v_corner;
-in float v_fullness;
-uniform vec3 u_color;
-out vec4 fragment;
-
-void main() {
-  if (dot(v_corner, v_corner) > 1.0) discard;
-  // An emptied site stays visible rather than blinking out: it persists and regrows
-  // (spec §5.1), and a larder that vanished as it was eaten would make a starving world
-  // look like an empty one.
-  fragment = vec4(u_color * (0.18 + 0.82 * v_fullness), 1.0);
-}`;
-
-const FRAGMENT_SHADER = `#version 300 es
-precision highp float;
-
-in vec2 v_corner;
-in vec3 v_color;
-out vec4 fragment;
-
-void main() {
-  float r2 = dot(v_corner, v_corner);
-  // Outside the inscribed circle the quad is not part of the agent.
-  if (r2 > 1.0) discard;
-  // A little shading toward the rim, so overlapping agents stay countable.
-  float shade = 0.65 + 0.35 * (1.0 - r2);
-  fragment = vec4(v_color * shade, 1.0);
-}`;
+import { pickAgent } from './picking.js';
+import {
+  AGENT_FRAGMENT_SHADER,
+  AGENT_VERTEX_SHADER,
+  PLANT_FRAGMENT_SHADER,
+  PLANT_VERTEX_SHADER,
+} from './shaders.js';
 
 function createResources(gl) {
   const programs = [];
@@ -185,20 +82,136 @@ function createResources(gl) {
  * Throws when WebGL2 is unavailable rather than falling back to canvas2d: a silent
  * downgrade to something that cannot hold the frame rate reads as "the sim is slow".
  */
-export function createRenderer(canvas, { worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy }) {
+export function createRenderer(canvas, options) {
+  const {
+    onContextLost = () => {},
+    onContextRestored = () => {},
+    onContextError = (error) => console.error(error),
+    ...initialConfig
+  } = options;
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL2 is unavailable in this browser');
+  const config = { ...initialConfig, plantColor: [...initialConfig.plantColor] };
+  let pass = null;
+  let savedView = null;
+  let selected = null;
+  let destroyed = false;
+  let contextUnavailable = false;
+
+  const markContextLost = () => {
+    savedView = pass?.view() ?? savedView;
+    // The browser has already discarded every GPU object; dropping the JS references
+    // is enough, and issuing deletes against a lost context only creates more errors.
+    pass = null;
+    if (!contextUnavailable) {
+      contextUnavailable = true;
+      onContextLost();
+    }
+  };
+
+  const contextLost = (event) => {
+    event.preventDefault();
+    if (destroyed) return;
+    markContextLost();
+  };
+
+  const contextRestored = () => {
+    if (destroyed) return;
+    try {
+      pass = createRenderPass(gl, canvas, config);
+      if (savedView) pass.setView(savedView);
+      if (selected) pass.select(selected);
+      contextUnavailable = false;
+      onContextRestored();
+    } catch (error) {
+      pass = null;
+      onContextError(error);
+    }
+  };
+
+  canvas.addEventListener('webglcontextlost', contextLost);
+  canvas.addEventListener('webglcontextrestored', contextRestored);
+
+  try {
+    if (gl.isContextLost()) markContextLost();
+    else pass = createRenderPass(gl, canvas, config);
+  } catch (error) {
+    if (gl.isContextLost()) {
+      markContextLost();
+    } else {
+      canvas.removeEventListener('webglcontextlost', contextLost);
+      canvas.removeEventListener('webglcontextrestored', contextRestored);
+      pass?.destroy();
+      throw error;
+    }
+  }
+
+  return {
+    worldSize: config.worldSize,
+
+    view() {
+      savedView = pass?.view() ?? savedView;
+      return savedView;
+    },
+
+    setView(view) {
+      savedView = view;
+      pass?.setView(view);
+    },
+
+    fit() {
+      pass?.fit();
+      savedView = pass?.view() ?? savedView;
+    },
+
+    zoom() {
+      return pass?.zoom() ?? savedView?.zoom ?? 1;
+    },
+
+    zoomAt(cssX, cssY, factor) {
+      pass?.zoomAt(cssX, cssY, factor);
+    },
+
+    panBy(cssDx, cssDy) {
+      pass?.panBy(cssDx, cssDy);
+    },
+
+    pick(views, cssX, cssY) {
+      return pass?.pick(views, cssX, cssY) ?? null;
+    },
+
+    select(selection) {
+      selected = selection;
+      pass?.select(selection);
+    },
+
+    setRenderHints(hints) {
+      config.plantRadius = hints.plantRadius;
+      config.plantColor = [...hints.plantColor];
+      config.plantMaxEnergy = hints.plantMaxEnergy;
+      pass?.setRenderHints(hints);
+    },
+
+    draw(views, count, fresh = true) {
+      pass?.draw(views, count, fresh);
+    },
+
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      canvas.removeEventListener('webglcontextlost', contextLost);
+      canvas.removeEventListener('webglcontextrestored', contextRestored);
+      pass?.destroy();
+      pass = null;
+    },
+  };
+}
+
+function createRenderPass(gl, canvas, config) {
   const resources = createResources(gl);
 
   try {
-    return buildRenderer(gl, canvas, resources, {
-      worldSize,
-      capacity,
-      plantCapacity,
-      plantRadius,
-      plantColor,
-      plantMaxEnergy,
-    });
+    return buildRenderer(gl, canvas, resources, config);
   } catch (error) {
     resources.destroy();
     throw error;
@@ -211,7 +224,7 @@ function buildRenderer(
   resources,
   { worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy },
 ) {
-  const program = resources.program(VERTEX_SHADER, FRAGMENT_SHADER);
+  const program = resources.program(AGENT_VERTEX_SHADER, AGENT_FRAGMENT_SHADER);
   gl.useProgram(program);
 
   const uniforms = {
@@ -220,6 +233,7 @@ function buildRenderer(
     viewport: gl.getUniformLocation(program, 'u_viewport'),
     minRadius: gl.getUniformLocation(program, 'u_min_radius'),
     world: gl.getUniformLocation(program, 'u_world'),
+    selected: gl.getUniformLocation(program, 'u_selected'),
   };
 
   const plantProgram = resources.program(PLANT_VERTEX_SHADER, PLANT_FRAGMENT_SHADER);
@@ -303,18 +317,31 @@ function buildRenderer(
   let currentPlantColor = [...plantColor];
   let currentPlantMaxEnergy = plantMaxEnergy;
   let hasUploadedFrame = false;
+  let selected = null;
 
   return {
-    resize: camera.resize,
-    camera: camera.state,
-    worldSize,
     view: camera.view,
     setView: camera.setView,
     fit: camera.fit,
     zoom: camera.zoom,
     zoomAt: camera.zoomAt,
     panBy: camera.panBy,
-    screenToWorld: camera.screenToWorld,
+
+    pick(views, cssX, cssY) {
+      if (!views) return null;
+      camera.resize();
+      return pickAgent(
+        views,
+        capacity,
+        camera.screenToWorld(cssX, cssY),
+        worldSize,
+        MIN_RADIUS_PX / camera.state.ppu,
+      );
+    },
+
+    select(selection) {
+      selected = selection;
+    },
 
     setRenderHints({ plantRadius: radius, plantColor: color, plantMaxEnergy: maxEnergy }) {
       currentPlantRadius = radius;
@@ -372,6 +399,13 @@ function buildRenderer(
       gl.uniform2f(uniforms.viewport, camera.width, camera.height);
       gl.uniform1f(uniforms.world, worldSize);
       gl.uniform1f(uniforms.minRadius, MIN_RADIUS_PX);
+      const selectedIndex =
+        selected &&
+        views?.alive[selected.index] === 1 &&
+        views.incarnation[selected.index] === selected.incarnation
+          ? selected.index
+          : -1;
+      gl.uniform1i(uniforms.selected, selectedIndex);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 
       gl.bindVertexArray(null);

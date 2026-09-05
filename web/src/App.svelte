@@ -1,9 +1,21 @@
 <script>
   import { onMount } from 'svelte';
+  import ControlBar from './ui/ControlBar.svelte';
+  import FailureBanner from './ui/FailureBanner.svelte';
+  import InspectorPanel from './ui/InspectorPanel.svelte';
+  import StatusBar from './ui/StatusBar.svelte';
+  import TimeSeries from './ui/TimeSeries.svelte';
+  import { createInspectorController } from './inspect/controller.js';
   import { createSim } from './sim/client.js';
+  import { createRunValidation } from './sim/run-validation.js';
+  import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
+  import { appendMetric, metricFromMessage } from './telemetry/history.ts';
   import { createRenderer } from './render/renderer.js';
+  import { createPointerGestures } from './ui/pointer-gestures.js';
+  import { wheelZoomFactor } from './ui/wheel.js';
 
-  const SPEEDS = [1, 2, 5, 10, 25, 50, 100];
+  const MAX_CHART_SAMPLES = 480;
+  const DEFAULT_RUN = { seed: '42', founders: 2000, params: null };
 
   let canvas;
   let sim = null;
@@ -13,6 +25,8 @@
 
   let tick = $state(0n);
   let population = $state(0);
+  let meanEnergy = $state(0);
+  let metricSamples = $state([]);
   let transport = $state(null);
   let fps = $state(0);
   let running = $state(false);
@@ -22,76 +36,44 @@
   // aliases distinct seeds above 2^53, which breaks seed-addressed reproducibility.
   let seed = $state('42');
   let failure = $state(null);
+  let rendererFailure = $state(null);
+  let shareUrl = $state('');
+  let linkCopied = $state(false);
+  let selectedIndex = $state(null);
+  let inspection = $state(null);
+  let inspectionMessage = $state(null);
+  let pointerCount = $state(0);
   /** Mirrors the renderer's camera for display. Written every frame, never read by it. */
   let zoom = $state(1);
+  let latestFrame = null;
+  let runParams = null;
+  let activeRun = null;
+  let runSource = 'create';
+  let validating = $state(false);
 
-  /**
-   * Pointers currently down, by id. One is a drag, two are a pinch.
-   *
-   * Pointer events rather than mouse events so a finger and a mouse take the same path —
-   * spec §7.7 expects people to open the link on a phone, and a viewer that can only be
-   * driven with a wheel is one they cannot use at all.
-   */
-  const pointers = new Map();
-   let pointerCount = $state(0);
-   let pinchDistance = 0;
+  const inspector = createInspectorController({
+    getSim: () => sim,
+    getRenderer: () => renderer,
+    getFrame: () => latestFrame,
+    onChange: (next) => {
+      selectedIndex = next.selectedIndex;
+      inspection = next.inspection;
+      inspectionMessage = next.message;
+    },
+  });
 
-  const spread = () => {
-    const [a, b] = [...pointers.values()];
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  };
-  const midpoint = () => {
-    const [a, b] = [...pointers.values()];
-    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  };
-
-  function onPointerDown(event) {
-    // Capture keeps a drag alive when the pointer leaves the canvas, but it is an
-    // enhancement rather than a precondition — and it throws for a pointer the browser
-    // no longer considers active. Letting that escape would abort the handler before the
-    // drag is even recorded, which reads as dragging having stopped working.
-    try {
-      canvas.setPointerCapture(event.pointerId);
-    } catch {
-      // Dragging still works; it just ends if the pointer leaves.
-    }
-    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    pointerCount = pointers.size;
-    if (pointers.size === 2) pinchDistance = spread();
-  }
-
-  function onPointerMove(event) {
-    const previous = pointers.get(event.pointerId);
-    if (!previous) return;
-    const next = { x: event.clientX, y: event.clientY };
-
-    if (pointers.size === 1) {
-      renderer?.panBy(next.x - previous.x, next.y - previous.y);
-    }
-    pointers.set(event.pointerId, next);
-
-    if (pointers.size === 2 && pinchDistance > 0) {
-      const distance = spread();
-      const centre = midpoint();
-      renderer?.zoomAt(centre.x, centre.y, distance / pinchDistance);
-      pinchDistance = distance;
-    }
-  }
-
-  function onPointerUp(event) {
-    pointers.delete(event.pointerId);
-    pointerCount = pointers.size;
-    if (pointers.size < 2) pinchDistance = 0;
-  }
+  const gestures = createPointerGestures({
+    getRenderer: () => renderer,
+    onPointerCount: (count) => (pointerCount = count),
+    onClick: inspector.pickAt,
+  });
 
   function onWheel(event) {
     // The page must not scroll under the canvas, so this is not passive — hence the
     // explicit listener in `onMount` rather than an `onwheel` attribute, which Svelte
     // registers passively and where preventDefault would be ignored.
     event.preventDefault();
-    // Exponential in the wheel delta, so a trackpad's many small events and a mouse
-    // wheel's few large ones cover the same ground at the same speed.
-    renderer?.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0015));
+    renderer?.zoomAt(event.clientX, event.clientY, wheelZoomFactor(event));
   }
 
   function resetView() {
@@ -110,22 +92,74 @@
   }
 
   function reseed() {
+    requestRun({ seed, founders, params: runParams }, 'reseed');
+  }
+
+  function activateRun(next) {
     sim?.destroy();
     sim = null;
+    validating = false;
+    runSource = next.source ?? 'create';
+    seed = next.seed;
+    founders = next.founders;
+    runParams = next.params;
+    activeRun = null;
     running = false;
     transport = null;
     capacity = 0;
+    latestFrame = null;
+    tick = 0n;
+    population = 0;
+    meanEnergy = 0;
+    metricSamples = [];
+    inspector.select(null);
     start();
+  }
+
+  function requestRun(next, source) {
+    if (!sim) {
+      activateRun({ ...next, source });
+      return;
+    }
+    runValidation.request({ ...next, source });
+  }
+
+  const runValidation = createRunValidation({
+    getSim: () => sim,
+    onPendingChange: (pending) => (validating = pending),
+    onAccepted: activateRun,
+    onRejected: (error, request) => {
+      failure = `${request.source}: ${error}`;
+      if (request.source === 'url' && shareUrl) {
+        globalThis.history.replaceState(null, '', shareUrl);
+      }
+    },
+  });
+
+  function updateRunUrl(run) {
+    try {
+      linkCopied = false;
+      shareUrl = writeRunUrl(globalThis.location.href, run);
+      globalThis.history.replaceState(null, '', shareUrl);
+      return null;
+    } catch (error) {
+      return `share: ${String(error)}`;
+    }
   }
 
   function start() {
     failure = null;
     transport = null;
-    const nextSim = createSim({ seed, founders });
+    const startingSource = runSource;
+    const previousShareUrl = shareUrl;
+    const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
-    nextSim.on('ready', ({ transport: kind, hints }) => {
+    nextSim.on('ready', ({ transport: kind, hints, run }) => {
       if (sim !== nextSim) return;
+      activeRun = run;
+      runParams = run.params;
+      const runUrlError = updateRunUrl(run);
       // Rebuilt rather than reused: a reseed can carry different params, and a renderer
       // holding the previous world's extent would draw a correct picture of the wrong one.
       // The *view* survives that rebuild, so reseeding does not yank you back out to the
@@ -133,6 +167,7 @@
       const carried =
         renderer && renderer.worldSize === hints.world_size ? renderer.view() : null;
       let nextRenderer;
+      rendererFailure = null;
       try {
         nextRenderer = createRenderer(canvas, {
           worldSize: hints.world_size,
@@ -141,6 +176,15 @@
           plantRadius: hints.plant_radius,
           plantColor: hints.plant_signature,
           plantMaxEnergy: hints.plant_max_energy,
+          onContextLost: () => {
+            rendererFailure = 'renderer: WebGL context lost; restoring…';
+          },
+          onContextRestored: () => {
+            rendererFailure = null;
+          },
+          onContextError: (error) => {
+            rendererFailure = `renderer: ${String(error)}`;
+          },
         });
       } catch (error) {
         failure = String(error);
@@ -156,32 +200,99 @@
       else renderer.fit();
       capacity = hints.agent_capacity;
       transport = kind;
-      failure = null;
+      if (runUrlError) failure = runUrlError;
       nextSim.setSpeed(speed);
     });
     nextSim.on('status', ({ running: nextRunning }) => {
       if (sim === nextSim) running = nextRunning;
     });
-    nextSim.on('params', ({ hints }) => {
+    nextSim.on('params', ({ hints, params }) => {
       if (sim !== nextSim) return;
+      runParams = params;
+      activeRun = { ...activeRun, params };
+      const runUrlError = updateRunUrl(activeRun);
+      if (runUrlError) failure = runUrlError;
       renderer?.setRenderHints({
         plantRadius: hints.plant_radius,
         plantColor: hints.plant_signature,
         plantMaxEnergy: hints.plant_max_energy,
       });
     });
+    nextSim.on('metrics', (message) => {
+      if (sim !== nextSim) return;
+      try {
+        const sample = metricFromMessage(message);
+        meanEnergy = sample.meanEnergy;
+        metricSamples = appendMetric(metricSamples, sample, MAX_CHART_SAMPLES);
+      } catch (error) {
+        failure = `metrics: ${String(error)}`;
+      }
+    });
+    nextSim.on('inspection', (message) => {
+      if (sim === nextSim) inspector.accept(message);
+    });
+    nextSim.on('validatedRun', (message) => {
+      if (sim === nextSim) runValidation.accept(message);
+    });
     nextSim.on('error', (message) => {
       if (sim !== nextSim) return;
-      failure = `${message.context}: ${message.message}`;
+      const context = message.context === 'create' ? startingSource : message.context;
+      failure = `${context}: ${message.message}`;
       if (message.fatal) {
         running = false;
         transport = null;
+        if (message.context === 'create') {
+          runValidation.cancel();
+          nextSim.destroy();
+          sim = null;
+          activeRun = null;
+          if (startingSource === 'url' && previousShareUrl) {
+            shareUrl = previousShareUrl;
+            globalThis.history.replaceState(null, '', previousShareUrl);
+          }
+        }
       }
     });
   }
 
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      linkCopied = true;
+    } catch (error) {
+      failure = `share: ${String(error)}`;
+    }
+  }
+
   onMount(() => {
-    start();
+    let validUrl = true;
+    try {
+      const shared = readRunUrl(globalThis.location.href, founders);
+      const initial = shared ?? DEFAULT_RUN;
+      seed = initial.seed;
+      founders = initial.founders;
+      runParams = initial.params;
+      runSource = shared ? 'url' : 'create';
+    } catch (error) {
+      runValidation.cancel();
+      failure = `url: ${String(error)}`;
+      validUrl = false;
+    }
+    if (validUrl) start();
+
+    const onHashChange = () => {
+      try {
+        requestRun(
+          readRunUrl(globalThis.location.href, DEFAULT_RUN.founders) ?? DEFAULT_RUN,
+          'url',
+        );
+      } catch (error) {
+        runValidation.cancel();
+        failure = `url: ${String(error)}`;
+        if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
+      }
+    };
+    globalThis.addEventListener('hashchange', onHashChange);
 
     // Registered here, not as an attribute: Svelte adds `onwheel` passively and a passive
     // listener cannot preventDefault, so the page would scroll while you zoomed.
@@ -197,6 +308,7 @@
     const loop = () => {
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
+      latestFrame = frame;
       renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false);
       // Read back rather than tracked alongside: the renderer owns the camera, and a
       // second copy here would go stale the moment anything but an input moved it — a
@@ -209,6 +321,7 @@
 
       frames += 1;
       const now = performance.now();
+      inspector.poll(frame, now);
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;
@@ -219,6 +332,7 @@
 
     return () => {
       cancelAnimationFrame(handle);
+      globalThis.removeEventListener('hashchange', onHashChange);
       canvas.removeEventListener('wheel', onWheel);
       sim?.destroy();
       renderer?.destroy();
@@ -227,58 +341,54 @@
 </script>
 
 <main>
-  <header>
-    <h1>Synthetic Evolution</h1>
-    <dl>
-      <div><dt>tick</dt><dd>{tick}</dd></div>
-      <div><dt>agents</dt><dd>{population}</dd></div>
-      <div><dt>fps</dt><dd class:slow={fps > 0 && fps < 55}>{fps}</dd></div>
-      <div><dt>zoom</dt><dd>{zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}×</dd></div>
-      <div><dt>transport</dt><dd class:degraded={transport === 'transferable'}>{transport ?? '…'}</dd></div>
-    </dl>
-  </header>
+  <StatusBar {tick} {population} {meanEnergy} {fps} {zoom} {transport} />
 
   <div class="stage">
     <canvas
       bind:this={canvas}
       class:dragging={pointerCount > 0}
-      onpointerdown={onPointerDown}
-      onpointermove={onPointerMove}
-      onpointerup={onPointerUp}
-      onpointercancel={onPointerUp}
+      onpointerdown={gestures.down}
+      onpointermove={gestures.move}
+      onpointerup={gestures.up}
+      onpointercancel={gestures.cancel}
+      onclick={gestures.click}
       ondblclick={resetView}
     ></canvas>
-    {#if failure}
-      <p class="failure">{failure}</p>
+    <TimeSeries samples={metricSamples} />
+    {#if selectedIndex !== null}
+      <InspectorPanel
+        {selectedIndex}
+        {inspection}
+        message={inspectionMessage}
+        onclose={() => inspector.select(null)}
+      />
+    {/if}
+    {#if failure || rendererFailure}
+      <FailureBanner
+        message={failure ?? rendererFailure}
+        dismissible={Boolean(failure)}
+        ondismiss={() => (failure = null)}
+      />
     {/if}
   </div>
 
-  <footer>
-    <button onclick={toggle} disabled={!transport}>{running ? 'pause' : 'play'}</button>
-    <button onclick={() => sim?.stepOnce(1)} disabled={!transport || running}>step</button>
-
-    <span class="speeds">
-      {#each SPEEDS as option}
-        <button class:active={speed === option} onclick={() => applySpeed(option)}>
-          {option}×
-        </button>
-      {/each}
-    </span>
-
-    <label>
-      seed
-      <input
-        type="text"
-        inputmode="numeric"
-        pattern="[0-9]*"
-        value={seed}
-        oninput={(event) => (seed = event.currentTarget.value)}
-      />
-    </label>
-    <label>founders <input type="number" bind:value={founders} min="1" /></label>
-    <button onclick={reseed}>reseed</button>
-    <button onclick={resetView}>reset view</button>
-  </footer>
+  <ControlBar
+    ready={Boolean(transport) && !validating}
+    {running}
+    {speed}
+    {seed}
+    {founders}
+    {shareUrl}
+    {linkCopied}
+    ontoggle={toggle}
+    onstep={() => sim?.stepOnce(1)}
+    onspeed={applySpeed}
+    onseed={(value) => (seed = value)}
+    onfounders={(value) => (founders = value)}
+    onreseed={reseed}
+    oncopy={copyLink}
+    onreset={resetView}
+  />
 </main>
 
 <style>
@@ -295,38 +405,6 @@
     grid-template-rows: auto 1fr auto;
   }
 
-  header,
-  footer {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.6rem 1rem;
-    background: #14161a;
-    border-color: #23262d;
-    border-style: solid;
-    border-width: 0;
-  }
-  header { border-bottom-width: 1px; }
-  footer { border-top-width: 1px; flex-wrap: wrap; }
-
-  h1 {
-    font-size: 0.95rem;
-    font-weight: 600;
-    margin: 0;
-    letter-spacing: 0.02em;
-  }
-
-  dl {
-    display: flex;
-    gap: 1.25rem;
-    margin: 0 0 0 auto;
-  }
-  dl div { display: flex; gap: 0.4rem; }
-  dt { color: #6b7280; }
-  dd { margin: 0; color: #a3be8c; font-variant-numeric: tabular-nums; }
-  dd.slow { color: #d08770; }
-  dd.degraded { color: #d08770; }
-
   .stage { position: relative; min-height: 0; }
   canvas {
     display: block;
@@ -338,36 +416,4 @@
   }
   canvas.dragging { cursor: grabbing; }
 
-  .failure {
-    position: absolute;
-    inset: 1rem;
-    margin: 0;
-    color: #bf616a;
-  }
-
-  button {
-    font: inherit;
-    color: #d8dee9;
-    background: #1c1f26;
-    border: 1px solid #2b2f38;
-    border-radius: 3px;
-    padding: 0.25rem 0.6rem;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) { background: #242832; }
-  button:disabled { opacity: 0.4; cursor: default; }
-  button.active { background: #3b4252; border-color: #4c566a; }
-
-  .speeds { display: flex; gap: 0.25rem; }
-
-  label { color: #6b7280; display: flex; gap: 0.35rem; align-items: center; }
-  input {
-    font: inherit;
-    width: 5rem;
-    color: #d8dee9;
-    background: #1c1f26;
-    border: 1px solid #2b2f38;
-    border-radius: 3px;
-    padding: 0.2rem 0.4rem;
-  }
 </style>

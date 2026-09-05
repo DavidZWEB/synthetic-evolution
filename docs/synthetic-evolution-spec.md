@@ -86,11 +86,13 @@ Fixed-capacity pools with a free list. Never allocate in the loop. Brains and ge
 A narrow projection of (a), containing only what's needed to draw a frame:
 
 ```
-agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount
+agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount, incarnation
 plants: positions, energy
 ```
 
 Plant energy is the current stock, used to show whether a persistent site is full or depleted (§5.1); it is not a history. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+
+`incarnation` changes whenever a pool slot is allocated. A slot index alone is not an agent identity because the free list reuses it; `(index, incarnation)` lets a click-driven inspector reject a response for a replacement born after the displayed frame.
 
 Three frames are required because the renderer must lease one while it issues uploads. The worker publishes into either remaining frame and only reclaims an older published frame after the replacement is complete. An unleased two-frame flip can overwrite the renderer's live typed-array view after two worker publications, producing a frame assembled from different ticks.
 
@@ -567,7 +569,7 @@ Two things follow, and the order matters.
 
 The first lever is **not** lazy allocation. A full world is a full world, and 50k *is* the full world — growing on demand only buys headroom for the common case where population sits below the ceiling. The first lever is the genome arena's layout: `Gene` is an enum sized by its widest variant, so the ~85% of genes that are connections pay 40 bytes for a 20-byte payload. Splitting the arena by gene class roughly halves genome memory and needs no new machinery. Lazy growth composes on top of that, and can be made behaviourally invisible — keep `max_agents` as the ceiling the simulation sees and let allocation track live population underneath, so allocation strategy never reaches the golden hash.
 
-And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **57 bytes per agent** — 0.5% of per-agent state, 2.7 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the 99.5% that is expensive is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
+And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **61 bytes per agent** — about 0.5% of per-agent state and 3.1 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the 99.5% that is expensive is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
 
 ### 7.6 Tuning discipline
 

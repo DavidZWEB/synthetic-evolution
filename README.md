@@ -6,8 +6,9 @@ objective. Fitness is survival and reproduction.
 
 Rust simulation core compiled to WASM, Svelte + WebGL client.
 
-**Status:** Phase 1, milestone M2 of 12. The world state, pools, and arenas exist; the
-tick does not yet. See [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
+**Status:** Phase 1, milestone M10 of 12. The complete loop runs in WASM with live
+rendering, charts, agent inspection, and shareable seed URLs. See
+[docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
 
 ## Quick start
 
