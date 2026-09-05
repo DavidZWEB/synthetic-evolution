@@ -137,7 +137,8 @@ authoritative full list.
 | Changed surface | Required checks |
 |---|---|
 | Rust | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace` |
-| `sim-core` or WASM boundary | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown` |
+| `sim-core` | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown` |
+| WASM boundary | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
 | Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
