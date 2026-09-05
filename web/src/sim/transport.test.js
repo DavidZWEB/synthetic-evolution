@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { frameLayout, frameViews } from './snapshot-layout.js';
-import { SHARED, createReader, createWriter } from './transport.js';
+import { SHARED, TRANSFERABLE, createReader, createWriter } from './transport.js';
 
 function source(capacity, plantCapacity, marker) {
   const layout = frameLayout(capacity, plantCapacity);
@@ -50,4 +50,24 @@ test('a leased shared frame stays immutable while newer frames publish', () => {
   assert.equal(repeated.fresh, false);
   assert.equal(repeated.tick, 13n);
   reader.release();
+});
+
+test('transferable frames stay attached until the next animation read', () => {
+  const reader = createReader({ kind: TRANSFERABLE, capacity: 2, plantCapacity: 0 });
+  const layout = frameLayout(2, 0);
+  const firstBuffer = new ArrayBuffer(layout.bytes);
+  const secondBuffer = new ArrayBuffer(layout.bytes);
+  frameViews(firstBuffer, 0, layout).alive[0] = 1;
+  frameViews(secondBuffer, 0, layout).alive[1] = 1;
+
+  reader.accept({ buffer: firstBuffer, tick: '1', population: 1 });
+  const first = reader.latest();
+  reader.accept({ buffer: secondBuffer, tick: '2', population: 1 });
+
+  assert.equal(first.views.alive[0], 1, 'accept invalidated the frame held by picking');
+  assert.equal(reader.takeRecycle(), null);
+
+  const second = reader.latest();
+  assert.equal(second.views.alive[1], 1);
+  assert.equal(reader.takeRecycle(), firstBuffer);
 });

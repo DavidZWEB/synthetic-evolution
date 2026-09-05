@@ -40,3 +40,17 @@ test('only the newest validation response is accepted', () => {
   assert.equal(accepted[0].seed, '2');
   assert.equal(accepted[0].params, '{"world":{}}');
 });
+
+test('rejections include the request source', () => {
+  const rejected = [];
+  const validation = createRunValidation({
+    getSim: () => ({ validateRun() {} }),
+    onPendingChange() {},
+    onAccepted: (run) => assert.fail(run),
+    onRejected: (error, run) => rejected.push({ error, source: run.source }),
+  });
+
+  validation.request({ seed: '1', founders: 6000, params: null, source: 'reseed' });
+  assert.equal(validation.accept({ requestId: 1, error: 'too many founders' }), true);
+  assert.deepEqual(rejected, [{ error: 'too many founders', source: 'reseed' }]);
+});

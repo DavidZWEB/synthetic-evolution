@@ -15,8 +15,28 @@
   } = $props();
 
   const activationLevel = (value: number) => `${Math.min(1, Math.abs(value)) * 100}%`;
-  let genomeJson = $derived(inspection ? JSON.stringify(inspection.genome, null, 2) : '');
-  let geneSummary = $derived(inspection ? summarizeGenes(inspection.genome) : []);
+  let genomeOpen = $state(false);
+  let genomeJson = $state('');
+  let geneSummary = $state<Array<{ kind: string; count: number }>>([]);
+  let cachedGenome = '';
+
+  $effect(() => {
+    const identity = inspection ? `${inspection.index}:${inspection.incarnation}` : '';
+    if (identity !== cachedGenome) {
+      cachedGenome = identity;
+      genomeOpen = false;
+      genomeJson = '';
+      geneSummary = inspection ? summarizeGenes(inspection.genome) : [];
+    }
+  });
+
+  function toggleGenome(event: Event) {
+    const details = event.currentTarget as HTMLDetailsElement;
+    genomeOpen = details.open;
+    if (genomeOpen && inspection && !genomeJson) {
+      genomeJson = JSON.stringify(inspection.genome, null, 2);
+    }
+  }
 </script>
 
 <aside aria-label={`Inspector for agent ${selectedIndex}`}>
@@ -59,7 +79,7 @@
       </div>
     </section>
 
-    <details>
+    <details bind:open={genomeOpen} ontoggle={toggleGenome}>
       <summary>
         genome ({inspection.genome.length} genes;
         {#each geneSummary as entry, index}{index ? ', ' : ''}{entry.kind} {entry.count}{/each})

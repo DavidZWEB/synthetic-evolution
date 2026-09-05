@@ -34,13 +34,13 @@ export function createSim({ seed, founders, params = null }) {
         transport: reader.kind,
         capacity: reader.capacity,
         hints: message.hints,
-        params: message.params,
+        run: message.run,
       });
       return;
     }
 
-    // A frame arriving by transfer. Hand back whatever we were holding so the worker's
-    // pool never drains and the sim never waits on the renderer.
+    // A frame arriving by transfer. `accept` only returns a superseded pending buffer;
+    // a frame already handed to rendering stays attached until the next animation read.
     if (message.kind === 'transferable') {
       const returning = reader?.accept(message);
       if (returning) worker.postMessage({ kind: 'recycle', buffer: returning }, [returning]);
@@ -72,7 +72,12 @@ export function createSim({ seed, founders, params = null }) {
 
   return {
     /** The most recent frame, or null before the first has arrived. */
-    latest: () => reader?.latest() ?? null,
+    latest() {
+      const frame = reader?.latest() ?? null;
+      const returning = reader?.takeRecycle?.();
+      if (returning) worker.postMessage({ kind: 'recycle', buffer: returning }, [returning]);
+      return frame;
+    },
     get transport() {
       return reader?.kind ?? null;
     },

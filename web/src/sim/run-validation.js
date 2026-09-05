@@ -30,7 +30,7 @@ export function createRunValidation({ getSim, onPendingChange, onAccepted, onRej
       const requested = pending;
       pending = null;
       onPendingChange(false);
-      if (message.error) onRejected(message.error);
+      if (message.error) onRejected(message.error, requested);
       else onAccepted({ ...requested, params: message.params });
       return true;
     },

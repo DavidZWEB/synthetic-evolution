@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import ControlBar from './ui/ControlBar.svelte';
+  import FailureBanner from './ui/FailureBanner.svelte';
   import InspectorPanel from './ui/InspectorPanel.svelte';
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
@@ -46,6 +47,7 @@
   let zoom = $state(1);
   let latestFrame = null;
   let runParams = null;
+  let activeRun = null;
   let validating = $state(false);
 
   const inspector = createInspectorController({
@@ -89,7 +91,7 @@
   }
 
   function reseed() {
-    requestRun({ seed, founders, params: runParams });
+    requestRun({ seed, founders, params: runParams }, 'reseed');
   }
 
   function activateRun(next) {
@@ -99,6 +101,7 @@
     seed = next.seed;
     founders = next.founders;
     runParams = next.params;
+    activeRun = null;
     running = false;
     transport = null;
     capacity = 0;
@@ -111,32 +114,35 @@
     start();
   }
 
-  function requestRun(next) {
+  function requestRun(next, source) {
     if (!sim || !transport) {
       activateRun(next);
       return;
     }
-    runValidation.request(next);
+    runValidation.request({ ...next, source });
   }
 
   const runValidation = createRunValidation({
     getSim: () => sim,
     onPendingChange: (pending) => (validating = pending),
     onAccepted: activateRun,
-    onRejected: (error) => {
-      failure = `url: ${error}`;
-      if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
+    onRejected: (error, request) => {
+      failure = `${request.source}: ${error}`;
+      if (request.source === 'url' && shareUrl) {
+        globalThis.history.replaceState(null, '', shareUrl);
+      }
     },
   });
 
-  function updateRunUrl() {
-    linkCopied = false;
-    shareUrl = writeRunUrl(globalThis.location.href, {
-      seed,
-      founders,
-      params: runParams,
-    });
-    globalThis.history.replaceState(null, '', shareUrl);
+  function updateRunUrl(run) {
+    try {
+      linkCopied = false;
+      shareUrl = writeRunUrl(globalThis.location.href, run);
+      globalThis.history.replaceState(null, '', shareUrl);
+      return null;
+    } catch (error) {
+      return `share: ${String(error)}`;
+    }
   }
 
   function start() {
@@ -145,10 +151,11 @@
     const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
-    nextSim.on('ready', ({ transport: kind, hints, params }) => {
+    nextSim.on('ready', ({ transport: kind, hints, run }) => {
       if (sim !== nextSim) return;
-      runParams = params;
-      updateRunUrl();
+      activeRun = run;
+      runParams = run.params;
+      const runUrlError = updateRunUrl(run);
       // Rebuilt rather than reused: a reseed can carry different params, and a renderer
       // holding the previous world's extent would draw a correct picture of the wrong one.
       // The *view* survives that rebuild, so reseeding does not yank you back out to the
@@ -189,7 +196,7 @@
       else renderer.fit();
       capacity = hints.agent_capacity;
       transport = kind;
-      failure = null;
+      failure = runUrlError;
       nextSim.setSpeed(speed);
     });
     nextSim.on('status', ({ running: nextRunning }) => {
@@ -198,7 +205,9 @@
     nextSim.on('params', ({ hints, params }) => {
       if (sim !== nextSim) return;
       runParams = params;
-      updateRunUrl();
+      activeRun = { ...activeRun, params };
+      const runUrlError = updateRunUrl(activeRun);
+      if (runUrlError) failure = runUrlError;
       renderer?.setRenderHints({
         plantRadius: hints.plant_radius,
         plantColor: hints.plant_signature,
@@ -257,7 +266,10 @@
 
     const onHashChange = () => {
       try {
-        requestRun(readRunUrl(globalThis.location.href, DEFAULT_RUN.founders) ?? DEFAULT_RUN);
+        requestRun(
+          readRunUrl(globalThis.location.href, DEFAULT_RUN.founders) ?? DEFAULT_RUN,
+          'url',
+        );
       } catch (error) {
         runValidation.cancel();
         failure = `url: ${String(error)}`;
@@ -336,7 +348,11 @@
       />
     {/if}
     {#if failure || rendererFailure}
-      <p class="failure">{failure ?? rendererFailure}</p>
+      <FailureBanner
+        message={failure ?? rendererFailure}
+        dismissible={Boolean(failure)}
+        ondismiss={() => (failure = null)}
+      />
     {/if}
   </div>
 
@@ -383,12 +399,5 @@
     touch-action: none;
   }
   canvas.dragging { cursor: grabbing; }
-
-  .failure {
-    position: absolute;
-    inset: 1rem;
-    margin: 0;
-    color: #bf616a;
-  }
 
 </style>

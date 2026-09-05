@@ -59,6 +59,7 @@ jobs:
 
       - name: Check generated web types
         run: |
+          npm run types --prefix web
           npm run check --prefix web
           git diff --exit-code -- web/src/generated
 

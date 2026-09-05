@@ -112,11 +112,14 @@ const handlers = {
     const wasm = await init();
     memory = wasm.memory;
 
-    const nextSim = new Sim(parseSeed(seed), params ?? null);
+    const normalizedSeed = parseSeed(seed);
+    const nextSim = new Sim(normalizedSeed, params ?? null);
     let hints;
+    let normalizedFounders;
     try {
       hints = JSON.parse(nextSim.render_hints());
-      nextSim.seed_founders(founderCount(founders, hints.agent_capacity));
+      normalizedFounders = founderCount(founders, hints.agent_capacity);
+      nextSim.seed_founders(normalizedFounders);
     } catch (error) {
       nextSim.free();
       throw error;
@@ -146,7 +149,11 @@ const handlers = {
       transport: writer.handoff,
       isolated: kind === 'shared',
       hints,
-      params: sim.params_json(),
+      run: {
+        seed: normalizedSeed.toString(),
+        founders: normalizedFounders,
+        params: sim.params_json(),
+      },
     });
     publisher.publish(true);
   },
