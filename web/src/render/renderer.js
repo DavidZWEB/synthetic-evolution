@@ -96,15 +96,23 @@ export function createRenderer(canvas, options) {
   let savedView = null;
   let selected = null;
   let destroyed = false;
+  let contextUnavailable = false;
 
-  const contextLost = (event) => {
-    event.preventDefault();
-    if (destroyed) return;
+  const markContextLost = () => {
     savedView = pass?.view() ?? savedView;
     // The browser has already discarded every GPU object; dropping the JS references
     // is enough, and issuing deletes against a lost context only creates more errors.
     pass = null;
-    onContextLost();
+    if (!contextUnavailable) {
+      contextUnavailable = true;
+      onContextLost();
+    }
+  };
+
+  const contextLost = (event) => {
+    event.preventDefault();
+    if (destroyed) return;
+    markContextLost();
   };
 
   const contextRestored = () => {
@@ -113,6 +121,7 @@ export function createRenderer(canvas, options) {
       pass = createRenderPass(gl, canvas, config);
       if (savedView) pass.setView(savedView);
       if (selected) pass.select(selected);
+      contextUnavailable = false;
       onContextRestored();
     } catch (error) {
       pass = null;
@@ -124,13 +133,17 @@ export function createRenderer(canvas, options) {
   canvas.addEventListener('webglcontextrestored', contextRestored);
 
   try {
-    if (gl.isContextLost()) onContextLost();
+    if (gl.isContextLost()) markContextLost();
     else pass = createRenderPass(gl, canvas, config);
   } catch (error) {
-    canvas.removeEventListener('webglcontextlost', contextLost);
-    canvas.removeEventListener('webglcontextrestored', contextRestored);
-    pass?.destroy();
-    throw error;
+    if (gl.isContextLost()) {
+      markContextLost();
+    } else {
+      canvas.removeEventListener('webglcontextlost', contextLost);
+      canvas.removeEventListener('webglcontextrestored', contextRestored);
+      pass?.destroy();
+      throw error;
+    }
   }
 
   return {
