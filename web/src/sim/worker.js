@@ -134,16 +134,21 @@ const handlers = {
     source = null;
     sourceLayout = null;
     sourceBuffer = null;
+    const initialMessages = [];
+    let sendPublication = (message, transfer) => initialMessages.push({ message, transfer });
     publisher = createSnapshotPublisher({
       writer,
       source: sourceViews,
       tick: () => sim.tick(),
       population: () => sim.population(),
       meanEnergy: () => sim.mean_energy(),
-      send: (message, transfer) => postMessage(message, transfer),
+      send: (message, transfer) => sendPublication(message, transfer),
     });
     scheduler.setSecondsPerTick(hints.seconds_per_tick);
 
+    // Complete every fallible view/copy operation before announcing the world. Messages
+    // queue locally so the transferable frame cannot arrive before its reader exists.
+    publisher.publish(true);
     postMessage({
       kind: 'ready',
       transport: writer.handoff,
@@ -155,7 +160,10 @@ const handlers = {
         params: sim.params_json(),
       },
     });
-    publisher.publish(true);
+    sendPublication = (message, transfer) => postMessage(message, transfer);
+    for (const { message, transfer } of initialMessages) {
+      postMessage(message, transfer);
+    }
   },
 
   play() {

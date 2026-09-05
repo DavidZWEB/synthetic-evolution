@@ -151,6 +151,7 @@
     failure = null;
     transport = null;
     const startingSource = runSource;
+    const previousShareUrl = shareUrl;
     const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
@@ -240,8 +241,15 @@
       if (message.fatal) {
         running = false;
         transport = null;
-        if (message.context === 'create' && startingSource === 'url' && shareUrl) {
-          globalThis.history.replaceState(null, '', shareUrl);
+        if (message.context === 'create') {
+          runValidation.cancel();
+          nextSim.destroy();
+          sim = null;
+          activeRun = null;
+          if (startingSource === 'url' && previousShareUrl) {
+            shareUrl = previousShareUrl;
+            globalThis.history.replaceState(null, '', previousShareUrl);
+          }
         }
       }
     });
