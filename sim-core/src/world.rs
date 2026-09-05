@@ -17,6 +17,7 @@ use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
 use crate::command::{Command, Kind};
+use crate::control::BrainInheritance;
 use crate::effectors::{self, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
@@ -41,6 +42,7 @@ const PARTS_PER_AGENT: u32 = 1;
 /// integration tests still go through the accessors at the bottom of this file.
 pub struct World {
     pub(crate) params: SimParams,
+    pub(crate) brain_inheritance: BrainInheritance,
     pub(crate) rng: Rng,
     pub(crate) tick: u64,
     /// Monotonic source of [`InnovationId`]s. A field rather than a `static` so two
@@ -103,6 +105,15 @@ impl World {
     /// their invariants as established and uses `debug_assert!` rather than threading
     /// `Result` through the hot loop.
     pub fn new(seed: u64, params: SimParams) -> Result<Self, ParamError> {
+        Self::new_with_brain_inheritance(seed, params, BrainInheritance::Evolving)
+    }
+
+    /// Builds a world with an explicit neural-heredity mode for controlled experiments.
+    pub fn new_with_brain_inheritance(
+        seed: u64,
+        params: SimParams,
+        brain_inheritance: BrainInheritance,
+    ) -> Result<Self, ParamError> {
         params.validate()?;
         let capacity = params.world.max_agents;
         let mut next_innovation = 0u32;
@@ -126,6 +137,7 @@ impl World {
         let plants = Plants::new(&params, &mut rng);
 
         Ok(Self {
+            brain_inheritance,
             rng,
             tick: 0,
             next_innovation,

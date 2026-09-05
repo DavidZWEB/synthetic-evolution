@@ -666,7 +666,7 @@ Cannot be unit tested; must hold across a real run. These exist from Phase 1, no
 
 Every phase success criterion in §8 is a judgment about whether something *interesting* evolved. No assertion covers this, and no amount of Tier 1 and 2 passing implies it. Treat any claim that a phase is complete on the strength of green tests as unverified.
 
-The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Keep a lineage with randomized weights for side-by-side comparison — if you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
+The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them, breaking cumulative neural evolution without changing sensors, body, or ecology. If you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
 
 ### 7.9 The experiment loop
 
@@ -678,7 +678,7 @@ Tuning this simulator is a large, tedious, highly parallel search — exactly th
 cargo run -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
 ```
 
-One JSON line per sample interval: population by species, trophic biomass by tier, mean and max brain size, genome size distribution, energy flow per tier, speciation and extinction events, behavior-probe hits. This runs at 1000× and produces something an agent can actually reason over, which a canvas is not.
+One JSON line per sample interval: population by species, trophic biomass by tier, mean and max brain size, genome size distribution, energy flow per tier, speciation and extinction events, behavior-probe hits. This runs at 1000× and produces something an agent can actually reason over, which a canvas is not. Emit only fields the current phase can measure: before Phase 2 species clustering exists, report exact genome variants and mark species-based diagnostics unavailable rather than treating the placeholder species ID as data.
 
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
 

@@ -144,6 +144,19 @@ fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
     }
 }
 
+/// Stable fingerprint of one genome for telemetry and lineage counting.
+///
+/// This is not an identity assigned by the simulation and collisions remain possible;
+/// it is a compact observation of every serialized gene field in deterministic order.
+pub fn genome_fingerprint(genes: &[Gene]) -> u64 {
+    let mut hash = Fnv1a::new();
+    hash.u32(genes.len() as u32);
+    for gene in genes {
+        fold_gene(&mut hash, gene);
+    }
+    hash.finish()
+}
+
 impl World {
     /// Folds the whole world into one number.
     ///
@@ -336,6 +349,24 @@ mod tests {
             h.finish()
         };
         assert_ne!(bits(0.0), bits(-0.0));
+    }
+
+    #[test]
+    fn genome_fingerprint_tracks_neural_scalars() {
+        let world = populated(1);
+        let id = world.pool().iter_live().next().expect("one agent");
+        let a = world.genome(id).to_vec();
+        let mut b = a.clone();
+        let connection = b
+            .iter_mut()
+            .find_map(|gene| match gene {
+                Gene::Connection(connection) => Some(connection),
+                _ => None,
+            })
+            .expect("founder has connections");
+        connection.weight += 0.25;
+        assert_eq!(genome_fingerprint(&a), genome_fingerprint(&a));
+        assert_ne!(genome_fingerprint(&a), genome_fingerprint(&b));
     }
 
     #[test]

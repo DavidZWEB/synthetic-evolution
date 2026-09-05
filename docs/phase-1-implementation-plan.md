@@ -23,7 +23,8 @@ referenced in commit messages.
 | M8 The tick | done |
 | M9 WASM shell and renderer | shell, worker, transport and renderer done; sim does not hold 1× at 5k |
 | M10 Instrumentation | done |
-| M11–M12 | not started |
+| M11 Headless telemetry | done |
+| M12 Acceptance | not started |
 
 ## Cross-cutting rules for this phase
 
@@ -817,6 +818,57 @@ Build-plan task 10.
 
 **Done when:** a 500k-tick headless run produces a metrics file, and `diagnose` correctly
 identifies a deliberately induced extinction and a deliberately induced monoculture.
+
+**Implemented.** A run writes a versioned header with the binary version, full params,
+seed, and control protocol, followed by interval samples. Every sample contains evolving
+and random-control vectors side by side: population, exact genome variants, descendant
+count, agent and plant energy, speed, age, brain/genome size, mean absolute connection
+weight, and cumulative energy-ledger values. The final sample includes both state hashes.
+Metrics are sampled by the native shell after completed ticks; no counters or callbacks
+were added to the hot loop.
+
+The control is a second `World` built from the same seed and `SimParams`. Founders are
+therefore identical. At each control birth, weights, biases, time constants, and
+oscillator periods are freshly randomized while topology, sensors, body traits, spatial
+viscosity, and the energy economy remain inherited. This breaks neural heredity without
+letting the control compete with the population it measures.
+
+`diagnose` reports early or late extinction, exact-genome monoculture, energy drift,
+brain bloat, stable idling, and aggregate similarity to the random control. Phase 1 has
+no species clustering, so a species-based monoculture diagnosis is explicitly
+unavailable until Phase 2; exact genome variants are the narrower signal available now.
+Predation and signaling are likewise reported unavailable until those systems exist.
+Mean absolute connection weight is a drift descriptor, not evidence of adaptation:
+neutral mutation alone can move it.
+
+The mechanical criterion was exercised with a 500,000-tick, same-seed paired run using
+a deliberately cheap 32-slot, 8×8-field fixture. Both cohorts reached and retained the
+32-agent ceiling, each ended with 24 living descendants, and their final state hashes
+diverged (`ddcbd7e206890fbb` evolving, `7a4526c29488e1cb` control). It produced a header
+plus six samples in about 65 seconds in release mode:
+
+```bash
+cargo run --release -p native -- \
+  --seed 42 --ticks 500000 --founders 8 --sample-every 100000 \
+  --params shells/native/tests/fixtures/sustaining.json --metrics run.jsonl
+```
+
+Separate committed CLI fixtures induce and identify early extinction and stable
+exact-genome monoculture.
+
+The sustaining fixture sets metabolic costs to zero and is intentionally not evidence
+of ecological viability; it exists to exercise 500k ticks, births, randomized control
+heredity, paired sampling, and final hashes. Shipped defaults still go extinct before
+selection can accumulate, which remains the M12 tuning question. Brain-inheritance mode
+is experiment configuration like `SimParams`, not mutable world state, so it is not
+folded into `state_hash`; the existing golden constants and default behavior are unchanged.
+
+The header embeds the package version and Git revision (`-dirty` when the working tree
+does not match that revision), and the parser rejects incomplete streams or missing
+final hashes. Random-control comparisons require at least three samples in which both
+cohorts still contain living descendants; identical founders or two extinct worlds are
+reported as unavailable rather than as evidence. This remains a single-seed comparison
+with no variance estimate — M12 acceptance owns the required multi-seed judgment.
 
 ## M12 — Acceptance
 

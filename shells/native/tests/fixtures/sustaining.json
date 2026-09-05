@@ -1,0 +1,44 @@
+{
+  "world": {
+    "size": 100.0,
+    "max_agents": 32,
+    "founder_spread": 0.2
+  },
+  "metabolism": {
+    "base": 0.0,
+    "k_size": 0.0,
+    "k_brain": 0.0,
+    "k_sensor": 0.0,
+    "k_move": 0.0
+  },
+  "sensing": {
+    "vision_range": 20.0,
+    "vision_rays": 1,
+    "chemo_radius": 20.0
+  },
+  "brain": {
+    "hidden_neurons": 2,
+    "oscillators": 1
+  },
+  "reproduction": {
+    "start_energy": 1.0,
+    "threshold": 1.1,
+    "gate": 0.0,
+    "spawn_radius": 2.0,
+    "maturity_ticks": 0
+  },
+  "feeding": {
+    "rate": 1.0,
+    "gate": 0.0,
+    "reach": 20.0
+  },
+  "plants": {
+    "energy_input_rate": 100.0,
+    "max_plants": 100,
+    "max_energy": 10.0,
+    "radius": 2.0
+  },
+  "chemo": {
+    "cells": [8, 8, 1]
+  }
+}

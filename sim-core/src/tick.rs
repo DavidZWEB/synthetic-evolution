@@ -28,6 +28,7 @@ use glam::Vec3;
 
 use crate::agents::SpawnSpec;
 use crate::brain;
+use crate::control::BrainInheritance;
 use crate::effectors::{self, AgentIntents};
 use crate::feeding;
 use crate::genome::{self, BodyTrait};
@@ -327,7 +328,15 @@ impl World {
             let genome = self.agents.genome[p];
             scratch.clear();
             scratch.extend_from_slice(self.genes.get(genome));
-            mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
+            match self.brain_inheritance {
+                BrainInheritance::Evolving => {
+                    mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
+                }
+                BrainInheritance::RandomizedAtBirth => {
+                    self.plan
+                        .randomize_brain(&mut self.rng, &self.params, &mut scratch);
+                }
+            }
 
             let position = reproduction::offspring_position(
                 self.agents.position[p],
@@ -381,6 +390,8 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::BrainInheritance;
+    use crate::genome::Gene;
     use crate::params::SimParams;
 
     fn world_of(agents: u32, seed: u64) -> World {
@@ -520,5 +531,45 @@ mod tests {
         for id in world.pool().iter_live() {
             assert_eq!(world.agents().age[id.index()], 25);
         }
+    }
+
+    #[test]
+    fn random_control_breaks_neural_heredity_at_birth() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 8;
+        params.reproduction.maturity_ticks = 0;
+        let mut world =
+            World::new_with_brain_inheritance(17, params, BrainInheritance::RandomizedAtBirth)
+                .expect("valid params");
+        let parent = world
+            .spawn_founder(Vec3::new(500.0, 500.0, 0.0))
+            .expect("pool has room");
+        let parent_genome = world.genome(parent).to_vec();
+        let rich = world.params().reproduction.threshold + 100.0;
+        world.agents_mut().energy[parent.index()] = rich;
+        world.intents_mut().reproduce[parent.index()] = 1.0;
+
+        assert_eq!(world.resolve_births(), 1);
+        let child = world
+            .pool()
+            .iter_live()
+            .find(|&id| id != parent)
+            .expect("child was born");
+        let child_genome = world.genome(child);
+
+        let mut neural_change = false;
+        for (parent_gene, child_gene) in parent_genome.iter().zip(child_genome) {
+            match (parent_gene, child_gene) {
+                (Gene::Neuron(_), Gene::Neuron(_)) | (Gene::Connection(_), Gene::Connection(_)) => {
+                    neural_change |= parent_gene != child_gene;
+                }
+                _ => assert_eq!(
+                    parent_gene, child_gene,
+                    "control changed inherited non-neural genes"
+                ),
+            }
+        }
+        assert!(neural_change, "control child inherited its parent's brain");
     }
 }

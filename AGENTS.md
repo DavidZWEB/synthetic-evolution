@@ -152,6 +152,8 @@ tests still go through the accessors.
 cargo test --workspace               # unit tests, invariant scan, no-alloc, golden hash
 wasm-pack test --node shells/wasm    # the other half of the hash: wasm agrees with native
 cargo run -p native -- --seed 42 --ticks 100000
+cargo run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
 npm run wasm --prefix web            # rebuild bindings into web/src/wasm/
 npm test --prefix web                # Node tests for browser-independent client logic
 npm run check --prefix web           # TypeScript and Svelte diagnostics
