@@ -78,16 +78,18 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           action: upload
-          # Vite's project root, and its build output relative to that root.
-          app_location: web
-          output_location: dist
+          # When skip_app_build is true, this action zips and uploads app_location
+          # verbatim — it does NOT combine it with output_location, despite
+          # output_location being accepted as an input. Pointing app_location at
+          # web/ (the source) deployed the unbuilt index.html referencing
+          # /src/main.js, which the browser can't resolve: a blank screen with no
+          # build error anywhere. app_location must be the built output itself.
+          app_location: web/dist
           # No Azure Functions backend; the sim runs entirely in the browser.
           api_location: ""
           # dist/ is already built above. Letting Oryx rebuild would fail on the
           # missing Rust toolchain.
           skip_app_build: true
-          skip_api_build: true
-          production_branch: main
 
   close_pull_request:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
