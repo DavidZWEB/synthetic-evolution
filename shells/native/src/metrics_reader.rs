@@ -79,6 +79,12 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
+                next.params.validate().map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("metrics header contains {error}"),
+                    )
+                })?;
                 header = Some(next);
             }
             MetricsRecord::Header(_) if !samples.is_empty() => {
@@ -239,5 +245,48 @@ mod tests {
             .err()
             .expect("record after final sample was accepted");
         assert!(error.to_string().contains("after the final sample"));
+    }
+
+    #[test]
+    fn rejects_invalid_header_params() {
+        let mut params = SimParams::default();
+        params.world.dt = 0.0;
+        let records = [
+            MetricsRecord::Header(RunHeader {
+                schema_version: SCHEMA_VERSION,
+                sim_version: "test".to_owned(),
+                source_revision: "test".to_owned(),
+                phase: 1,
+                seed: "42".to_owned(),
+                ticks: 0,
+                founders: 1,
+                sample_every: 5,
+                params,
+                control: "randomized_at_birth".to_owned(),
+            }),
+            MetricsRecord::Sample(RunSample {
+                tick: 0,
+                evolving: WorldMetrics::default(),
+                random_control: WorldMetrics::default(),
+                final_state_hashes: Some(StateHashes {
+                    evolving: "1".to_owned(),
+                    random_control: "1".to_owned(),
+                }),
+            }),
+        ];
+        let jsonl = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap()
+            .join("\n");
+        let error = parse_metrics(Cursor::new(jsonl))
+            .err()
+            .expect("invalid params were accepted");
+        assert!(
+            error
+                .to_string()
+                .contains("invalid SimParams: world.dt must be positive")
+        );
     }
 }

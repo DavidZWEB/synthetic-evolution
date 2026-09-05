@@ -40,11 +40,11 @@ pub struct EnergyLedger {
 
 impl EnergyLedger {
     /// Starts a ledger against the energy already present.
-    pub fn opening(stock: f32) -> Self {
+    pub fn opening(stock: f64) -> Self {
         Self {
             input: 0.0,
             dissipated: 0.0,
-            initial_stock: stock as f64,
+            initial_stock: stock,
         }
     }
 
@@ -85,8 +85,8 @@ impl EnergyLedger {
     /// being dissipated. Either is a broken economy, and the sign says which mistake to
     /// look for.
     #[inline]
-    pub fn drift(&self, stock: f32) -> f64 {
-        stock as f64 - self.expected_stock()
+    pub fn drift(&self, stock: f64) -> f64 {
+        stock - self.expected_stock()
     }
 }
 

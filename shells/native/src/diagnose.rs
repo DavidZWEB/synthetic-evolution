@@ -10,8 +10,12 @@ use serde::Serialize;
 
 use crate::Result;
 use crate::cli::DiagnoseArgs;
+use crate::diagnose_output::print_human;
 use crate::metrics::{RunHeader, RunSample, WorldMetrics};
 use crate::metrics_reader::read_metrics;
+
+const IDLE_SPEED_FRACTION: f64 = 0.001;
+const ENERGY_NOISE_FRACTION: f64 = 0.001;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Finding {
@@ -21,11 +25,32 @@ pub struct Finding {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct MetricComparison {
+    pub evolving: f64,
+    pub random_control: f64,
+    pub relative_gap: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ControlMetrics {
+    pub population: MetricComparison,
+    pub mean_agent_energy: MetricComparison,
+    pub mean_speed: MetricComparison,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ComparisonReport {
+    pub tail_means: Option<ControlMetrics>,
+    pub findings: Vec<Finding>,
+    pub unavailable: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiagnosisReport {
     pub samples: usize,
     pub evolving: Vec<Finding>,
     pub random_control: Vec<Finding>,
-    pub comparison: Vec<Finding>,
+    pub comparison: ComparisonReport,
     pub unavailable: Vec<String>,
 }
 
@@ -35,6 +60,15 @@ enum Cohort {
     Control,
 }
 
+impl Cohort {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Evolving => "evolving",
+            Self::Control => "random control",
+        }
+    }
+}
+
 pub fn run(args: DiagnoseArgs) -> Result<()> {
     let data = read_metrics(&args.metrics)?;
     let report = diagnose(&data.header, &data.samples);
@@ -42,45 +76,31 @@ pub fn run(args: DiagnoseArgs) -> Result<()> {
         serde_json::to_writer_pretty(io::stdout(), &report)?;
         println!();
     } else {
-        print_human(&report);
+        print_human(&report)?;
     }
     Ok(())
 }
 
 pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
-    let (comparison, comparison_unavailable) = compare_control(samples);
-    let observed_ticks = samples
-        .last()
-        .zip(samples.first())
-        .map_or(0, |(last, first)| last.tick.saturating_sub(first.tick));
-    let idle_observation = required_idle_observation(header, samples);
+    let comparison = compare_control(header, samples);
+    let (evolving, evolving_idle_unavailable) = diagnose_cohort(header, samples, Cohort::Evolving);
+    let (random_control, control_idle_unavailable) =
+        diagnose_cohort(header, samples, Cohort::Control);
     let mut unavailable = vec![
         "species-cluster diagnostics require Phase 2; Phase 1 monoculture uses exact genome variants".to_owned(),
         "predator/prey diagnostics require Phase 3 trophic roles".to_owned(),
         "signal-correlation diagnostics require Phase 4 signaling".to_owned(),
     ];
-    if let Some(reason) = comparison_unavailable {
+    if let Some(reason) = evolving_idle_unavailable {
         unavailable.push(reason);
     }
-    if observed_ticks < idle_observation {
-        unavailable.push(format!(
-            "stable-idle diagnosis requires {idle_observation} observed ticks; file covers {observed_ticks}"
-        ));
+    if let Some(reason) = control_idle_unavailable {
+        unavailable.push(reason);
     }
     DiagnosisReport {
         samples: samples.len(),
-        evolving: diagnose_cohort(
-            header,
-            samples,
-            Cohort::Evolving,
-            observed_ticks >= idle_observation,
-        ),
-        random_control: diagnose_cohort(
-            header,
-            samples,
-            Cohort::Control,
-            observed_ticks >= idle_observation,
-        ),
+        evolving,
+        random_control,
         comparison,
         unavailable,
     }
@@ -90,8 +110,7 @@ fn diagnose_cohort(
     header: &RunHeader,
     samples: &[RunSample],
     cohort: Cohort,
-    can_diagnose_idling: bool,
-) -> Vec<Finding> {
+) -> (Vec<Finding>, Option<String>) {
     let mut findings = Vec::new();
     let metrics: Vec<(u64, &WorldMetrics)> = samples
         .iter()
@@ -166,7 +185,7 @@ fn diagnose_cohort(
         .last()
         .is_some_and(|(_, sample)| sample.population == 0)
     {
-        return findings;
+        return (findings, None);
     }
 
     let live_tail: Vec<(u64, &WorldMetrics)> = metrics
@@ -217,62 +236,118 @@ fn diagnose_cohort(
         });
     }
 
-    if can_diagnose_idling && live_tail.len() >= 3 {
-        let min_population = live_tail
+    let requirements = match idle_requirements(header, &metrics) {
+        Ok(requirements) => requirements,
+        Err(reason) => {
+            return (
+                findings,
+                Some(format!(
+                    "stable-idle diagnosis for {} is unavailable: {reason}",
+                    cohort.name()
+                )),
+            );
+        }
+    };
+    let mut idle_tail = Vec::new();
+    for &(tick, sample) in metrics.iter().rev() {
+        if sample.population == 0 {
+            break;
+        }
+        idle_tail.push((tick, sample));
+        let span = idle_tail[0].0.saturating_sub(tick);
+        if idle_tail.len() >= 3 && span >= requirements.observation_ticks {
+            break;
+        }
+    }
+    let idle_span = idle_tail
+        .first()
+        .zip(idle_tail.last())
+        .map_or(0, |(newest, oldest)| newest.0.saturating_sub(oldest.0));
+    if idle_tail.len() < 3 || idle_span < requirements.observation_ticks {
+        return (
+            findings,
+            Some(format!(
+                "stable-idle diagnosis for {} requires {} trailing live ticks across at least three samples; measured tail covers {idle_span} ticks across {} samples",
+                cohort.name(),
+                requirements.observation_ticks,
+                idle_tail.len()
+            )),
+        );
+    }
+
+    {
+        let min_population = idle_tail
             .iter()
             .map(|(_, sample)| sample.population)
             .min()
             .unwrap_or(0);
-        let max_population = live_tail
+        let max_population = idle_tail
             .iter()
             .map(|(_, sample)| sample.population)
             .max()
             .unwrap_or(0);
-        let mean_speed = live_tail
+        let mean_speed = idle_tail
             .iter()
             .map(|(_, sample)| sample.speed.mean)
             .sum::<f64>()
-            / live_tail.len() as f64;
-        let idle_speed = header.params.movement.max_speed as f64 * 0.001;
+            / idle_tail.len() as f64;
         if max_population > 0
             && min_population as f64 >= max_population as f64 * 0.9
-            && mean_speed < idle_speed
+            && mean_speed < requirements.speed_threshold
         {
             findings.push(Finding {
                 code: "stable_but_idle",
                 signal: format!(
-                    "population stayed within {min_population}..={max_population} while mean speed was {mean_speed:.4} (idle threshold {idle_speed:.4})"
+                    "population stayed within {min_population}..={max_population} for {idle_span} ticks while mean speed was {mean_speed:.4} (idle threshold {:.4})",
+                    requirements.speed_threshold
                 ),
                 likely_causes: vec!["metabolism too cheap; idling is viable"],
             });
         }
     }
 
-    findings
+    (findings, None)
 }
 
-fn required_idle_observation(header: &RunHeader, samples: &[RunSample]) -> u64 {
-    let Some(first) = samples
+struct IdleRequirements {
+    observation_ticks: u64,
+    speed_threshold: f64,
+}
+
+fn idle_requirements(
+    header: &RunHeader,
+    metrics: &[(u64, &WorldMetrics)],
+) -> std::result::Result<IdleRequirements, &'static str> {
+    let Some(first) = metrics
         .iter()
-        .map(|sample| &sample.evolving)
+        .map(|(_, sample)| *sample)
         .find(|sample| sample.population > 0)
     else {
-        return 0;
+        return Err("there are no live samples");
     };
     let params = &header.params;
     let cost = params.metabolism.base as f64
         + params.metabolism.k_size as f64 * params.body.size as f64 * params.body.size as f64
         + params.metabolism.k_brain as f64 * first.brain_units.mean
         + params.metabolism.k_sensor as f64 * first.sensor_load.mean;
-    let idle_lifetime = if cost <= 0.0 {
-        0
-    } else {
-        (params.reproduction.start_energy as f64 / cost).ceil() as u64
-    };
-    idle_lifetime.max(params.reproduction.maturity_ticks as u64)
+    if !cost.is_finite() || cost <= 0.0 {
+        return Err("idle metabolic cost is not positive");
+    }
+    let speed_threshold = params.movement.max_speed as f64 * IDLE_SPEED_FRACTION;
+    if !speed_threshold.is_finite() || speed_threshold <= 0.0 {
+        return Err("movement.max_speed does not define a positive idle threshold");
+    }
+    let idle_lifetime = (params.reproduction.start_energy as f64 / cost).ceil();
+    if !idle_lifetime.is_finite() || idle_lifetime > u64::MAX as f64 {
+        return Err("idle lifetime exceeds the measurable tick range");
+    }
+    Ok(IdleRequirements {
+        observation_ticks: (idle_lifetime as u64).max(params.reproduction.maturity_ticks as u64),
+        speed_threshold,
+    })
 }
 
-fn compare_control(samples: &[RunSample]) -> (Vec<Finding>, Option<String>) {
+fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonReport {
     let tail: Vec<_> = samples
         .iter()
         .rev()
@@ -280,25 +355,27 @@ fn compare_control(samples: &[RunSample]) -> (Vec<Finding>, Option<String>) {
         .take(5)
         .collect();
     if tail.len() < 3 {
-        return (
-            Vec::new(),
-            Some(
+        return ComparisonReport {
+            tail_means: None,
+            findings: Vec::new(),
+            unavailable: Some(
                 "random-control comparison requires at least three samples with living descendants in both cohorts"
                     .to_owned(),
             ),
-        );
+        };
     }
     if tail
         .iter()
         .any(|sample| sample.evolving.population < 10 || sample.random_control.population < 10)
     {
-        return (
-            Vec::new(),
-            Some(
+        return ComparisonReport {
+            tail_means: None,
+            findings: Vec::new(),
+            unavailable: Some(
                 "random-control comparison requires at least 10 living agents in both cohorts"
                     .to_owned(),
             ),
-        );
+        };
     }
     let mean = |value: fn(&WorldMetrics) -> f64, cohort: Cohort| {
         tail.iter()
@@ -306,69 +383,71 @@ fn compare_control(samples: &[RunSample]) -> (Vec<Finding>, Option<String>) {
             .sum::<f64>()
             / tail.len() as f64
     };
-    let population_gap = relative_gap(
+    let population = compare_metric(
         mean(|m| m.population as f64, Cohort::Evolving),
         mean(|m| m.population as f64, Cohort::Control),
+        1.0,
     );
-    let energy_gap = relative_gap(
+    let mean_agent_energy = compare_metric(
         mean(|m| m.agent_energy.mean, Cohort::Evolving),
         mean(|m| m.agent_energy.mean, Cohort::Control),
+        header.params.reproduction.start_energy as f64 * ENERGY_NOISE_FRACTION,
     );
-    let speed_gap = relative_gap(
+    let mean_speed = compare_metric(
         mean(|m| m.speed.mean, Cohort::Evolving),
         mean(|m| m.speed.mean, Cohort::Control),
+        header.params.movement.max_speed as f64 * IDLE_SPEED_FRACTION,
     );
+    let tail_means = ControlMetrics {
+        population,
+        mean_agent_energy,
+        mean_speed,
+    };
 
-    if population_gap < 0.1 && energy_gap < 0.1 && speed_gap < 0.1 {
-        (
-            vec![Finding {
-                code: "indistinguishable_from_random_control",
-                signal: format!(
-                    "single-seed tail relative gaps: population={population_gap:.3}, energy={energy_gap:.3}, speed={speed_gap:.3}"
-                ),
-                likely_causes: vec![
-                    "observed behavior may not reflect cumulative neural evolution",
-                    "repeat across seeds before drawing a conclusion",
-                ],
-            }],
-            None,
-        )
+    let findings = if tail_means.population.relative_gap < 0.1
+        && tail_means.mean_agent_energy.relative_gap < 0.1
+        && tail_means.mean_speed.relative_gap < 0.1
+    {
+        vec![Finding {
+            code: "indistinguishable_from_random_control",
+            signal: format!(
+                "single-seed tail relative gaps: population={:.3}, energy={:.3}, speed={:.3}",
+                tail_means.population.relative_gap,
+                tail_means.mean_agent_energy.relative_gap,
+                tail_means.mean_speed.relative_gap,
+            ),
+            likely_causes: vec![
+                "observed behavior may not reflect cumulative neural evolution",
+                "repeat across seeds before drawing a conclusion",
+            ],
+        }]
     } else {
-        (Vec::new(), None)
+        Vec::new()
+    };
+    ComparisonReport {
+        tail_means: Some(tail_means),
+        findings,
+        unavailable: None,
     }
 }
 
-fn relative_gap(a: f64, b: f64) -> f64 {
-    let scale = a.abs().max(b.abs()).max(1e-9);
-    (a - b).abs() / scale
+fn compare_metric(evolving: f64, random_control: f64, noise_floor: f64) -> MetricComparison {
+    let scale = evolving
+        .abs()
+        .max(random_control.abs())
+        .max(noise_floor)
+        .max(f64::EPSILON);
+    MetricComparison {
+        evolving,
+        random_control,
+        relative_gap: (evolving - random_control).abs() / scale,
+    }
 }
 
 fn select(sample: &RunSample, cohort: Cohort) -> &WorldMetrics {
     match cohort {
         Cohort::Evolving => &sample.evolving,
         Cohort::Control => &sample.random_control,
-    }
-}
-
-fn print_human(report: &DiagnosisReport) {
-    println!("samples: {}", report.samples);
-    print_cohort("evolving", &report.evolving);
-    print_cohort("random control", &report.random_control);
-    print_cohort("comparison", &report.comparison);
-    println!("unavailable:");
-    for item in &report.unavailable {
-        println!("  - {item}");
-    }
-}
-
-fn print_cohort(name: &str, findings: &[Finding]) {
-    println!("{name}:");
-    if findings.is_empty() {
-        println!("  - no known Phase 1 failure signature detected");
-    }
-    for finding in findings {
-        println!("  - {}: {}", finding.code, finding.signal);
-        println!("    likely: {}", finding.likely_causes.join("; "));
     }
 }
 
@@ -453,12 +532,13 @@ mod tests {
                 .iter()
                 .any(|finding| finding.code == "early_extinction")
         );
-        assert!(report.comparison.is_empty());
+        assert!(report.comparison.findings.is_empty());
         assert!(
             report
+                .comparison
                 .unavailable
-                .iter()
-                .any(|reason| reason.contains("living descendants"))
+                .as_deref()
+                .is_some_and(|reason| reason.contains("living descendants"))
         );
     }
 
@@ -585,6 +665,61 @@ mod tests {
     }
 
     #[test]
+    fn recent_idle_samples_do_not_stand_in_for_an_idle_lifetime() {
+        let mut samples = vec![
+            sample(0, 100, 4),
+            sample(9_746, 100, 4),
+            sample(9_996, 100, 4),
+            sample(9_997, 100, 4),
+            sample(9_998, 100, 4),
+            sample(9_999, 100, 4),
+            sample(10_000, 100, 4),
+        ];
+        for sample in &mut samples[2..] {
+            sample.evolving.speed.mean = 0.0;
+        }
+
+        let report = diagnose(&header(10_000), &samples);
+        assert!(
+            !report
+                .evolving
+                .iter()
+                .any(|finding| finding.code == "stable_but_idle")
+        );
+    }
+
+    #[test]
+    fn invalid_idle_thresholds_are_reported_unavailable() {
+        let samples = vec![
+            sample(0, 100, 4),
+            sample(1_000, 100, 4),
+            sample(2_000, 100, 4),
+        ];
+        let mut no_cost = header(2_000);
+        no_cost.params.metabolism.base = 0.0;
+        no_cost.params.metabolism.k_size = 0.0;
+        no_cost.params.metabolism.k_brain = 0.0;
+        no_cost.params.metabolism.k_sensor = 0.0;
+        let report = diagnose(&no_cost, &samples);
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("idle metabolic cost is not positive"))
+        );
+
+        let mut no_speed = header(2_000);
+        no_speed.params.movement.max_speed = 0.0;
+        let report = diagnose(&no_speed, &samples);
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("movement.max_speed"))
+        );
+    }
+
+    #[test]
     fn control_comparison_requires_the_treatment_to_have_occurred() {
         let samples = vec![
             sample(0, 100, 4),
@@ -592,12 +727,13 @@ mod tests {
             sample(2_000, 100, 4),
         ];
         let report = diagnose(&header(2_000), &samples);
-        assert!(report.comparison.is_empty());
+        assert!(report.comparison.findings.is_empty());
         assert!(
             report
+                .comparison
                 .unavailable
-                .iter()
-                .any(|reason| reason.contains("living descendants"))
+                .as_deref()
+                .is_some_and(|reason| reason.contains("living descendants"))
         );
     }
 
@@ -616,8 +752,81 @@ mod tests {
         assert!(
             report
                 .comparison
+                .findings
                 .iter()
                 .any(|finding| finding.code == "indistinguishable_from_random_control")
         );
+        assert!(report.comparison.tail_means.is_some());
+    }
+
+    #[test]
+    fn near_zero_control_metrics_are_treated_as_noise() {
+        let mut samples = vec![
+            sample(0, 100, 4),
+            sample(1_000, 100, 4),
+            sample(2_000, 100, 4),
+        ];
+        for sample in &mut samples {
+            sample.evolving.descendants = 10;
+            sample.random_control.descendants = 10;
+            sample.evolving.agent_energy.mean = 1e-8;
+            sample.random_control.agent_energy.mean = 2e-8;
+        }
+
+        let report = diagnose(&header(2_000), &samples);
+        assert!(
+            report
+                .comparison
+                .findings
+                .iter()
+                .any(|finding| finding.code == "indistinguishable_from_random_control")
+        );
+        assert!(
+            report
+                .comparison
+                .tail_means
+                .as_ref()
+                .unwrap()
+                .mean_agent_energy
+                .relative_gap
+                < 0.1
+        );
+    }
+
+    #[test]
+    fn distinct_control_metrics_are_reported_without_a_failure_claim() {
+        let mut samples = vec![sample(0, 32, 4), sample(1_000, 32, 4), sample(2_000, 32, 4)];
+        for sample in &mut samples {
+            sample.evolving.descendants = 10;
+            sample.random_control.descendants = 10;
+            sample.evolving.agent_energy.mean = 13_362.7;
+            sample.random_control.agent_energy.mean = 15_823.3;
+            sample.evolving.speed.mean = 0.988;
+            sample.random_control.speed.mean = 1.458;
+        }
+
+        let report = diagnose(&header(2_000), &samples);
+        assert!(report.comparison.findings.is_empty());
+        let metrics = report.comparison.tail_means.as_ref().unwrap();
+        assert!(metrics.mean_agent_energy.relative_gap > 0.1);
+        assert!(metrics.mean_speed.relative_gap > 0.1);
+        assert_eq!(metrics.population.evolving, 32.0);
+        assert_eq!(metrics.population.random_control, 32.0);
+    }
+
+    #[test]
+    fn human_report_says_when_control_comparison_did_not_run() {
+        let samples = vec![
+            sample(0, 100, 4),
+            sample(1_000, 100, 4),
+            sample(2_000, 100, 4),
+        ];
+        let report = diagnose(&header(2_000), &samples);
+        let mut output = Vec::new();
+        crate::diagnose_output::write_human(&mut output, &report).expect("writes");
+        let output = String::from_utf8(output).expect("UTF-8");
+        assert!(output.contains(
+            "comparison:\n  - not run: random-control comparison requires at least three samples"
+        ));
     }
 }

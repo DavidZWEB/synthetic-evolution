@@ -512,11 +512,15 @@ impl World {
     }
 
     /// Every joule the world currently holds, in plants and in agents.
-    pub fn total_energy(&self) -> f32 {
-        let agents: f32 = self
+    ///
+    /// This fixed-order `f64` aggregation is shared by ledger opening, drift checks,
+    /// and shell telemetry. Using a separate `f32` sum for any one of them manufactures
+    /// apparent energy drift from rounding alone (spec §5.1).
+    pub fn total_energy(&self) -> f64 {
+        let agents: f64 = self
             .pool
             .iter_live()
-            .map(|id| self.agents.energy[id.index()])
+            .map(|id| self.agents.energy[id.index()] as f64)
             .sum();
         self.plants.total_energy() + agents
     }

@@ -865,12 +865,15 @@ selection can accumulate, which remains the M12 tuning question. Brain-inheritan
 is experiment configuration like `SimParams`, not mutable world state, so it is not
 folded into `state_hash`; the existing golden constants and default behavior are unchanged.
 
-The header embeds the package version and Git revision (`-dirty` when the working tree
-does not match that revision), and the parser rejects incomplete streams or missing
-final hashes. Random-control comparisons require at least three samples in which both
-cohorts still contain living descendants; identical founders or two extinct worlds are
-reported as unavailable rather than as evidence. This remains a single-seed comparison
-with no variance estimate — M12 acceptance owns the required multi-seed judgment.
+The header embeds the package version and Git revision (`-dirty` when the runtime Rust
+sources, manifests, lockfile, or pinned toolchain do not match that revision), and the
+parser rejects incomplete streams or missing final hashes. Random-control comparisons
+require at least three samples in which both cohorts still contain living descendants;
+identical founders or two extinct worlds are reported as unavailable rather than as
+evidence. Eligible comparisons always report both cohorts' tail means and relative gaps,
+whether or not those gaps trigger the indistinguishable-control warning. This remains a
+single-seed comparison with no variance estimate — M12 acceptance owns the required
+multi-seed judgment.
 
 ## M12 — Acceptance
 

@@ -6,6 +6,7 @@
 
 pub mod cli;
 pub mod diagnose;
+mod diagnose_output;
 pub mod metrics;
 mod metrics_reader;
 pub mod run;

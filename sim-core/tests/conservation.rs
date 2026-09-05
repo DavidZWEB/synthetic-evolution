@@ -42,11 +42,7 @@ fn populated_with_fill(seed: u64, agents: u32, fill: f32) -> (World, SimParams) 
 /// against an absolute figure — a millijoule of float error means something very
 /// different in a world holding 10 joules than one holding 10 million.
 fn relative_drift(world: &World) -> f64 {
-    let scale = world
-        .ledger()
-        .input()
-        .max(world.total_energy() as f64)
-        .max(1.0);
+    let scale = world.ledger().input().max(world.total_energy()).max(1.0);
     world.energy_drift().abs() / scale
 }
 
@@ -218,7 +214,7 @@ fn eating_moves_energy_without_creating_it() {
     let eaten = world.agents().energy[id.index()] - agent_before;
     assert!(eaten > 0.0, "nothing was eaten; is the gate right?");
     assert!(
-        (world.plants().total_energy() - (plants_before - eaten)).abs() < 1e-3,
+        (world.plants().total_energy() - (plants_before - eaten as f64)).abs() < 1e-3,
         "the plant did not lose what the agent gained"
     );
     assert!(

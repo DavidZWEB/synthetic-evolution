@@ -29,6 +29,8 @@ pub enum MetricsRecord {
 pub struct RunHeader {
     pub schema_version: u32,
     pub sim_version: String,
+    /// Git revision for the native runtime sources, with `-dirty` when that scope
+    /// differs from the commit.
     pub source_revision: String,
     pub phase: u32,
     /// Decimal text preserves the full u64 range in every JSON consumer.
@@ -182,28 +184,11 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
     }
 
     let ledger = world.ledger();
-    let plant_energy = world
-        .plants()
-        .energy()
-        .iter()
-        .try_fold(0.0, |sum, &value| {
-            let next = sum + value as f64;
-            if next.is_finite() {
-                Ok(next)
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "non-finite telemetry value for plant energy",
-                ))
-            }
-        })?;
-    let total_energy = energy.sum + plant_energy;
+    let plant_energy = finite(world.plants().total_energy(), "plant energy")?;
+    let total_energy = finite(world.total_energy(), "total energy")?;
     let cumulative_energy_input = finite(ledger.input(), "cumulative energy input")?;
     let cumulative_dissipation = finite(ledger.dissipated(), "cumulative dissipation")?;
-    let energy_drift = finite(
-        total_energy - ledger.expected_stock(),
-        "energy ledger drift",
-    )?;
+    let energy_drift = finite(world.energy_drift(), "energy ledger drift")?;
     Ok(WorldMetrics {
         population: world.population(),
         descendants,
@@ -293,6 +278,20 @@ mod tests {
             sample.final_state_hashes.as_ref().unwrap().random_control,
             "same-seed founders should begin in the same state"
         );
+    }
+
+    #[test]
+    fn opening_stock_and_telemetry_use_the_same_precision() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 1;
+        params.plants.max_plants = 10_000;
+        params.plants.max_energy = 1.0;
+        params.plants.initial_fill = 0.1;
+        let world = World::new(3, params).expect("valid params");
+
+        let metrics = sample_world(&world).expect("samples");
+        assert_eq!(metrics.total_energy, metrics.plant_energy);
+        assert_eq!(metrics.energy_drift, 0.0);
     }
 
     #[test]

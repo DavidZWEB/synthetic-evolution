@@ -111,8 +111,12 @@ impl Plants {
     }
 
     /// Total energy held across every plant. The stock half of the conservation check.
-    pub fn total_energy(&self) -> f32 {
-        self.energy.iter().sum()
+    ///
+    /// Values stay `f32` in world state, but the fixed-order sum is `f64`: ledger
+    /// opening and later measurements must use the same aggregation or summation
+    /// rounding alone looks like an energy leak (spec §5.1).
+    pub fn total_energy(&self) -> f64 {
+        self.energy.iter().map(|&energy| energy as f64).sum()
     }
 
     #[inline]
@@ -218,13 +222,13 @@ mod tests {
             (absorbed - expected).abs() < expected * 1e-3,
             "absorbed {absorbed}, input was {expected}"
         );
-        assert!((plants.total_energy() - absorbed).abs() < 1e-2);
+        assert!((plants.total_energy() - absorbed as f64).abs() < 1e-2);
     }
 
     #[test]
     fn the_larder_is_stocked_before_the_first_tick() {
         let (full, params) = world();
-        let ceiling = params.plants.max_energy * full.len() as f32;
+        let ceiling = params.plants.max_energy as f64 * full.len() as f64;
         assert!((full.total_energy() - ceiling).abs() < 1e-1);
 
         let (half, _) = filled(0.5);
@@ -243,7 +247,7 @@ mod tests {
         for _ in 0..100_000 {
             plants.grow(&params.plants, params.world.dt);
         }
-        let ceiling = params.plants.max_energy * plants.len() as f32;
+        let ceiling = params.plants.max_energy as f64 * plants.len() as f64;
         assert!(
             (plants.total_energy() - ceiling).abs() < 1e-1,
             "did not reach carrying capacity: {} of {ceiling}",
@@ -302,7 +306,7 @@ mod tests {
         }
         let before = plants.total_energy();
         let taken = plants.take(3, 1.0) + plants.take(3, 1e9) + plants.take(3, 1.0);
-        assert!((plants.total_energy() + taken - before).abs() < 1e-2);
+        assert!((plants.total_energy() + taken as f64 - before).abs() < 1e-2);
         assert_eq!(
             plants.energy()[3],
             0.0,

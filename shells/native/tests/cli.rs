@@ -131,3 +131,64 @@ fn diagnose_finds_a_deliberately_collapsed_genome_population() {
             .any(|finding| finding["code"] == "monoculture")
     );
 }
+
+#[test]
+fn plain_run_prints_a_summary_without_streaming_metrics() {
+    let output = Command::new(env!("CARGO_BIN_EXE_native"))
+        .args([
+            "--ticks",
+            "0",
+            "--founders",
+            "1",
+            "--params",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/sustaining.json"
+            ),
+        ])
+        .output()
+        .expect("run native shell");
+    assert!(
+        output.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty(), "plain run emitted metrics JSONL");
+    let summary = String::from_utf8(output.stderr).expect("summary UTF-8");
+    assert!(summary.contains("completed 0 ticks: evolving=1"));
+    assert!(summary.contains("control=1"));
+}
+
+#[test]
+fn metrics_stdout_remains_machine_readable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_native"))
+        .args([
+            "--ticks",
+            "0",
+            "--founders",
+            "1",
+            "--params",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/sustaining.json"
+            ),
+            "--metrics",
+            "-",
+        ])
+        .output()
+        .expect("run native shell");
+    assert!(
+        output.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines: Vec<_> = output.stdout.split(|byte| *byte == b'\n').collect();
+    assert_eq!(lines.len(), 3, "header, final sample, and trailing newline");
+    serde_json::from_slice::<serde_json::Value>(lines[0]).expect("header JSON");
+    serde_json::from_slice::<serde_json::Value>(lines[1]).expect("sample JSON");
+    assert!(
+        String::from_utf8(output.stderr)
+            .expect("summary UTF-8")
+            .contains("completed 0 ticks")
+    );
+}

@@ -44,33 +44,45 @@ pub fn run(args: RunArgs) -> Result<()> {
     seed(&mut evolving, args.founders)?;
     seed(&mut random_control, args.founders)?;
 
-    let output_path = args
-        .metrics
-        .as_deref()
-        .unwrap_or_else(|| std::path::Path::new("-"));
-    let mut output = metrics_writer(output_path)?;
-    write_record(&mut output, &MetricsRecord::Header(header))?;
-
-    let mut final_sample = sample_pair(&evolving, &random_control, args.ticks == 0)?;
-    write_record(&mut output, &MetricsRecord::Sample(final_sample.clone()))?;
+    let mut output = args.metrics.as_deref().map(metrics_writer).transpose()?;
+    let mut final_sample = None;
+    if let Some(output) = output.as_mut() {
+        write_record(output, &MetricsRecord::Header(header))?;
+        let sample = sample_pair(&evolving, &random_control, args.ticks == 0)?;
+        write_record(output, &MetricsRecord::Sample(sample.clone()))?;
+        final_sample = Some(sample);
+    }
 
     for _ in 0..args.ticks {
         evolving.step();
         random_control.step();
         let tick = evolving.tick_count();
-        if tick % args.sample_every == 0 || tick == args.ticks {
-            final_sample = sample_pair(&evolving, &random_control, tick == args.ticks)?;
-            write_record(&mut output, &MetricsRecord::Sample(final_sample.clone()))?;
+        if (tick % args.sample_every == 0 || tick == args.ticks)
+            && let Some(output) = output.as_mut()
+        {
+            let sample = sample_pair(&evolving, &random_control, tick == args.ticks)?;
+            write_record(output, &MetricsRecord::Sample(sample.clone()))?;
+            final_sample = Some(sample);
         }
     }
 
-    output.flush()?;
-    if args.metrics.is_some() {
-        eprintln!(
-            "completed {} ticks: evolving={} control={}",
-            args.ticks, final_sample.evolving.population, final_sample.random_control.population
-        );
+    if let Some(output) = output.as_mut() {
+        output.flush()?;
     }
+    let final_sample =
+        final_sample.map_or_else(|| sample_pair(&evolving, &random_control, true), Ok)?;
+    let hashes = final_sample
+        .final_state_hashes
+        .as_ref()
+        .expect("final sample always includes hashes");
+    eprintln!(
+        "completed {} ticks: evolving={} ({}) control={} ({})",
+        args.ticks,
+        final_sample.evolving.population,
+        hashes.evolving,
+        final_sample.random_control.population,
+        hashes.random_control
+    );
     Ok(())
 }
 

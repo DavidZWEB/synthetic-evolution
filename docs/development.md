@@ -188,8 +188,9 @@ cargo run -p native -- diagnose run.jsonl
 ```
 
 Use `--params params.json` for a partial or complete `SimParams` document; absent fields
-use shipped defaults. Use `--metrics -` to stream JSONL to stdout. `diagnose --json`
-emits a machine-readable report.
+use shipped defaults. Omit `--metrics` for only a completion summary and final hashes;
+use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-readable
+report.
 
 The committed files under `shells/native/tests/fixtures/` deliberately induce extinction,
 exact-genome monoculture, or a cheap sustaining population. They test telemetry and

@@ -1,31 +1,38 @@
-//! Embeds the source revision in metrics headers.
+//! Embeds the native experiment source revision in metrics headers.
+//!
+//! The dirty suffix covers runtime Rust sources, manifests, the lockfile, and the
+//! pinned toolchain. UI, documentation, and test-only edits do not change the binary
+//! whose run the header identifies.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+const REVISION_INPUTS: &[&str] = &[
+    "rust-toolchain.toml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "sim-core/Cargo.toml",
+    "sim-core/src",
+    "shells/native/Cargo.toml",
+    "shells/native/build.rs",
+    "shells/native/src",
+];
 
 fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_SHA");
-    watch_git_head();
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest.join("../../sim-core/src").display()
-    );
-    for path in [
-        manifest.join("src"),
-        manifest.join("Cargo.toml"),
-        manifest.join("../../Cargo.toml"),
-        manifest.join("../../Cargo.lock"),
-    ] {
-        println!("cargo:rerun-if-changed={}", path.display());
+    let workspace = manifest.join("../..");
+    watch_git_head(&workspace);
+    for path in REVISION_INPUTS {
+        println!("cargo:rerun-if-changed={}", workspace.join(path).display());
     }
 
     let revision = std::env::var("GITHUB_SHA")
         .ok()
-        .or_else(git_revision)
+        .or_else(|| git_revision(&workspace))
         .map(|revision| {
-            if git_is_dirty() {
+            if git_is_dirty(&workspace) {
                 format!("{revision}-dirty")
             } else {
                 revision
@@ -37,15 +44,24 @@ fn main() {
     );
 }
 
-fn git_is_dirty() -> bool {
-    Command::new("git")
-        .args(["status", "--porcelain", "--untracked-files=normal"])
+fn git_is_dirty(workspace: &Path) -> bool {
+    let mut command = Command::new("git");
+    command.arg("-C").arg(workspace).args([
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        "--",
+    ]);
+    command.args(REVISION_INPUTS);
+    command
         .output()
         .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
 }
 
-fn git_revision() -> Option<String> {
+fn git_revision(workspace: &Path) -> Option<String> {
     let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
         .args(["rev-parse", "HEAD"])
         .output()
         .ok()?;
@@ -55,8 +71,10 @@ fn git_revision() -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn watch_git_head() {
+fn watch_git_head(workspace: &Path) {
     let output = match Command::new("git")
+        .arg("-C")
+        .arg(workspace)
         .args(["rev-parse", "--absolute-git-dir"])
         .output()
     {

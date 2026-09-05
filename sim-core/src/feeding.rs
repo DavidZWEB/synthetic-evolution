@@ -71,7 +71,7 @@ mod tests {
         let mut plants = Plants::new(&params, &mut Rng::from_seed(1));
         plants.place_for_test(positions);
         for _ in 0..1_000_000 {
-            if plants.total_energy() >= energy * positions.len() as f32 {
+            if plants.total_energy() >= energy as f64 * positions.len() as f64 {
                 break;
             }
             plants.grow(&params.plants, params.world.dt);
@@ -85,7 +85,7 @@ mod tests {
         let before = plants.total_energy();
         let taken = ingest(Vec3::new(501.0, 500.0, 0.0), 5.0, 2.0, &mut plants);
         assert!((taken - 2.0).abs() < 1e-4, "took {taken}");
-        assert!((plants.total_energy() - (before - taken)).abs() < 1e-3);
+        assert!((plants.total_energy() - (before - taken as f64)).abs() < 1e-3);
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod tests {
         let held = plants.total_energy();
         let first = ingest(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
         let second = ingest(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
-        assert!((first - held).abs() < 1e-3, "took {first} of {held}");
+        assert!((first as f64 - held).abs() < 1e-3, "took {first} of {held}");
         assert_eq!(second, 0.0, "an emptied plant kept giving");
         assert!(plants.total_energy() < 1e-3);
     }
@@ -160,7 +160,7 @@ mod tests {
             taken += ingest(at, 6.0, 0.7, &mut plants);
         }
         assert!(
-            (plants.total_energy() + taken - before).abs() < 1e-2,
+            (plants.total_energy() + taken as f64 - before).abs() < 1e-2,
             "{before} -> {} held plus {taken} taken",
             plants.total_energy()
         );
