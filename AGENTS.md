@@ -3,7 +3,7 @@
 These instructions apply to every coding agent working in this repository. Tool-specific
 instruction files should point here rather than duplicate this guidance.
 
-**Synthetic Evolution** — an open-ended artificial life simulator: neural-network-brained organisms under implicit selection in a closed energy economy. Rust sim core compiled to WASM, Svelte + Three.js client. Full design in `docs/synthetic-evolution-spec.md`.
+**Synthetic Evolution** — an open-ended artificial life simulator: neural-network-brained organisms under implicit selection in a closed energy economy. Rust sim core compiled to WASM, Svelte + WebGL2 client. Full design in `docs/synthetic-evolution-spec.md`.
 
 **Before changing `sim-core`, simulation behavior, or serialized world state, read
 `docs/synthetic-evolution-spec.md` §1–§2 once and the sections relevant to the task.**
@@ -111,21 +111,21 @@ The forward-compatibility hedges in the phase plan are **exhaustive** — take t
 ```
 docs/          authoritative design, roadmap, and development workflow
 sim-core/      deterministic, I/O-free Rust simulation; all five invariants apply
-shells/wasm/   wasm-bindgen boundary and browser snapshot transport
+shells/wasm/   wasm-bindgen boundary and snapshot-memory export
 shells/native/ native CLI and host-side I/O
-web/           Svelte 5 + Three.js; src/generated/ is committed, src/wasm/ is not
+web/           Svelte 5 + WebGL2 renderer and snapshot transport
 scripts/       repository setup and automation
 ```
 
 Module responsibilities live in each module's `//!` documentation.
 `sim-core/src/lib.rs` is the authoritative module index; inspect the tree rather than
-maintaining a second inventory here.
+maintaining a second inventory here. `web/src/generated/` is committed; `web/src/wasm/`
+is generated locally and is not.
 
 ## Commands and validation
 
 ```
 ./scripts/setup.sh                   # fresh machine: toolchain, wasm-pack, npm ci
-cargo run -p native -- --seed 42 --ticks 100000
 npm run dev  --prefix web            # client on http://localhost:5173
 npm run wasm --prefix web            # rebuild only web/src/wasm/
 ```
@@ -137,8 +137,8 @@ authoritative full list.
 | Changed surface | Required checks |
 |---|---|
 | Rust | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace` |
-| Tick arithmetic or determinism | Rust checks plus `wasm-pack test --node shells/wasm` |
-| WASM boundary | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown`; `wasm-pack test --node shells/wasm` |
+| `sim-core` or WASM boundary | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown` |
+| Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
 | Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
 
@@ -161,16 +161,16 @@ The second cannot be self-certified. Phase success criteria are about whether so
 
 These are separate loops and must stay separate.
 
-**Tuning `SimParams` is yours.** Run headless sweeps, read metrics, and use `diagnose`
-once the active phase provides it (spec §7.9). Changing run parameters is tuning;
-changing checked-in defaults is also a deliberate behavior change and follows the
-golden-hash rule above. Changing algorithms, state flow, energy accounting, or selection
-pressures because metrics look wrong is a code or design change and requires human
-review first. Check spec §10 before proposing one — most symptoms there map to a
-parameter, not a bug.
+**Adjusting existing `SimParams` values is tuning.** That includes parameters which alter
+selection pressure. Changing checked-in defaults is also a deliberate behavior change
+and follows the golden-hash rule above. Changing algorithms, state flow, energy
+accounting, or the mechanisms that create selection pressure is a code or design change
+and requires human review first. Check spec §10 before proposing one — most symptoms
+there map to a parameter, not a bug.
 
-Always use several seeds per configuration and report the variance. A single good run
-is the most common way an automated report misleads.
+Use several seeds per configuration and report the variance. When the active phase
+provides the experiment tooling, use its headless metrics and `diagnose` command
+(spec §7.9). A single good run is the most common way an automated report misleads.
 
 **Never optimize toward a scalar objective.** Report a vector of metrics with the random-brain control alongside. Don't rank configurations or pick a winner; produce a shortlist for a human to watch. Every metric here is Goodhart-able — maximizing species count just means lowering the speciation threshold until noise counts as speciation.
 
