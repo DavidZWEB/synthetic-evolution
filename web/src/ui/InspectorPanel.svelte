@@ -97,6 +97,7 @@
     padding: 0.8rem;
     box-sizing: border-box;
     overflow: auto;
+    scrollbar-gutter: stable;
     border-left: 1px solid #2b2f38;
     background: rgb(14 16 20 / 96%);
     color: #d8dee9;
