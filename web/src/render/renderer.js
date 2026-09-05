@@ -82,20 +82,113 @@ function createResources(gl) {
  * Throws when WebGL2 is unavailable rather than falling back to canvas2d: a silent
  * downgrade to something that cannot hold the frame rate reads as "the sim is slow".
  */
-export function createRenderer(canvas, { worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy }) {
+export function createRenderer(canvas, options) {
+  const {
+    onContextLost = () => {},
+    onContextRestored = () => {},
+    onContextError = (error) => console.error(error),
+    ...initialConfig
+  } = options;
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL2 is unavailable in this browser');
+  const config = { ...initialConfig, plantColor: [...initialConfig.plantColor] };
+  let pass = createRenderPass(gl, canvas, config);
+  let savedView = null;
+  let selected = null;
+  let destroyed = false;
+
+  const contextLost = (event) => {
+    event.preventDefault();
+    if (destroyed) return;
+    savedView = pass?.view() ?? savedView;
+    // The browser has already discarded every GPU object; dropping the JS references
+    // is enough, and issuing deletes against a lost context only creates more errors.
+    pass = null;
+    onContextLost();
+  };
+
+  const contextRestored = () => {
+    if (destroyed) return;
+    try {
+      pass = createRenderPass(gl, canvas, config);
+      if (savedView) pass.setView(savedView);
+      if (selected) pass.select(selected);
+      onContextRestored();
+    } catch (error) {
+      pass = null;
+      onContextError(error);
+    }
+  };
+
+  canvas.addEventListener('webglcontextlost', contextLost);
+  canvas.addEventListener('webglcontextrestored', contextRestored);
+
+  return {
+    worldSize: config.worldSize,
+
+    view() {
+      savedView = pass?.view() ?? savedView;
+      return savedView;
+    },
+
+    setView(view) {
+      savedView = view;
+      pass?.setView(view);
+    },
+
+    fit() {
+      pass?.fit();
+      savedView = pass?.view() ?? savedView;
+    },
+
+    zoom() {
+      return pass?.zoom() ?? savedView?.zoom ?? 1;
+    },
+
+    zoomAt(cssX, cssY, factor) {
+      pass?.zoomAt(cssX, cssY, factor);
+    },
+
+    panBy(cssDx, cssDy) {
+      pass?.panBy(cssDx, cssDy);
+    },
+
+    pick(views, cssX, cssY) {
+      return pass?.pick(views, cssX, cssY) ?? null;
+    },
+
+    select(selection) {
+      selected = selection;
+      pass?.select(selection);
+    },
+
+    setRenderHints(hints) {
+      config.plantRadius = hints.plantRadius;
+      config.plantColor = [...hints.plantColor];
+      config.plantMaxEnergy = hints.plantMaxEnergy;
+      pass?.setRenderHints(hints);
+    },
+
+    draw(views, count, fresh = true) {
+      pass?.draw(views, count, fresh);
+    },
+
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      canvas.removeEventListener('webglcontextlost', contextLost);
+      canvas.removeEventListener('webglcontextrestored', contextRestored);
+      pass?.destroy();
+      pass = null;
+    },
+  };
+}
+
+function createRenderPass(gl, canvas, config) {
   const resources = createResources(gl);
 
   try {
-    return buildRenderer(gl, canvas, resources, {
-      worldSize,
-      capacity,
-      plantCapacity,
-      plantRadius,
-      plantColor,
-      plantMaxEnergy,
-    });
+    return buildRenderer(gl, canvas, resources, config);
   } catch (error) {
     resources.destroy();
     throw error;
@@ -204,16 +297,12 @@ function buildRenderer(
   let selected = null;
 
   return {
-    resize: camera.resize,
-    camera: camera.state,
-    worldSize,
     view: camera.view,
     setView: camera.setView,
     fit: camera.fit,
     zoom: camera.zoom,
     zoomAt: camera.zoomAt,
     panBy: camera.panBy,
-    screenToWorld: camera.screenToWorld,
 
     pick(views, cssX, cssY) {
       if (!views) return null;

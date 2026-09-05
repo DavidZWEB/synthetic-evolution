@@ -22,7 +22,7 @@ export function createPointerGestures({ getRenderer, onPointerCount, onClick }) 
   function release(event) {
     pointers.delete(event.pointerId);
     onPointerCount(pointers.size);
-    if (pointers.size < 2) pinchDistance = 0;
+    pinchDistance = pointers.size === 2 ? spread() : 0;
   }
 
   return {
@@ -38,7 +38,7 @@ export function createPointerGestures({ getRenderer, onPointerCount, onClick }) 
           : null;
       pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       onPointerCount(pointers.size);
-      if (pointers.size === 2) pinchDistance = spread();
+      pinchDistance = pointers.size === 2 ? spread() : 0;
     },
 
     move(event) {

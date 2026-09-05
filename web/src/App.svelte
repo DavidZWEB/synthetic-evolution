@@ -11,6 +11,7 @@
   import { appendMetric, metricFromMessage } from './telemetry/history.ts';
   import { createRenderer } from './render/renderer.js';
   import { createPointerGestures } from './ui/pointer-gestures.js';
+  import { wheelZoomFactor } from './ui/wheel.js';
 
   const MAX_CHART_SAMPLES = 480;
   const DEFAULT_RUN = { seed: '42', founders: 2000, params: null };
@@ -34,6 +35,7 @@
   // aliases distinct seeds above 2^53, which breaks seed-addressed reproducibility.
   let seed = $state('42');
   let failure = $state(null);
+  let rendererFailure = $state(null);
   let shareUrl = $state('');
   let linkCopied = $state(false);
   let selectedIndex = $state(null);
@@ -68,9 +70,7 @@
     // explicit listener in `onMount` rather than an `onwheel` attribute, which Svelte
     // registers passively and where preventDefault would be ignored.
     event.preventDefault();
-    // Exponential in the wheel delta, so a trackpad's many small events and a mouse
-    // wheel's few large ones cover the same ground at the same speed.
-    renderer?.zoomAt(event.clientX, event.clientY, Math.exp(-event.deltaY * 0.0015));
+    renderer?.zoomAt(event.clientX, event.clientY, wheelZoomFactor(event));
   }
 
   function resetView() {
@@ -156,6 +156,7 @@
       const carried =
         renderer && renderer.worldSize === hints.world_size ? renderer.view() : null;
       let nextRenderer;
+      rendererFailure = null;
       try {
         nextRenderer = createRenderer(canvas, {
           worldSize: hints.world_size,
@@ -164,6 +165,15 @@
           plantRadius: hints.plant_radius,
           plantColor: hints.plant_signature,
           plantMaxEnergy: hints.plant_max_energy,
+          onContextLost: () => {
+            rendererFailure = 'renderer: WebGL context lost; restoring…';
+          },
+          onContextRestored: () => {
+            rendererFailure = null;
+          },
+          onContextError: (error) => {
+            rendererFailure = `renderer: ${String(error)}`;
+          },
         });
       } catch (error) {
         failure = String(error);
@@ -325,8 +335,8 @@
         onclose={() => inspector.select(null)}
       />
     {/if}
-    {#if failure}
-      <p class="failure">{failure}</p>
+    {#if failure || rendererFailure}
+      <p class="failure">{failure ?? rendererFailure}</p>
     {/if}
   </div>
 
