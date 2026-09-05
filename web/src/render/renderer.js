@@ -92,7 +92,7 @@ export function createRenderer(canvas, options) {
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL2 is unavailable in this browser');
   const config = { ...initialConfig, plantColor: [...initialConfig.plantColor] };
-  let pass = createRenderPass(gl, canvas, config);
+  let pass = null;
   let savedView = null;
   let selected = null;
   let destroyed = false;
@@ -122,6 +122,16 @@ export function createRenderer(canvas, options) {
 
   canvas.addEventListener('webglcontextlost', contextLost);
   canvas.addEventListener('webglcontextrestored', contextRestored);
+
+  try {
+    if (gl.isContextLost()) onContextLost();
+    else pass = createRenderPass(gl, canvas, config);
+  } catch (error) {
+    canvas.removeEventListener('webglcontextlost', contextLost);
+    canvas.removeEventListener('webglcontextrestored', contextRestored);
+    pass?.destroy();
+    throw error;
+  }
 
   return {
     worldSize: config.worldSize,
