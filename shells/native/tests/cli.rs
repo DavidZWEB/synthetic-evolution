@@ -4,11 +4,6 @@ use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use native::metrics::{
-    MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, StateHashes, Summary, WorldMetrics,
-};
-use sim_core::params::SimParams;
-
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 fn temporary(name: &str) -> std::path::PathBuf {
@@ -21,6 +16,7 @@ fn temporary(name: &str) -> std::path::PathBuf {
 
 fn run_and_diagnose(
     params_json: &str,
+    seed: u64,
     ticks: u64,
     sample_every: u64,
     founders: u32,
@@ -32,7 +28,7 @@ fn run_and_diagnose(
     let run = Command::new(env!("CARGO_BIN_EXE_native"))
         .args([
             "--seed",
-            "7",
+            &seed.to_string(),
             "--ticks",
             &ticks.to_string(),
             "--founders",
@@ -81,7 +77,7 @@ fn diagnose_file(metrics: &std::path::Path) -> serde_json::Value {
 
 #[test]
 fn run_writes_self_describing_jsonl_that_diagnose_reads() {
-    let (lines, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 10, 5, 1);
+    let (lines, report) = run_and_diagnose(include_str!("fixtures/sustaining.json"), 7, 10, 5, 1);
 
     assert_eq!(lines.len(), 4, "header plus ticks 0, 5, and 10");
     assert!(lines[0].contains(r#""kind":"header""#));
@@ -114,7 +110,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
 
 #[test]
 fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
-    let (_, report) = run_and_diagnose(include_str!("fixtures/extinction.json"), 20, 5, 4);
+    let (_, report) = run_and_diagnose(include_str!("fixtures/extinction.json"), 7, 20, 5, 4);
     assert!(
         report["evolving"]
             .as_array()
@@ -126,58 +122,7 @@ fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
 
 #[test]
 fn diagnose_finds_a_deliberately_collapsed_genome_population() {
-    let metrics = temporary("collapsed.jsonl");
-    let header = RunHeader {
-        schema_version: SCHEMA_VERSION,
-        sim_version: "test".to_owned(),
-        source_revision: "test".to_owned(),
-        phase: 1,
-        seed: "7".to_owned(),
-        ticks: 5_000,
-        founders: 100,
-        sample_every: 1_000,
-        params: SimParams::default(),
-        control: "randomized_at_birth".to_owned(),
-    };
-    let world = |variants| WorldMetrics {
-        population: 100,
-        genome_variants: variants,
-        speed: Summary {
-            mean: 1.0,
-            max: 2.0,
-        },
-        brain_units: Summary {
-            mean: 268.0,
-            max: 268.0,
-        },
-        sensor_load: Summary {
-            mean: 16.0,
-            max: 16.0,
-        },
-        ..WorldMetrics::default()
-    };
-    let mut records = vec![MetricsRecord::Header(header)];
-    for tick in (0..=5_000).step_by(1_000) {
-        let variants = if tick == 0 { 4 } else { 1 };
-        records.push(MetricsRecord::Sample(RunSample {
-            tick,
-            evolving: world(variants),
-            random_control: world(variants),
-            final_state_hashes: (tick == 5_000).then(|| StateHashes {
-                evolving: "0000000000000001".to_owned(),
-                random_control: "0000000000000001".to_owned(),
-            }),
-        }));
-    }
-    let jsonl = records
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .expect("records serialize")
-        .join("\n");
-    fs::write(&metrics, format!("{jsonl}\n")).expect("write collapsed metrics");
-
-    let report = diagnose_file(&metrics);
+    let (_, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 8, 4_000, 50, 2);
     assert!(
         report["evolving"]
             .as_array()
@@ -185,5 +130,4 @@ fn diagnose_finds_a_deliberately_collapsed_genome_population() {
             .iter()
             .any(|finding| finding["code"] == "monoculture")
     );
-    fs::remove_file(metrics).expect("remove metrics");
 }

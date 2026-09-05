@@ -485,6 +485,21 @@ impl SimParams {
         if self.plants.max_plants > MAX_PLANTS {
             return Err(ParamError("plants.max_plants exceeds the pool ceiling"));
         }
+        if !(self.plants.energy_input_rate >= 0.0) || !self.plants.energy_input_rate.is_finite() {
+            return Err(ParamError(
+                "plants.energy_input_rate must be finite and non-negative",
+            ));
+        }
+        if !(self.plants.max_energy >= 0.0) || !self.plants.max_energy.is_finite() {
+            return Err(ParamError(
+                "plants.max_energy must be finite and non-negative",
+            ));
+        }
+        if !(self.plants.max_energy * self.plants.max_plants as f32).is_finite() {
+            return Err(ParamError(
+                "plants.max_energy times max_plants exceeds the finite energy ledger",
+            ));
+        }
         if self.sensing.vision_rays > MAX_VISION_RAYS {
             return Err(ParamError(
                 "sensing.vision_rays exceeds the per-agent ceiling",
@@ -864,6 +879,9 @@ mod tests {
             ("absurd agent pool", |p| p.world.max_agents = 3_000_000_000),
             ("absurd ray count", |p| {
                 p.sensing.vision_rays = 2_000_000_000
+            }),
+            ("plant stock overflows the ledger", |p| {
+                p.plants.max_energy = f32::MAX
             }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
             ("sense radius too small for the world", |p| {

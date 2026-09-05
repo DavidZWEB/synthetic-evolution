@@ -1,15 +1,33 @@
 {
-  "world": { "max_agents": 8 },
+  "world": { "max_agents": 32 },
+  "body": { "size": 1.5 },
   "metabolism": {
     "base": 0.0,
     "k_size": 0.0,
     "k_brain": 0.0,
-    "k_sensor": 0.0,
+    "k_sensor": 0.003125,
     "k_move": 0.0
   },
-  "plants": {
-    "energy_input_rate": 0.0,
-    "max_plants": 0
+  "feeding": {
+    "reach": 15.0,
+    "rate": 5.0,
+    "gate": 0.0
   },
-  "chemo": { "cells": [4, 4, 1] }
+  "reproduction": {
+    "maturity_ticks": 0,
+    "threshold": 105.0,
+    "gate": 0.0
+  },
+  "mutation": {
+    "weight_perturb_rate": 0.0,
+    "weight_reset_rate": 0.0,
+    "neuron_perturb_rate": 0.0
+  },
+  "plants": {
+    "max_plants": 400,
+    "energy_input_rate": 2400.0,
+    "max_energy": 60.0,
+    "initial_fill": 1.0
+  },
+  "chemo": { "cells": [32, 32, 1] }
 }

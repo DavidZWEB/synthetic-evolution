@@ -312,4 +312,24 @@ mod tests {
         world.advance_tick();
         assert_eq!(sample_world(&world).expect("samples").descendants, 1);
     }
+
+    #[test]
+    fn aggregate_unsafe_plant_stock_is_rejected_at_the_boundary() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 1;
+        params.plants.max_plants = 8;
+        params.plants.max_energy = f32::MAX;
+        assert!(World::new(5, params).is_err());
+    }
+
+    #[test]
+    fn non_finite_state_is_rejected_before_json_serialization() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 1;
+        params.plants.max_plants = 1;
+        let mut world = World::new(5, params).expect("valid params");
+        let agent = world.spawn_founder(Vec3::ZERO).expect("room");
+        world.agents_mut().energy[agent.index()] = f32::INFINITY;
+        assert!(sample_world(&world).is_err());
+    }
 }

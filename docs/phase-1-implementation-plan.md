@@ -854,7 +854,9 @@ cargo run --release -p native -- \
 ```
 
 Separate committed CLI fixtures induce and identify early extinction and stable
-exact-genome monoculture.
+exact-genome monoculture. The monoculture fixture is a real no-mutation simulation:
+seed 8 begins with two distinct founder genomes and ends at tick 4,000 with 22 agents,
+21 living descendants, and one surviving genome variant.
 
 The sustaining fixture sets metabolic costs to zero and is intentionally not evidence
 of ecological viability; it exists to exercise 500k ticks, births, randomized control
