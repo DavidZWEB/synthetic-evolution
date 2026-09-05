@@ -14,6 +14,7 @@ pkg/
 *.jsonl
 checkpoints/
 !seeds/*.json
+.playwright-mcp/
 
 # Profiling output — perf and flamegraphs on the native shell (spec §7.2)
 perf.data*
