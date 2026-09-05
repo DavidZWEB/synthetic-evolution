@@ -23,9 +23,11 @@ test('a stationary pointer selects while a drag only pans', () => {
   });
 
   gestures.down(event(10, 20));
+  gestures.move(event(12, 22));
   gestures.up(event(10, 20));
   gestures.click(event(10, 20));
   assert.deepEqual(clicks, [[10, 20]]);
+  assert.deepEqual(pans, [], 'movement inside the click threshold panned the camera');
 
   gestures.down(event(10, 20));
   gestures.move(event(20, 25));

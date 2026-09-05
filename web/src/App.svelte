@@ -249,6 +249,7 @@
       try {
         requestRun(readRunUrl(globalThis.location.href, DEFAULT_RUN.founders) ?? DEFAULT_RUN);
       } catch (error) {
+        runValidation.cancel();
         failure = `url: ${String(error)}`;
         if (shareUrl) globalThis.history.replaceState(null, '', shareUrl);
       }

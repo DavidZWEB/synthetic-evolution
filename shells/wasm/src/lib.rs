@@ -131,7 +131,8 @@ fn span<T>(slice: &[T]) -> Span {
 struct Inspection<'a> {
     index: u32,
     incarnation: u32,
-    tick: u64,
+    /// Decimal text because JSON numbers cannot represent every u64 exactly.
+    tick: String,
     energy: f32,
     age: u32,
     size: f32,
@@ -302,7 +303,7 @@ impl Sim {
         let inspection = Inspection {
             index,
             incarnation,
-            tick: self.world.tick_count(),
+            tick: self.world.tick_count().to_string(),
             energy: agents.energy[i],
             age: agents.age[i],
             size: agents.size[i],

@@ -9,7 +9,7 @@ const payload = (index, incarnation) =>
   JSON.stringify({
     index,
     incarnation,
-    tick: 4,
+    tick: '4',
     energy: 50,
     age: 4,
     size: 3,
@@ -52,5 +52,8 @@ test('selection rejects stale responses and polls only its incarnation', () => {
 
   controller.select({ index: 4, incarnation: 9 });
   assert.equal(controller.accept({ index: 2, incarnation: 7, requestId: 3, agent: payload(2, 7) }), false);
-  assert.deepEqual(selections, [2, 4]);
+  assert.deepEqual(selections, [
+    { index: 2, incarnation: 7 },
+    { index: 4, incarnation: 9 },
+  ]);
 });

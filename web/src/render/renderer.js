@@ -201,7 +201,7 @@ function buildRenderer(
   let currentPlantColor = [...plantColor];
   let currentPlantMaxEnergy = plantMaxEnergy;
   let hasUploadedFrame = false;
-  let selected = -1;
+  let selected = null;
 
   return {
     resize: camera.resize,
@@ -227,8 +227,8 @@ function buildRenderer(
       );
     },
 
-    select(index) {
-      selected = Number.isInteger(index) ? index : -1;
+    select(selection) {
+      selected = selection;
     },
 
     setRenderHints({ plantRadius: radius, plantColor: color, plantMaxEnergy: maxEnergy }) {
@@ -287,7 +287,13 @@ function buildRenderer(
       gl.uniform2f(uniforms.viewport, camera.width, camera.height);
       gl.uniform1f(uniforms.world, worldSize);
       gl.uniform1f(uniforms.minRadius, MIN_RADIUS_PX);
-      gl.uniform1i(uniforms.selected, selected);
+      const selectedIndex =
+        selected &&
+        views?.alive[selected.index] === 1 &&
+        views.incarnation[selected.index] === selected.incarnation
+          ? selected.index
+          : -1;
+      gl.uniform1i(uniforms.selected, selectedIndex);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
 
       gl.bindVertexArray(null);

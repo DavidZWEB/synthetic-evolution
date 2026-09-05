@@ -52,7 +52,7 @@ export function createPointerGestures({ getRenderer, onPointerCount, onClick }) 
         clickStart = null;
       }
 
-      if (pointers.size === 1) {
+      if (pointers.size === 1 && clickStart === null) {
         getRenderer()?.panBy(next.x - previous.x, next.y - previous.y);
       }
       pointers.set(event.pointerId, next);

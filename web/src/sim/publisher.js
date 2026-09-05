@@ -6,6 +6,8 @@
  * the renderer permanently behind the metrics.
  */
 
+import { SHARED } from './transport.js';
+
 export function createSnapshotPublisher({
   writer,
   source,
@@ -14,11 +16,22 @@ export function createSnapshotPublisher({
   meanEnergy,
   send,
   now = () => performance.now(),
+  schedule = (callback) => setTimeout(callback, 0),
   metricsIntervalMs = 250,
 }) {
   let pendingSnapshot = false;
   let pendingForcedMetrics = false;
+  let retryScheduled = false;
   let lastMetricsAt = Number.NEGATIVE_INFINITY;
+
+  function scheduleSharedRetry() {
+    if (writer.kind !== SHARED || retryScheduled) return;
+    retryScheduled = true;
+    schedule(() => {
+      retryScheduled = false;
+      if (pendingSnapshot) publish(pendingForcedMetrics);
+    });
+  }
 
   function publish(forceMetrics = false) {
     const currentTick = tick();
@@ -27,6 +40,7 @@ export function createSnapshotPublisher({
     if (publication === false) {
       pendingSnapshot = true;
       pendingForcedMetrics ||= forceMetrics;
+      scheduleSharedRetry();
       return false;
     }
 

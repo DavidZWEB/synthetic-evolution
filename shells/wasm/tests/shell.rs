@@ -148,7 +148,7 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
 
     assert_eq!(v["index"], 0);
     assert_eq!(v["incarnation"], 1);
-    assert_eq!(v["tick"], 10);
+    assert_eq!(v["tick"], "10");
     assert!(v["energy"].as_f64().expect("energy") > 0.0);
     assert_eq!(v["age"], 10);
     // Asexual until Phase 6, so the second parent is always the null id (spec §9.1).

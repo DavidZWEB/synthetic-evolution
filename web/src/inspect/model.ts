@@ -10,7 +10,7 @@ import type { Gene } from '../generated/Gene';
 export interface Inspection {
   index: number;
   incarnation: number;
-  tick: number;
+  tick: string;
   energy: number;
   age: number;
   size: number;
@@ -37,7 +37,8 @@ function isInspection(value: unknown): value is Inspection {
   return (
     Number.isSafeInteger(value.index) &&
     Number.isSafeInteger(value.incarnation) &&
-    Number.isSafeInteger(value.tick) &&
+    typeof value.tick === 'string' &&
+    /^(0|[1-9]\d*)$/.test(value.tick) &&
     isFiniteNumber(value.energy) &&
     Number.isSafeInteger(value.age) &&
     isFiniteNumber(value.size) &&

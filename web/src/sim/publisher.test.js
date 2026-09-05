@@ -5,7 +5,7 @@ import test from 'node:test';
 
 import { createSnapshotPublisher } from './publisher.js';
 import { frameLayout, frameViews } from './snapshot-layout.js';
-import { TRANSFERABLE, createWriter } from './transport.js';
+import { SHARED, TRANSFERABLE, createWriter } from './transport.js';
 
 test('a dropped forced frame is retried when a transferable buffer returns', () => {
   const layout = frameLayout(2, 0);
@@ -36,4 +36,33 @@ test('a dropped forced frame is retried when a transferable buffer returns', () 
   const frames = sent.filter((message) => message.kind === TRANSFERABLE);
   assert.equal(frames.at(-1).tick, '3');
   assert.equal(sent.filter((message) => message.kind === 'metrics').at(-1).tick, '3');
+});
+
+test('shared publication retries after a transient lease swap', () => {
+  const retries = [];
+  const sent = [];
+  let attempts = 0;
+  const publisher = createSnapshotPublisher({
+    writer: {
+      kind: SHARED,
+      publish() {
+        attempts += 1;
+        return attempts === 1 ? false : true;
+      },
+    },
+    source: () => ({}),
+    tick: () => 9n,
+    population: () => 3,
+    meanEnergy: () => 40,
+    send: (message) => sent.push(message),
+    schedule: (callback) => retries.push(callback),
+    now: () => 0,
+  });
+
+  assert.equal(publisher.publish(true), false);
+  assert.equal(retries.length, 1);
+  retries.shift()();
+  assert.equal(attempts, 2);
+  assert.equal(sent.at(-1).kind, 'metrics');
+  assert.equal(sent.at(-1).tick, '9');
 });

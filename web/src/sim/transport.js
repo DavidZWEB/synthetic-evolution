@@ -92,9 +92,9 @@ function sharedWriter(layout) {
 
     publish(source, tick, population) {
       const next = claimFreeFrame();
-      // With three frames and one reader, one frame must remain writable. Failing this
-      // invariant is a protocol bug, not a frame that can safely disappear.
-      if (next < 0) throw new Error('shared snapshot transport has no writable frame');
+      // The reader briefly leases both old and new frames while swapping. If the writer
+      // owns the third at that instant, publication is retried after this turn.
+      if (next < 0) return false;
 
       try {
         copyFrame(source, frames[next]);

@@ -40,7 +40,7 @@ export function createInspectorController({
     selected = next;
     inspection = null;
     message = null;
-    getRenderer()?.select(selected?.index ?? null);
+    getRenderer()?.select(selected);
     notify();
     request();
   }

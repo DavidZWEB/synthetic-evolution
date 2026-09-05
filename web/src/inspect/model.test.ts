@@ -8,7 +8,7 @@ import { decodeInspection, summarizeGenes } from './model.ts';
 const inspection = {
   index: 3,
   incarnation: 7,
-  tick: 42,
+  tick: '9007199254740993',
   energy: 71.5,
   age: 12,
   size: 3,
