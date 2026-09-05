@@ -35,8 +35,8 @@ They look arbitrary. They are load-bearing, and removing them produces a sim tha
 
 ### Shape
 
-- **One module, one concept.** A file should be describable in a single sentence without "and."
-- **~400 lines is a smell, 500 means split** (excluding inline `#[cfg(test)]` blocks). Long files here almost always mean several systems got tangled — split by responsibility, not by cutting at a line count.
+- **One module, one concept.** A file should be describable in a single sentence without "and." That's the real test — not a line count.
+- **Long files are worth a second look, not an automatic split.** Past ~500 lines (excluding inline `#[cfg(test)]` blocks), ask whether it's still one concept. A flat list of fields (`params.rs`) or a struct's `impl` split across sibling files by convention (`world.rs`/`tick.rs`) can honestly stay long. Several unrelated systems sharing a file cannot — split by responsibility.
 - **Every file opens with a `//!` module doc**: what it's responsible for, and what it deliberately isn't. Two or three sentences.
 - **Public surface is small.** Default to private; `pub` is a decision. A module exposing its internals invites the next module to reach in.
 
@@ -77,11 +77,9 @@ This isn't style preference. Narrow signatures are what let you run systems in i
   nothing to someone reading `sim-core` on its own. Every rule worth putting in a comment
   has a home in `docs/synthetic-evolution-spec.md`; cite that. Where a rule genuinely
   has no spec section, state the reasoning in the comment rather than pointing at
-  anything.
-- **Keep the spec authoritative.** If implementation needs a design change, discuss it
-  with a human first and update the spec in the same change. Do not leave the spec stale
-  and compensate with a long code comment explaining the divergence.
-
+  anything. If implementation needs a design change, discuss it with a human first and
+  update the spec in the same change — don't leave the spec stale and compensate with a
+  long code comment explaining the divergence.
 - **Anything load-bearing and strange gets a comment naming the spec section.** This is the important one. Code like the `parentB` field, the clamped elevation param, or deferring births to step 10 all look like dead weight or arbitrary choices. Without an anchor, someone eventually tidies them away.
 
   ```rust
