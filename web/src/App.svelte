@@ -48,6 +48,7 @@
   let latestFrame = null;
   let runParams = null;
   let activeRun = null;
+  let runSource = 'create';
   let validating = $state(false);
 
   const inspector = createInspectorController({
@@ -98,6 +99,7 @@
     sim?.destroy();
     sim = null;
     validating = false;
+    runSource = next.source ?? 'create';
     seed = next.seed;
     founders = next.founders;
     runParams = next.params;
@@ -115,8 +117,8 @@
   }
 
   function requestRun(next, source) {
-    if (!sim || !transport) {
-      activateRun(next);
+    if (!sim) {
+      activateRun({ ...next, source });
       return;
     }
     runValidation.request({ ...next, source });
@@ -148,6 +150,7 @@
   function start() {
     failure = null;
     transport = null;
+    const startingSource = runSource;
     const nextSim = createSim({ seed, founders, params: runParams });
     sim = nextSim;
 
@@ -196,7 +199,7 @@
       else renderer.fit();
       capacity = hints.agent_capacity;
       transport = kind;
-      failure = runUrlError;
+      if (runUrlError) failure = runUrlError;
       nextSim.setSpeed(speed);
     });
     nextSim.on('status', ({ running: nextRunning }) => {
@@ -232,10 +235,14 @@
     });
     nextSim.on('error', (message) => {
       if (sim !== nextSim) return;
-      failure = `${message.context}: ${message.message}`;
+      const context = message.context === 'create' ? startingSource : message.context;
+      failure = `${context}: ${message.message}`;
       if (message.fatal) {
         running = false;
         transport = null;
+        if (message.context === 'create' && startingSource === 'url' && shareUrl) {
+          globalThis.history.replaceState(null, '', shareUrl);
+        }
       }
     });
   }
@@ -257,6 +264,7 @@
       seed = initial.seed;
       founders = initial.founders;
       runParams = initial.params;
+      runSource = shared ? 'url' : 'create';
     } catch (error) {
       runValidation.cancel();
       failure = `url: ${String(error)}`;
