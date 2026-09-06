@@ -798,10 +798,11 @@ for unselected agents.
 `web/src/generated/`. The typed inspector model imports `Gene` from that output, and CI
 regenerates the bindings and rejects drift.
 
-The URL fragment carries the exact decimal `u64` seed, founder count, and canonical params
-JSON. It is updated only for the active world, so editing an input does not make the copied
-link claim to represent a run that has not been reseeded yet. A target tick remains optional
-and unset until checkpoint/load support can make opening one practical.
+The URL fragment carries the exact decimal `u64` seed, founder count, canonical params JSON,
+and non-default brain-inheritance mode. It is updated only for the active world, so editing
+an input does not make the copied link claim to represent a run that has not been reseeded
+yet. A target tick remains optional and unset until checkpoint/load support can make opening
+one practical.
 
 ## M11 — Headless telemetry
 
@@ -931,4 +932,6 @@ harsh. Rapid reproducers dominate the homogeneous Phase 1 world, as expected: th
 senescence or cooldown, but every successful birth transfers half the parent's energy to
 the child. Senescence is deliberately scheduled for Phase 6 (spec §5.6), when longevity
 can trade against sexual and seasonal life history rather than becoming an extra Phase 1
-death rule.
+death rule. The web run controls now expose evolving and randomized-at-birth heredity as
+shareable construction-time modes, so the remaining human acceptance pass can watch the
+same seed and params in separate tabs rather than inferring behavior from aggregates.

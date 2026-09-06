@@ -12,7 +12,7 @@
 
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use wasm::{Sim, validate_params};
+use wasm::{Sim, random_control, validate_params};
 
 fn sim(agents: u32) -> Sim {
     let mut sim = Sim::new(7, None).expect("defaults are valid");
@@ -30,6 +30,28 @@ fn a_new_sim_starts_empty_at_tick_zero() {
     assert_eq!(sim.tick(), 0);
     assert_eq!(sim.population(), 0);
     assert_eq!(sim.mean_energy(), 0.0);
+}
+
+#[wasm_bindgen_test]
+fn random_control_matches_founders_then_breaks_neural_inheritance() {
+    let params = include_str!("../../native/tests/fixtures/sustaining.json").to_owned();
+    let mut evolving = Sim::new(7, Some(params.clone())).expect("valid params");
+    let mut control = random_control(7, Some(params)).expect("valid params");
+    assert_eq!(evolving.seed_founders(8), 8);
+    assert_eq!(control.seed_founders(8), 8);
+    assert_eq!(
+        evolving.state_hash(),
+        control.state_hash(),
+        "control founders must match"
+    );
+
+    evolving.step_many(100);
+    control.step_many(100);
+    assert_ne!(
+        evolving.state_hash(),
+        control.state_hash(),
+        "control births did not break neural heredity"
+    );
 }
 
 #[wasm_bindgen_test]

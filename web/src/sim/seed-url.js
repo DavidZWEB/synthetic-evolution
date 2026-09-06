@@ -6,6 +6,7 @@
  */
 
 import { parseSeed } from './inputs.js';
+import { EVOLVING, parseBrainInheritance } from './brain-inheritance.js';
 
 function positiveInteger(value, name) {
   const parsed = Number(value);
@@ -36,16 +37,22 @@ export function readRunUrl(href, defaultFounders) {
     ? positiveInteger(fragment.get('founders'), 'founders')
     : defaultFounders;
   const params = fragment.has('params') ? paramsJson(fragment.get('params')) : null;
-  return { seed, founders, params };
+  const brainInheritance = parseBrainInheritance(fragment.get('inheritance') ?? EVOLVING);
+  return { seed, founders, params, brainInheritance };
 }
 
-export function writeRunUrl(href, { seed, founders, params = null }) {
+export function writeRunUrl(
+  href,
+  { seed, founders, params = null, brainInheritance = EVOLVING },
+) {
   parseSeed(seed);
   positiveInteger(founders, 'founders');
+  parseBrainInheritance(brainInheritance);
   const url = new URL(href);
   const fragment = new URLSearchParams({ seed, founders: String(founders) });
   const encodedParams = paramsJson(params);
   if (encodedParams) fragment.set('params', encodedParams);
+  if (brainInheritance !== EVOLVING) fragment.set('inheritance', brainInheritance);
   url.hash = fragment.toString();
   return url.toString();
 }

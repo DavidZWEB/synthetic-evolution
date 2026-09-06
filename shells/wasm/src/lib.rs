@@ -24,6 +24,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use sim_core::command::Command;
+use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
@@ -58,6 +59,17 @@ fn parse_params(params_json: Option<&str>) -> Result<SimParams, JsError> {
 pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     let params = parse_params(params_json.as_deref())?;
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
+}
+
+/// Builds the separate random-brain control used to check whether apparent behavior
+/// depends on cumulative neural inheritance (spec §7.8).
+#[wasm_bindgen]
+pub fn random_control(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
+    Sim::with_brain_inheritance(
+        seed,
+        params_json.as_deref(),
+        BrainInheritance::RandomizedAtBirth,
+    )
 }
 
 /// Where one snapshot array lives in WASM memory, right now.
@@ -156,6 +168,20 @@ pub struct Sim {
     snapshot: Snapshot,
 }
 
+impl Sim {
+    fn with_brain_inheritance(
+        seed: u64,
+        params_json: Option<&str>,
+        brain_inheritance: BrainInheritance,
+    ) -> Result<Self, JsError> {
+        let params = parse_params(params_json)?;
+        let world = World::new_with_brain_inheritance(seed, params, brain_inheritance)
+            .map_err(|e| js_error("invalid params", e.0))?;
+        let snapshot = Snapshot::for_world(&world);
+        Ok(Self { world, snapshot })
+    }
+}
+
 #[wasm_bindgen]
 impl Sim {
     /// Builds a world from a seed and an optional JSON `SimParams`.
@@ -166,11 +192,7 @@ impl Sim {
     /// something it cannot see.
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
-        let params = parse_params(params_json.as_deref())?;
-        // `parse_params` validates before the world allocates its fixed-capacity stores.
-        let world = World::new(seed, params).map_err(|e| js_error("invalid params", e.0))?;
-        let snapshot = Snapshot::for_world(&world);
-        Ok(Sim { world, snapshot })
+        Self::with_brain_inheritance(seed, params_json.as_deref(), BrainInheritance::Evolving)
     }
 
     /// Seeds generation 0, and reports how many the pool had room for.

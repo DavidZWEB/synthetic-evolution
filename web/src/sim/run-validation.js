@@ -20,7 +20,13 @@ export function createRunValidation({ getSim, onPendingChange, onAccepted, onRej
       requestId += 1;
       pending = { ...run, requestId };
       onPendingChange(true);
-      getSim()?.validateRun(run.seed, run.founders, run.params, requestId);
+      getSim()?.validateRun(
+        run.seed,
+        run.founders,
+        run.params,
+        run.brainInheritance,
+        requestId,
+      );
     },
 
     accept(message) {
@@ -31,7 +37,13 @@ export function createRunValidation({ getSim, onPendingChange, onAccepted, onRej
       pending = null;
       onPendingChange(false);
       if (message.error) onRejected(message.error, requested);
-      else onAccepted({ ...requested, params: message.params });
+      else {
+        onAccepted({
+          ...requested,
+          params: message.params,
+          brainInheritance: message.brainInheritance,
+        });
+      }
       return true;
     },
 

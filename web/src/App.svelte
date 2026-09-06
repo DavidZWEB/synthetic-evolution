@@ -6,6 +6,7 @@
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
   import { createInspectorController } from './inspect/controller.js';
+  import { EVOLVING } from './sim/brain-inheritance.js';
   import { createSim } from './sim/client.js';
   import { createRunValidation } from './sim/run-validation.js';
   import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
@@ -15,7 +16,12 @@
   import { wheelZoomFactor } from './ui/wheel.js';
 
   const MAX_CHART_SAMPLES = 480;
-  const DEFAULT_RUN = { seed: '42', founders: 2000, params: null };
+  const DEFAULT_RUN = {
+    seed: '42',
+    founders: 2000,
+    params: null,
+    brainInheritance: EVOLVING,
+  };
 
   let canvas;
   let sim = null;
@@ -32,6 +38,7 @@
   let running = $state(false);
   let speed = $state(1);
   let founders = $state(2000);
+  let brainInheritance = $state(EVOLVING);
   // Keep this as text until the worker parses it as u64. A JavaScript number silently
   // aliases distinct seeds above 2^53, which breaks seed-addressed reproducibility.
   let seed = $state('42');
@@ -92,7 +99,7 @@
   }
 
   function reseed() {
-    requestRun({ seed, founders, params: runParams }, 'reseed');
+    requestRun({ seed, founders, params: runParams, brainInheritance }, 'reseed');
   }
 
   function activateRun(next) {
@@ -102,6 +109,7 @@
     runSource = next.source ?? 'create';
     seed = next.seed;
     founders = next.founders;
+    brainInheritance = next.brainInheritance;
     runParams = next.params;
     activeRun = null;
     running = false;
@@ -152,7 +160,7 @@
     transport = null;
     const startingSource = runSource;
     const previousShareUrl = shareUrl;
-    const nextSim = createSim({ seed, founders, params: runParams });
+    const nextSim = createSim({ seed, founders, params: runParams, brainInheritance });
     sim = nextSim;
 
     nextSim.on('ready', ({ transport: kind, hints, run }) => {
@@ -272,6 +280,7 @@
       seed = initial.seed;
       founders = initial.founders;
       runParams = initial.params;
+      brainInheritance = initial.brainInheritance;
       runSource = shared ? 'url' : 'create';
     } catch (error) {
       runValidation.cancel();
@@ -378,6 +387,7 @@
     {speed}
     {seed}
     {founders}
+    {brainInheritance}
     {shareUrl}
     {linkCopied}
     ontoggle={toggle}
@@ -385,6 +395,7 @@
     onspeed={applySpeed}
     onseed={(value) => (seed = value)}
     onfounders={(value) => (founders = value)}
+    onbraininheritance={(value) => (brainInheritance = value)}
     onreseed={reseed}
     oncopy={copyLink}
     onreset={resetView}

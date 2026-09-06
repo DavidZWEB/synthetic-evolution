@@ -7,8 +7,9 @@
  */
 
 import { createReader } from './transport.js';
+import { EVOLVING } from './brain-inheritance.js';
 
-export function createSim({ seed, founders, params = null }) {
+export function createSim({ seed, founders, params = null, brainInheritance = EVOLVING }) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
   let reader = null;
@@ -64,7 +65,7 @@ export function createSim({ seed, founders, params = null }) {
     });
   };
 
-  worker.postMessage({ kind: 'create', seed, params, founders });
+  worker.postMessage({ kind: 'create', seed, params, founders, brainInheritance });
 
   const send = (kind, payload = {}) => {
     if (!destroyed) worker.postMessage({ kind, ...payload });
@@ -91,8 +92,8 @@ export function createSim({ seed, founders, params = null }) {
     inspect: (index, incarnation, requestId) =>
       send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
-    validateRun: (seed, founders, params, requestId) =>
-      send('validateRun', { seed, founders, params, requestId }),
+    validateRun: (seed, founders, params, brainInheritance, requestId) =>
+      send('validateRun', { seed, founders, params, brainInheritance, requestId }),
 
     on(kind, fn) {
       listeners[kind]?.push(fn);
