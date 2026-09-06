@@ -15,6 +15,9 @@ pkg/
 checkpoints/
 !seeds/*.json
 
+# Screenshots and snapshots dropped by browser automation during a visual check
+.playwright-mcp/
+
 # Profiling output — perf and flamegraphs on the native shell (spec §7.2)
 perf.data*
 flamegraph.svg

@@ -152,6 +152,10 @@ authoritative full list.
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
 | Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
 
+None of these render the page. Browser behaviour is checked by loading the client and
+operating it — see `.github/skills/web-client-visual-check/SKILL.md`, which needs browser
+tooling your agent supplies rather than anything configured here.
+
 `npm run dev` and `npm run build` rebuild the WASM bindings before Vite starts.
 Native tests include the golden hash but cannot prove cross-target agreement; run the
 WASM test after anything that touches tick arithmetic.
