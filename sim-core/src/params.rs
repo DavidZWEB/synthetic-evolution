@@ -117,6 +117,12 @@ pub struct MetabolismParams {
     /// an agent moves.
     pub k_sensor: f32,
     /// Cost coefficient on |force|². Sprinting should drain a full tank in ~200 ticks.
+    ///
+    /// With the M12 budget, full thrust costs 0.585/tick against 0.085 at idle: idling
+    /// buys about 6.9× the lifetime, up from 2.2× before the other metabolic terms were
+    /// tuned down. The accepted populations still had to forage before reproducing, but
+    /// this ratio is the one to watch with `stable_but_idle` when Phase 2 makes brain
+    /// structure evolvable (spec §10).
     pub k_move: f32,
 }
 
@@ -882,14 +888,10 @@ mod tests {
     #[test]
     fn default_birth_split_funds_two_reference_tanks() {
         let reproduction = SimParams::default().reproduction;
-        assert_eq!(
-            reproduction.threshold * reproduction.energy_split,
-            reproduction.start_energy
-        );
-        assert_eq!(
-            reproduction.threshold * (1.0 - reproduction.energy_split),
-            reproduction.start_energy
-        );
+        let child = reproduction.threshold * reproduction.energy_split;
+        let parent = reproduction.threshold * (1.0 - reproduction.energy_split);
+        assert_eq!(child, parent, "the default birth does not split evenly");
+        assert_eq!(child, reproduction.start_energy);
     }
 
     #[test]

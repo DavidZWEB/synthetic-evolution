@@ -26,17 +26,18 @@ pub fn shipped() -> SimParams {
     params
 }
 
-/// A configuration that actually reproduces, so the golden run covers the birth path.
-/// Measured at M7: the defaults produce no births at all, and a hash over a population
-/// that only ever starves would not pin `resolve_births`.
+/// A short-run configuration that makes reproduction prominent in the golden hash.
+///
+/// The tuned defaults do reproduce, but seed 42's first birth is tick 482, after the
+/// shipped golden run ends at tick 300. These overrides move the first birth to tick
+/// 101 and leave 49 descendants at tick 500, robustly pinning `resolve_births`.
 pub fn breeding() -> SimParams {
     let mut params = shipped();
     params.body.size = 1.5;
     params.metabolism.k_sensor = 0.003_125;
     params.feeding.reach = 8.0;
-    // Brought forward so births land inside a short run. At the shipped 300 and 150 the
-    // first birth arrives past tick 2000, which would make this a slow test that spent
-    // most of its time not covering the thing it exists to cover.
+    // Brought forward so the birth path dominates this short scenario rather than
+    // appearing only near its end.
     params.reproduction.maturity_ticks = 100;
     params.reproduction.threshold = 120.0;
     params

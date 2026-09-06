@@ -895,6 +895,11 @@ generation-zero founders indefinitely; the live descendant counter made clear th
 were lucky non-evolving survivors rather than sustained control lineages. Senescence remains
 scheduled for Phase 6 rather than being introduced as an extra Phase 1 death rule.
 
+Mean speed did not substitute for that judgment: evolving/control tail means were
+2.203/2.663 for seed 42, 2.016/2.271 for seed 117, and 2.536/1.894 for seed 314. The
+control moved faster in two of three runs; what the human accepted was directed movement
+toward food and resulting reproduction, not movement volume.
+
 If food-seeking does not emerge, check spec §10 before changing code. It is almost always
 metabolic cost too low, energy input too high, or mutation rate past error catastrophe — all
 tuning, not bugs.
@@ -932,14 +937,15 @@ At 50,000 ticks the selected nonzero-mutation candidate produced:
 | 117 | 542 | 533 | 542 | 12 |
 | 314 | 286 | 280 | 286 | 6 |
 
-All three evolving cohorts recovered after the generation-zero crash and were dominated
-by descendants; the randomized-at-birth controls did not. A human observer reported
+Final evolving populations ranged from 286 to 542 (mean 394, sample standard deviation
+132), and all three cohorts recovered after the generation-zero crash and became
+descendant-dominated; the randomized-at-birth controls did not. A human observer reported
 visible food-seeking and preferred this higher-mutation candidate over both the
 lower-mutation version, which appeared to stall, and a 9,000-input version, which was too
 harsh. Rapid reproducers dominate the homogeneous Phase 1 world, as expected: there is no
 senescence or cooldown, but every successful birth transfers half the parent's energy to
 the child. Senescence is deliberately scheduled for Phase 6 (spec §5.6), when longevity
 can trade against sexual and seasonal life history rather than becoming an extra Phase 1
-death rule. The web run controls now expose evolving and randomized-at-birth heredity as
-shareable construction-time modes, so the remaining human acceptance pass can watch the
-same seed and params in separate tabs rather than inferring behavior from aggregates.
+death rule. The web run controls expose evolving and randomized-at-birth heredity as
+shareable construction-time modes; this was the mechanism used for the completed
+same-seed human comparison rather than inferring behavior from aggregates.
