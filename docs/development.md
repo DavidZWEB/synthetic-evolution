@@ -25,8 +25,9 @@ binaries, when requested, are reused from their user-level caches, but
 `web/node_modules/` is intentionally checkout-local. The setup and WASM build scripts
 resolve Cargo through rustup and `wasm-pack` through Cargo's configured install root, so
 the web build does not depend on machine-specific Cargo or wasm-pack PATH entries.
-Rustup itself must still be on `PATH`; if it is installed but unavailable, the scripts
-print generic rustup.rs and Homebrew instructions to repair the shell configuration.
+The scripts find rustup on `PATH`, under the rustup.rs default, or in standard
+Homebrew/Linuxbrew locations; nonstandard installations still need their bin directory
+on `PATH`.
 
 ## Files
 
@@ -145,10 +146,11 @@ Read the script rather than trusting a copy pasted here; a duplicated script dri
 
 **nvm has to be sourced, not called.** `nvm` is a shell function rather than a binary, so a script cannot invoke it without first sourcing `$NVM_DIR/nvm.sh` — and under `set -u` the naive version fails outright. The script sources it when it exists, and otherwise compares your installed Node against `.nvmrc` and warns rather than failing. Requiring one particular version manager to build the project is not worth it.
 
-**Rust tools used by npm are resolved, not assumed.** `scripts/rustup.sh` verifies that
-rustup is on `PATH`, explains how to repair either a rustup.rs or Homebrew installation
-when it is not, and normalizes native Windows paths for Git Bash. `rustup which cargo`
-then selects the Cargo paired with the repository's pinned toolchain.
+**Rust tools used by npm are resolved, not assumed.** `scripts/rustup.sh` checks
+`PATH`, the rustup.rs default, and standard Homebrew/Linuxbrew locations before
+explaining how to repair a nonstandard installation. It also normalizes native Windows
+paths for Git Bash. `rustup which cargo` then selects the Cargo paired with the
+repository's pinned toolchain.
 `scripts/cargo.sh` exposes that Cargo to the type-generation package script, while
 `scripts/wasm-pack.sh` also locates the Cargo install root and makes Cargo visible to
 `wasm-pack`. Package scripts invoke these through `bash`, so the documented Git Bash
