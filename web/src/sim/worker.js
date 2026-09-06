@@ -15,7 +15,12 @@
  * chooses *when* to step and how far, never what a step means.
  */
 
-import init, { Sim, validate_params } from '../wasm/wasm.js';
+import init, { Sim, random_control, validate_params } from '../wasm/wasm.js';
+import {
+  EVOLVING,
+  RANDOMIZED_AT_BIRTH,
+  parseBrainInheritance,
+} from './brain-inheritance.js';
 import { founderCount, parseSeed } from './inputs.js';
 import { createSnapshotPublisher } from './publisher.js';
 import { createTickScheduler } from './scheduler.js';
@@ -108,12 +113,16 @@ const scheduler = createTickScheduler({
 });
 
 const handlers = {
-  async create({ seed, params, founders }) {
+  async create({ seed, params, founders, brainInheritance }) {
     const wasm = await init();
     memory = wasm.memory;
 
     const normalizedSeed = parseSeed(seed);
-    const nextSim = new Sim(normalizedSeed, params ?? null);
+    const normalizedInheritance = parseBrainInheritance(brainInheritance);
+    const nextSim =
+      normalizedInheritance === RANDOMIZED_AT_BIRTH
+        ? random_control(normalizedSeed, params ?? null)
+        : new Sim(normalizedSeed, params ?? null);
     let hints;
     let normalizedFounders;
     try {
@@ -141,6 +150,7 @@ const handlers = {
       source: sourceViews,
       tick: () => sim.tick(),
       population: () => sim.population(),
+      descendants: () => sim.descendants(),
       meanEnergy: () => sim.mean_energy(),
       send: (message, transfer) => sendPublication(message, transfer),
     });
@@ -158,6 +168,7 @@ const handlers = {
         seed: normalizedSeed.toString(),
         founders: normalizedFounders,
         params: sim.params_json(),
+        brainInheritance: normalizedInheritance,
       },
     });
     sendPublication = (message, transfer) => postMessage(message, transfer);
@@ -198,13 +209,19 @@ const handlers = {
     }
   },
 
-  validateRun({ seed, params, founders, requestId }) {
+  validateRun({ seed, params, founders, brainInheritance, requestId }) {
     try {
       parseSeed(seed);
+      const normalizedInheritance = parseBrainInheritance(brainInheritance ?? EVOLVING);
       const normalized = validate_params(params ?? null);
       const parsed = JSON.parse(normalized);
       founderCount(founders, parsed.world.max_agents);
-      postMessage({ kind: 'validatedRun', requestId, params: normalized });
+      postMessage({
+        kind: 'validatedRun',
+        requestId,
+        params: normalized,
+        brainInheritance: normalizedInheritance,
+      });
     } catch (error) {
       postMessage({ kind: 'validatedRun', requestId, error: String(error) });
     }

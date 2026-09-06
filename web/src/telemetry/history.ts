@@ -3,12 +3,14 @@
 export interface MetricSample {
   tick: bigint;
   population: number;
+  descendants: number;
   meanEnergy: number;
 }
 
 interface MetricMessage {
   tick: string;
   population: number;
+  descendants: number;
   meanEnergy: number;
 }
 
@@ -18,12 +20,20 @@ export function metricFromMessage(message: MetricMessage): MetricSample {
     tick < 0n ||
     !Number.isSafeInteger(message.population) ||
     message.population < 0 ||
+    !Number.isSafeInteger(message.descendants) ||
+    message.descendants < 0 ||
+    message.descendants > message.population ||
     !Number.isFinite(message.meanEnergy) ||
     message.meanEnergy < 0
   ) {
     throw new TypeError('invalid metrics payload');
   }
-  return { tick, population: message.population, meanEnergy: message.meanEnergy };
+  return {
+    tick,
+    population: message.population,
+    descendants: message.descendants,
+    meanEnergy: message.meanEnergy,
+  };
 }
 
 export function appendMetric(

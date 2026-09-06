@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { EVOLVING, RANDOMIZED_AT_BIRTH } from './brain-inheritance.js';
 import { readRunUrl, writeRunUrl } from './seed-url.js';
 
 test('run URLs preserve seeds above the JavaScript integer ceiling', () => {
@@ -18,6 +19,7 @@ test('run URLs preserve seeds above the JavaScript integer ceiling', () => {
     seed: '9007199254740993',
     founders: 321,
     params: null,
+    brainInheritance: EVOLVING,
   });
 });
 
@@ -26,6 +28,7 @@ test('a seed-only URL keeps the configured founder default', () => {
     seed: '42',
     founders: 2000,
     params: null,
+    brainInheritance: EVOLVING,
   });
 });
 
@@ -39,7 +42,21 @@ test('parameter JSON round-trips through the fragment canonically', () => {
     seed: '42',
     founders: 2,
     params: '{"world":{"dt":0.02}}',
+    brainInheritance: EVOLVING,
   });
+});
+
+test('random-control heredity round-trips through the fragment', () => {
+  const href = writeRunUrl('https://example.test/', {
+    seed: '42',
+    founders: 2000,
+    brainInheritance: RANDOMIZED_AT_BIRTH,
+  });
+  assert.equal(
+    href,
+    'https://example.test/#seed=42&founders=2000&inheritance=randomized_at_birth',
+  );
+  assert.equal(readRunUrl(href, 2000).brainInheritance, RANDOMIZED_AT_BIRTH);
 });
 
 test('invalid run fragments fail loudly', () => {
@@ -51,5 +68,9 @@ test('invalid run fragments fail loudly', () => {
   assert.throws(
     () => readRunUrl('https://example.test/#seed=42&params=%5B%5D', 2000),
     /encode an object/,
+  );
+  assert.throws(
+    () => readRunUrl('https://example.test/#seed=42&inheritance=random', 2000),
+    /inheritance/,
   );
 });

@@ -122,7 +122,11 @@ fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
 
 #[test]
 fn diagnose_finds_a_deliberately_collapsed_genome_population() {
-    let (_, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 8, 4_000, 50, 2);
+    // This real no-mutation sweep depends on founder placement. Seed 20 reaches a
+    // stable one-genome population under the current equal-area layout; if placement
+    // changes, reselect a deterministic collapsing seed rather than weakening the
+    // diagnostic assertion or replacing the simulator-driven fixture.
+    let (_, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 20, 4_000, 50, 2);
     assert!(
         report["evolving"]
             .as_array()

@@ -411,10 +411,11 @@ impl World {
     /// the same count are different experiments from the same seed. One definition here
     /// means a headless sweep and the browser are running the same one.
     ///
-    /// The **golden angle** spreads points evenly with no rings and no spokes, which a
-    /// grid or a fixed-radius circle would both hand generation 0 for free — a spatial
-    /// structure nothing in the ecology put there, and one that offspring inherit
-    /// through spatial viscosity (spec §5.4).
+    /// The **golden angle** avoids rings and spokes, while square-root radial spacing
+    /// gives equal-area density across the disc. Linear radial spacing would pack half
+    /// the founders into the inner quarter of its area, handing generation 0 a dense
+    /// central niche that nothing in the ecology created. Offspring still inherit only
+    /// their local neighbourhood through spatial viscosity (spec §5.4).
     pub fn seed_founders(&mut self, count: u32) -> u32 {
         /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
         /// sunflower seeds pack without lining up.
@@ -430,7 +431,8 @@ impl World {
         let mut placed = 0;
         for i in 0..count {
             let angle = i as f32 * GOLDEN_ANGLE;
-            let r = size * spread * (i as f32 / count.max(1) as f32);
+            let area_fraction = (i as f32 + 0.5) / count as f32;
+            let r = size * spread * math::sqrt(area_fraction);
             let position = Vec3::new(
                 size * 0.5 + r * math::cos(angle),
                 size * 0.5 + r * math::sin(angle),
@@ -559,6 +561,18 @@ impl World {
             })
             .sum();
         total / population as f64
+    }
+
+    /// Number of living agents born inside this world rather than seeded as founders.
+    ///
+    /// Parentage, not age, is the distinction: an old offspring is still a descendant,
+    /// while a founder that survives indefinitely is not evidence of inherited
+    /// adaptation (spec §7.8).
+    pub fn living_descendants(&self) -> u32 {
+        self.pool
+            .iter_live()
+            .filter(|id| self.agents.parent_a[id.index()] != AgentId::NULL.raw())
+            .count() as u32
     }
 
     #[inline]
@@ -715,6 +729,29 @@ mod tests {
     }
 
     #[test]
+    fn seeding_distributes_founders_uniformly_by_area() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 400;
+        let centre = Vec3::new(params.world.size * 0.5, params.world.size * 0.5, 0.0);
+        let radius = params.world.size * params.world.founder_spread;
+        let mut world = World::new(7, params).expect("defaults are valid");
+        assert_eq!(world.seed_founders(400), 400);
+
+        let inner = world
+            .pool()
+            .iter_live()
+            .filter(|id| {
+                let delta = world.agents().position[id.index()] - centre;
+                delta.length_squared() < (radius * 0.5) * (radius * 0.5)
+            })
+            .count();
+
+        // A half-radius disc contains one quarter of the total area. Linear radial
+        // spacing would put 200 founders here instead and recreate the central pile-up.
+        assert_eq!(inner, 100);
+    }
+
+    #[test]
     fn mean_agent_energy_uses_only_live_slots() {
         let mut world = small_world();
         assert_eq!(world.mean_agent_energy(), 0.0);
@@ -727,6 +764,33 @@ mod tests {
         assert_eq!(world.mean_agent_energy(), 20.0);
         world.despawn(a);
         assert_eq!(world.mean_agent_energy(), 30.0);
+    }
+
+    #[test]
+    fn living_descendants_uses_parentage_not_age() {
+        let mut world = small_world();
+        let founder = world
+            .spawn_founder(Vec3::new(1.0, 2.0, 0.0))
+            .expect("pool has room");
+        let descendant = world
+            .spawn(
+                &SpawnSpec {
+                    position: Vec3::new(3.0, 4.0, 0.0),
+                    energy: 100.0,
+                    size: 1.0,
+                    signature: Vec3::ONE,
+                    yaw: 0.0,
+                    parent_a: founder,
+                },
+                &[],
+            )
+            .expect("pool has room");
+        world.agents.age[founder.index()] = 10_000;
+        world.agents.age[descendant.index()] = 0;
+
+        assert_eq!(world.living_descendants(), 1);
+        world.despawn(descendant);
+        assert_eq!(world.living_descendants(), 0);
     }
 
     #[test]

@@ -68,27 +68,29 @@ pub struct MetabolismParams {
     /// Flat upkeep. Idling must be fatal within ~2000 ticks on a full tank, or
     /// sitting still is a viable strategy and nothing evolves (spec §10).
     ///
-    /// That ~2000 is the relationship for *total* idle cost, not for this term alone,
-    /// and the defaults do not yet meet it. At the default topology and body:
+    /// That ~2000 is an upper bound on *total* idle lifetime, not a target for this
+    /// term alone. After the Phase 1 acceptance tuning, the default topology and body
+    /// pay:
     ///
     /// | term | per tick | vs base |
     /// |---|---|---|
     /// | `base` | 0.050 | 1.0× |
     /// | `k_brain` × 268 units | 0.013 | 0.27× |
-    /// | `k_sensor` × 16 units | 0.160 | 3.2× |
-    /// | `k_size` × size² | 0.180 | 3.6× |
-    /// | total | 0.403 | — |
+    /// | `k_sensor` × 16 units | 0.010 | 0.20× |
+    /// | `k_size` × size² | 0.011 | 0.23× |
+    /// | total | 0.085 | — |
     ///
-    /// That is ~250 idle ticks on a 100-energy tank, against the ~2000 asked for.
-    /// `k_brain` now lands where §5.5 wants it; the overshoot is the other two. Both
-    /// come from defaults chosen here rather than from the spec: `k_size` is quadratic
-    /// in [`BodyParams::size`], which defaults to 3, and `k_sensor` is multiplied by
-    /// channel count rather than sensor count. Left as a known gap rather than papered
-    /// over, because none of it is measurable until M7 wires metabolism to a running
-    /// population — and guessing at three constants at once is how tuning becomes
-    /// unfalsifiable.
+    /// A full idle tank therefore lasts ~1,181 ticks: long enough to encounter food and
+    /// reach maturity, still well inside the ~2,000-tick ceiling. The previous 0.403
+    /// total killed every tested seed before selection accumulated; see the M12 record
+    /// in `docs/phase-1-implementation-plan.md`.
     pub base: f32,
     /// Cost coefficient on size². Doubling radius should roughly quadruple upkeep.
+    ///
+    /// **0.00125, deliberately below the original design guess of 0.02.** The body
+    /// radius is 3 rather than 1, so 0.02 made this term 3.6× base by itself. The
+    /// tuned value prices the default body at 0.01125/tick, enough to keep size costly
+    /// once it becomes evolvable without making the fixed Phase 1 body fatal.
     pub k_size: f32,
     /// Cost per neuron and per connection — see `genome::brain_complexity`, and note
     /// it is *not* per gene: sensors are billed by `k_sensor` instead.
@@ -97,25 +99,30 @@ pub struct MetabolismParams {
     /// until Phase 2, because every Phase 1 genome is the same size, so today it only
     /// adds to `base`.
     ///
-    /// **0.00005, deliberately not the 0.001 in spec §5.5.** That table's two stated
-    /// relationships contradict each other. A 200-unit brain at "~20% of base" means
-    /// the term should land near 0.01 when `base` is 0.05 — but 200 × 0.001 is 0.2,
-    /// four times base rather than a fifth of it. Taken literally it kills an idle
-    /// agent in ~300 ticks against the ~2000 the same table asks for, which is spec
-    /// §10's "population → 0 early" written into the defaults. 0.00005 satisfies both
-    /// relationships at once.
+    /// **0.00005, deliberately not the original 0.001 design guess.** A 200-unit brain
+    /// at "~20% of base" means the term should land near 0.01 when `base` is 0.05 —
+    /// but 200 × 0.001 is 0.2, four times base rather than a fifth of it. Taken
+    /// literally it kills an idle agent in ~300 ticks against the ~2000 ceiling.
+    /// 0.00005 satisfies both relationships at once.
     pub k_brain: f32,
     /// Cost per sensor, weighted by channel count — see `genome::sensor_load`. An eye
     /// returning distance and colour costs four times a single-channel interoceptor,
     /// and metering perception is what makes evolution pay for its own compute
     /// (spec §2.2c).
     ///
-    /// Weighting by channels rather than per-sensor is this codebase's reading of §5.5's
-    /// "0.01 each, weighted by modality"; it makes the default sensor set 16 weighted
-    /// units rather than 5, so this term now dominates the metabolic budget. See the
-    /// note on [`Self::base`] before tuning it.
+    /// Weighting by channels rather than per-sensor is this codebase's reading of
+    /// §5.5's "weighted by modality". **0.000625 makes the 16-channel founding suite
+    /// cost 0.01/tick in total.** Eyes remain four times as expensive as a
+    /// single-channel interoceptor, while perception no longer costs 3.2× base before
+    /// an agent moves.
     pub k_sensor: f32,
     /// Cost coefficient on |force|². Sprinting should drain a full tank in ~200 ticks.
+    ///
+    /// With the M12 budget, full thrust costs 0.585/tick against 0.085 at idle: idling
+    /// buys about 6.9× the lifetime, up from 2.2× before the other metabolic terms were
+    /// tuned down. The accepted populations still had to forage before reproducing, but
+    /// this ratio is the one to watch with `stable_but_idle` when Phase 2 makes brain
+    /// structure evolvable (spec §10).
     pub k_move: f32,
 }
 
@@ -200,11 +207,20 @@ pub struct BrainParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReproductionParams {
-    /// Energy an agent is born with.
+    /// Founders' initial reserve and the reference one-tank energy used by sensors.
+    ///
+    /// Offspring receive a fraction of their parent's actual energy rather than a free
+    /// grant. At the tuned default threshold and 50/50 split, a marginal birth leaves
+    /// both parent and child with this 100-energy reserve.
     pub start_energy: f32,
     /// Energy floor below which the reproduce effector does nothing. Must sit above
     /// [`Self::start_energy`], so growth is required before breeding — `validate`
     /// enforces that relationship rather than leaving it to a comment (spec §5.5).
+    ///
+    /// **200 rather than the original 150:** splitting 150 made two 75-energy agents,
+    /// so reproduction itself pushed both below the configured starting reserve. At
+    /// 200, frequent reproduction still has its intended cost—half the parent's stored
+    /// energy—but does not create two already-marginal lives.
     pub threshold: f32,
     /// Effector output above which the brain is asking to reproduce. Brain-gated, not
     /// automatic at a threshold — life-history strategy is meant to be evolvable
@@ -228,16 +244,25 @@ pub struct ReproductionParams {
 #[serde(default, deny_unknown_fields)]
 pub struct MutationParams {
     /// Per-connection chance of a Gaussian nudge.
+    ///
+    /// **0.025 rather than the original 0.8.** With 240 founding connections, 0.8
+    /// changed roughly 192 weights at every birth and erased useful behavior faster
+    /// than selection could retain it. This rate changes about six.
     pub weight_perturb_rate: f32,
     /// Standard deviation of that nudge.
     pub weight_perturb_sigma: f32,
-    /// Per-connection chance of a uniform resample instead.
+    /// Per-connection chance of a uniform resample instead. The default 0.0015625
+    /// produces about 0.375 resets per 240-connection birth; the original 0.05
+    /// produced about twelve.
     pub weight_reset_rate: f32,
     /// Bound on connection weights, for reset and clamping.
     pub weight_limit: f32,
     /// Per-neuron chance of a Gaussian nudge to bias, tau, or oscillator period.
     /// Without this the oscillator period in [`BrainParams`] is fixed for all time,
     /// and spec §3.2's "evolvable period" is not true of Phase 1.
+    ///
+    /// The 0.00625 default changes about 0.175 of the 28 founding neurons per birth,
+    /// retaining useful dynamics while still giving long runs variation to select.
     pub neuron_perturb_rate: f32,
     pub bias_perturb_sigma: f32,
     /// Multiplicative, so tau explores across orders of magnitude rather than
@@ -259,6 +284,11 @@ pub struct FeedingParams {
     pub gate: f32,
     /// How far past its own body an agent can reach, added to its size and the plant's
     /// radius. Zero means it has to be in contact.
+    ///
+    /// **4 world units after M12 tuning.** The resulting nine-unit capture radius is
+    /// still local relative to vision and chemo range, but gives a steering agent more
+    /// than one tick to feed as it crosses a fixed plant. Zero-reach populations went
+    /// extinct across the acceptance seeds even after the metabolic budget was viable.
     pub reach: f32,
 }
 
@@ -267,7 +297,7 @@ impl Default for FeedingParams {
         Self {
             rate: 1.0,
             gate: 0.5,
-            reach: 0.0,
+            reach: 4.0,
         }
     }
 }
@@ -280,6 +310,11 @@ pub struct PlantParams {
     ///
     /// The one knob for a population crash. Do not add free energy anywhere else to
     /// fix one — a leak makes selection stop being real (spec §5.1).
+    ///
+    /// **12,000 after M12 tuning.** At 60 ticks/s this offers at most 200 energy/tick,
+    /// close to the minimum upkeep of the web profile's 2,000 founders. Plant caps mean
+    /// unused supply never enters, while the observed carrying regime remains far below
+    /// the agent ceiling and the random-brain control collapses to a few agents.
     pub energy_input_rate: f32,
     /// Plant pool capacity.
     pub max_plants: u32,
@@ -293,11 +328,11 @@ pub struct PlantParams {
     pub scent_rate: f32,
     /// Fraction of [`Self::max_energy`] each plant holds when the world is created.
     ///
-    /// **Defaults full; empty was a bug rather than a choice.** Filling a bare larder
-    /// takes ~24,000 ticks at these defaults against a founder lifetime of ~250, so
-    /// generation 0 starved in a world with no food in it yet — which reads as a
-    /// foraging failure and invites weakening a metabolic cost (spec §10). Measured in
-    /// `docs/phase-1-implementation-plan.md` under M7.
+    /// **Defaults full; empty was a bug rather than a choice.** Under the pre-M12
+    /// budget, filling a bare larder took ~24,000 ticks against a founder lifetime of
+    /// ~250, so generation 0 starved in a world with no food in it yet. That reads as
+    /// a foraging failure and invites weakening a metabolic cost (spec §10). Measured
+    /// in `docs/phase-1-implementation-plan.md` under M7.
     ///
     /// Filled uniformly and without drawing from `rng`: a random fill would shift every
     /// genome scalar drawn after it.
@@ -636,9 +671,9 @@ impl Default for MetabolismParams {
     fn default() -> Self {
         Self {
             base: 0.05,
-            k_size: 0.02,
+            k_size: 0.00125,
             k_brain: 0.00005,
-            k_sensor: 0.01,
+            k_sensor: 0.000625,
             k_move: 0.5,
         }
     }
@@ -684,7 +719,7 @@ impl Default for ReproductionParams {
     fn default() -> Self {
         Self {
             start_energy: 100.0,
-            threshold: 150.0,
+            threshold: 200.0,
             gate: 0.5,
             energy_split: 0.5,
             spawn_radius: 8.0,
@@ -696,11 +731,11 @@ impl Default for ReproductionParams {
 impl Default for MutationParams {
     fn default() -> Self {
         Self {
-            weight_perturb_rate: 0.8,
+            weight_perturb_rate: 0.025,
             weight_perturb_sigma: 0.15,
-            weight_reset_rate: 0.05,
+            weight_reset_rate: 0.0015625,
             weight_limit: 4.0,
-            neuron_perturb_rate: 0.2,
+            neuron_perturb_rate: 0.00625,
             bias_perturb_sigma: 0.1,
             tau_perturb_factor: 0.1,
         }
@@ -710,7 +745,7 @@ impl Default for MutationParams {
 impl Default for PlantParams {
     fn default() -> Self {
         Self {
-            energy_input_rate: 600.0,
+            energy_input_rate: 12_000.0,
             max_plants: 4_000,
             max_energy: 60.0,
             radius: 2.0,
@@ -848,6 +883,15 @@ mod tests {
         SimParams::default()
             .validate()
             .expect("shipped defaults must be coherent");
+    }
+
+    #[test]
+    fn default_birth_split_funds_two_reference_tanks() {
+        let reproduction = SimParams::default().reproduction;
+        let child = reproduction.threshold * reproduction.energy_split;
+        let parent = reproduction.threshold * (1.0 - reproduction.energy_split);
+        assert_eq!(child, parent, "the default birth does not split evenly");
+        assert_eq!(child, reproduction.start_energy);
     }
 
     #[test]

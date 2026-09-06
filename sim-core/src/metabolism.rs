@@ -131,17 +131,10 @@ mod tests {
     }
 
     #[test]
-    fn the_default_budget_is_still_the_known_overshoot() {
-        // A tripwire, not an endorsement. At the default body and topology an idle
-        // agent lasts about 250 ticks against the ~2000 §5.5 asks for, because
-        // `k_size` is quadratic in a `body.size` that defaults to 3 and `k_sensor` is
-        // charged per channel rather than per sensor — both defaults chosen in this
-        // repo rather than taken from the spec.
-        //
-        // It is pinned rather than fixed because the plan is explicit that these move
-        // against a running population and several seeds, not by arithmetic, and
-        // reproduction does not exist yet. When the tuning pass runs, this test should
-        // fail and be updated deliberately, with the new reasoning on the params.
+    fn the_default_budget_preserves_a_finite_foraging_window() {
+        // M12 tuned the whole budget against live populations rather than making base
+        // alone satisfy the ceiling. An idle founder gets time to encounter food and
+        // mature, but cannot survive indefinitely without learning to forage.
         let params = SimParams::default();
         let ticks = idle_ticks(
             params.reproduction.start_energy,
@@ -151,10 +144,8 @@ mod tests {
             &params.metabolism,
         );
         assert!(
-            (200.0..320.0).contains(&ticks),
-            "an idle agent now lasts {ticks:.0} ticks, not the ~250 recorded in the \
-             M7 budget note. If this is the tuning pass, update the note and the \
-             reasoning on MetabolismParams in the same commit."
+            (1_100.0..1_300.0).contains(&ticks),
+            "an idle founder now lasts {ticks:.0} ticks, outside the M12-tuned window"
         );
     }
 

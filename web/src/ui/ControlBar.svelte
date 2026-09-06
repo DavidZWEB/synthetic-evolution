@@ -7,6 +7,7 @@
     speed,
     seed,
     founders,
+    brainInheritance,
     shareUrl,
     linkCopied,
     ontoggle,
@@ -14,6 +15,7 @@
     onspeed,
     onseed,
     onfounders,
+    onbraininheritance,
     onreseed,
     oncopy,
     onreset,
@@ -50,6 +52,16 @@
       min="1"
       oninput={(event) => onfounders(event.currentTarget.valueAsNumber)}
     />
+  </label>
+  <label>
+    heredity
+    <select
+      value={brainInheritance}
+      onchange={(event) => onbraininheritance(event.currentTarget.value)}
+    >
+      <option value="evolving">evolving</option>
+      <option value="randomized_at_birth">random control</option>
+    </select>
   </label>
   <button onclick={onreseed}>reseed</button>
   <button onclick={oncopy} disabled={!ready || !shareUrl}>
@@ -92,13 +104,15 @@
     align-items: center;
   }
 
-  input {
+  input,
+  select {
     font: inherit;
-    width: 5rem;
     color: #d8dee9;
     background: #1c1f26;
     border: 1px solid #2b2f38;
     border-radius: 3px;
     padding: 0.2rem 0.4rem;
   }
+
+  input { width: 5rem; }
 </style>

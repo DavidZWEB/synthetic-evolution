@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { EVOLVING, RANDOMIZED_AT_BIRTH } from './brain-inheritance.js';
 import { createRunValidation } from './run-validation.js';
 
 test('cancelling invalidates an older response', () => {
@@ -16,8 +17,13 @@ test('cancelling invalidates an older response', () => {
     onRejected: (error) => assert.fail(error),
   });
 
-  validation.request({ seed: '42', founders: 20, params: null });
-  assert.deepEqual(requests, [['42', 20, null, 1]]);
+  validation.request({
+    seed: '42',
+    founders: 20,
+    params: null,
+    brainInheritance: EVOLVING,
+  });
+  assert.deepEqual(requests, [['42', 20, null, EVOLVING, 1]]);
   validation.cancel();
   assert.equal(validation.accept({ requestId: 1, params: '{}' }), false);
   assert.deepEqual(accepted, []);
@@ -33,12 +39,30 @@ test('only the newest validation response is accepted', () => {
     onRejected: (error) => assert.fail(error),
   });
 
-  validation.request({ seed: '1', founders: 10, params: null });
-  validation.request({ seed: '2', founders: 20, params: null });
+  validation.request({
+    seed: '1',
+    founders: 10,
+    params: null,
+    brainInheritance: EVOLVING,
+  });
+  validation.request({
+    seed: '2',
+    founders: 20,
+    params: null,
+    brainInheritance: RANDOMIZED_AT_BIRTH,
+  });
   assert.equal(validation.accept({ requestId: 1, params: '{}' }), false);
-  assert.equal(validation.accept({ requestId: 2, params: '{"world":{}}' }), true);
+  assert.equal(
+    validation.accept({
+      requestId: 2,
+      params: '{"world":{}}',
+      brainInheritance: RANDOMIZED_AT_BIRTH,
+    }),
+    true,
+  );
   assert.equal(accepted[0].seed, '2');
   assert.equal(accepted[0].params, '{"world":{}}');
+  assert.equal(accepted[0].brainInheritance, RANDOMIZED_AT_BIRTH);
 });
 
 test('rejections include the request source', () => {
@@ -50,7 +74,13 @@ test('rejections include the request source', () => {
     onRejected: (error, run) => rejected.push({ error, source: run.source }),
   });
 
-  validation.request({ seed: '1', founders: 6000, params: null, source: 'reseed' });
+  validation.request({
+    seed: '1',
+    founders: 6000,
+    params: null,
+    brainInheritance: EVOLVING,
+    source: 'reseed',
+  });
   assert.equal(validation.accept({ requestId: 1, error: 'too many founders' }), true);
   assert.deepEqual(rejected, [{ error: 'too many founders', source: 'reseed' }]);
 });
