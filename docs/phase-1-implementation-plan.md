@@ -24,7 +24,7 @@ referenced in commit messages.
 | M9 WASM shell and renderer | shell, worker, transport and renderer done; sim does not hold 1× at 5k |
 | M10 Instrumentation | done |
 | M11 Headless telemetry | done |
-| M12 Acceptance | in progress; candidate defaults selected, visual control comparison pending |
+| M12 Acceptance | done; three-seed visual control comparison accepted by a human |
 
 ## Cross-cutting rules for this phase
 
@@ -886,6 +886,14 @@ neighbour parity — all passing.
 
 **Judgment:** three or more seeds run side by side against the random-brain control, watched by a
 human. Not self-certifiable (AGENTS.md, spec §7.8 tier 3).
+
+**Accepted.** A human watched same-seed evolving and randomized-at-birth browser runs for
+seeds 42, 117, and 314 with 2,000 founders and the shipped params. In all three pairs,
+evolving descendants showed clearly more effective food-seeking, population recovery, and
+reproductive clustering than the control. The control occasionally retained a few
+generation-zero founders indefinitely; the live descendant counter made clear that these
+were lucky non-evolving survivors rather than sustained control lineages. Senescence remains
+scheduled for Phase 6 rather than being introduced as an extra Phase 1 death rule.
 
 If food-seeking does not emerge, check spec §10 before changing code. It is almost always
 metabolic cost too low, energy input too high, or mutation rate past error catastrophe — all
