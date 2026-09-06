@@ -23,9 +23,9 @@ git clone <this repo> && cd synthetic-evolution
 ```
 
 The script installs the pinned Rust toolchain and the wasm target, installs `wasm-pack`,
-installs the npm packages plus the browser matching the locked Playwright version, and
-runs the test suite to prove it worked. It is idempotent, so run it in every clone or
-worktree and again any time you suspect drift.
+installs the npm packages, and runs the test suite to prove it worked. It is idempotent,
+so run it in every clone or worktree and again any time you suspect drift. Add
+`--with-browser` when the checkout will run Playwright visual validation.
 
 Then:
 

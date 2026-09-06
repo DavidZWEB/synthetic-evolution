@@ -62,10 +62,10 @@ jobs:
 
       # scripts/setup.sh is the single source of truth for what a working checkout
       # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
-      # and npm ci. Browser automation is not part of deployment, and ci.yml has
-      # already run the suite on this commit before this workflow is triggered.
+      # and npm ci. ci.yml has already run the suite on this commit before this
+      # workflow is triggered; browser automation is opt-in and is not requested here.
       - name: Set up toolchains and install dependencies
-        run: ./scripts/setup.sh --skip-tests --skip-browser
+        run: ./scripts/setup.sh --skip-tests
 
       # The build script generates the gitignored wasm bindings before invoking Vite,
       # matching the clean-checkout path developers use.

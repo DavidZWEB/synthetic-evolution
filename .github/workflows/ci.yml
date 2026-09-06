@@ -40,7 +40,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Install project toolchains and dependencies
-        run: ./scripts/setup.sh --skip-tests --skip-browser
+        run: ./scripts/setup.sh --skip-tests
 
       - name: Format
         run: cargo fmt --all --check

@@ -3,20 +3,19 @@
 # here, this script is wrong — fix it rather than documenting the step.
 #
 #   --skip-tests     install everything, but do not run the suite at the end.
-#   --skip-browser   skip the Playwright browser used only for visual validation.
+#   --with-browser   also install the Playwright browser for visual validation.
 #
-# CI uses both flags: its jobs do not run browser automation, and the deploy workflow
-# has already seen the test workflow pass. Interactively you want the default — the
-# verification step is how you find out the install actually works.
+# CI uses --skip-tests where another workflow has already verified the same commit.
+# Browser automation is opt-in because most builds do not need its large download.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 run_tests=1
-install_browser=1
+install_browser=0
 for arg in "$@"; do
   case "$arg" in
     --skip-tests) run_tests=0 ;;
-    --skip-browser) install_browser=0 ;;
+    --with-browser) install_browser=1 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done

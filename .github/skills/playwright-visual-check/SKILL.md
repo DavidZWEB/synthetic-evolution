@@ -22,9 +22,10 @@ Don't use it for changes confined to `sim-core`, `shells/native`, or docs.
 
 ## How to run it
 
-1. Follow `docs/development.md` for the current setup and browser prerequisites,
-   then start the development script defined in `web/package.json` in the
-   background. Read the URL Vite prints rather than assuming a host or port.
+1. Follow `docs/development.md` for the current setup, including its opt-in
+   browser installation, then start the development script defined in
+   `web/package.json` in the background. Read the URL Vite prints rather than
+   assuming a host or port.
 2. Open that URL at a representative desktop viewport. Wait until transport is
    no longer `…`, then take both:
    - an accessibility snapshot, for exact labels, values, disabled states, and

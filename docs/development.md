@@ -21,12 +21,12 @@ Only two things installed globally:
 Then `git clone`, `./scripts/setup.sh`, `npm run dev --prefix web`.
 
 Run setup once in every clone or worktree. Rust toolchains and downloaded browser
-binaries are reused from their user-level caches, but `web/node_modules/` is
-intentionally checkout-local. The setup and WASM build scripts resolve Cargo through
-rustup and `wasm-pack` through Cargo's configured install root, so the web build does
-not depend on machine-specific PATH entries. Repository command examples use
-`scripts/cargo.sh` for the same reason; direct `cargo` commands remain equivalent when
-the rustup proxies are already on `PATH`.
+binaries, when requested, are reused from their user-level caches, but
+`web/node_modules/` is intentionally checkout-local. The setup and WASM build scripts
+resolve Cargo through rustup and `wasm-pack` through Cargo's configured install root, so
+the web build does not depend on machine-specific PATH entries. Repository command
+examples use `scripts/cargo.sh` for the same reason; direct `cargo` commands remain
+equivalent when the rustup proxies are already on `PATH`.
 
 ## Files
 
@@ -128,15 +128,14 @@ flamegraph.svg
 
 In order: `rustup show` (installs the pinned toolchain, components, and wasm target),
 `cargo install --locked wasm-pack@0.15.0`, Node via nvm if it is present,
-`npm ci --prefix web`, the lockfile-matched Playwright Chromium, then
-`cargo test --workspace` to prove it worked. It is idempotent — running it on an
-already-set-up machine does nothing but check.
+`npm ci --prefix web`, then `cargo test --workspace` to prove it worked. It is
+idempotent — running it on an already-set-up machine does nothing but check.
 
-`--skip-tests` drops the verification step. `--skip-browser` drops the browser download
-for CI and deployment jobs that do not perform visual validation. Use the default
-interactively — on a fresh checkout the verification step is how you learn the install
-actually works. On Linux, setup also installs Chromium's required system libraries;
-other platforms only need the browser download.
+`--skip-tests` drops the verification step. `--with-browser` additionally installs the
+Chromium version matched to the locked Playwright package; on Linux it also installs
+Chromium's required system libraries. Browser installation is opt-in because it is a
+large download needed only for automated visual validation. Use the default setup
+interactively unless that checkout will run the Playwright skill.
 
 Read the script rather than trusting a copy pasted here; a duplicated script drifts. Four details in it are worth understanding:
 
