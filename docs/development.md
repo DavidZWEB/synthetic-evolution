@@ -24,9 +24,9 @@ Run setup once in every clone or worktree. Rust toolchains and downloaded browse
 binaries, when requested, are reused from their user-level caches, but
 `web/node_modules/` is intentionally checkout-local. The setup and WASM build scripts
 resolve Cargo through rustup and `wasm-pack` through Cargo's configured install root, so
-the web build does not depend on machine-specific PATH entries. Repository command
-examples use `scripts/cargo.sh` for the same reason; direct `cargo` commands remain
-equivalent when the rustup proxies are already on `PATH`.
+the web build does not depend on machine-specific Cargo or wasm-pack PATH entries.
+Rustup itself must still be on `PATH`; if it is installed but unavailable, the scripts
+print generic rustup.rs and Homebrew instructions to repair the shell configuration.
 
 ## Files
 
@@ -145,12 +145,15 @@ Read the script rather than trusting a copy pasted here; a duplicated script dri
 
 **nvm has to be sourced, not called.** `nvm` is a shell function rather than a binary, so a script cannot invoke it without first sourcing `$NVM_DIR/nvm.sh` — and under `set -u` the naive version fails outright. The script sources it when it exists, and otherwise compares your installed Node against `.nvmrc` and warns rather than failing. Requiring one particular version manager to build the project is not worth it.
 
-**Rust tools are resolved, not assumed.** `rustup which cargo` selects the Cargo paired
-with the repository's pinned toolchain. `scripts/cargo.sh` exposes that Cargo to
-repository commands, while `scripts/wasm-pack.sh` also locates the Cargo install root
-and makes Cargo visible to `wasm-pack`. Package scripts invoke these through `bash`, so
-the documented Git Bash workflow does not depend on npm's platform-specific script
-shell.
+**Rust tools used by npm are resolved, not assumed.** `scripts/rustup.sh` verifies that
+rustup is on `PATH`, explains how to repair either a rustup.rs or Homebrew installation
+when it is not, and normalizes native Windows paths for Git Bash. `rustup which cargo`
+then selects the Cargo paired with the repository's pinned toolchain.
+`scripts/cargo.sh` exposes that Cargo to the type-generation package script, while
+`scripts/wasm-pack.sh` also locates the Cargo install root and makes Cargo visible to
+`wasm-pack`. Package scripts invoke these through `bash`, so the documented Git Bash
+workflow does not depend on npm's platform-specific script shell. Normal command-line
+examples remain standard `cargo` and `wasm-pack` commands.
 
 ### `web/package.json` (scripts section)
 
@@ -196,7 +199,7 @@ CI fails if that changes the checked-in output.
 
 ```bash
 # Rust
-./scripts/cargo.sh add glam --package sim-core  # updates Cargo.toml + Cargo.lock
+cargo add glam --package sim-core        # updates Cargo.toml + Cargo.lock
 
 # Node
 npm install package-name --prefix web    # updates package.json + package-lock.json
@@ -210,9 +213,9 @@ The native shell runs an evolving world beside a same-seed, same-params random-b
 control and writes both metric vectors into one self-describing JSONL stream:
 
 ```bash
-./scripts/cargo.sh run --release -p native -- \
+cargo run --release -p native -- \
   --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
-./scripts/cargo.sh run -p native -- diagnose run.jsonl
+cargo run -p native -- diagnose run.jsonl
 ```
 
 Use `--params params.json` for a partial or complete `SimParams` document; absent fields

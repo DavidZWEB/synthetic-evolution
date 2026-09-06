@@ -64,7 +64,7 @@ jobs:
           git diff --exit-code -- web/src/generated
 
       - name: Test WASM boundary and determinism
-        run: ./scripts/wasm-pack.sh test --node shells/wasm
+        run: wasm-pack test --node shells/wasm
 
       # Pull requests are not deployed, so CI owns proving the complete browser bundle
       # can be produced from a clean checkout.

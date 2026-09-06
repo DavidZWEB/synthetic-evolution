@@ -1,4 +1,4 @@
-/** Keeps the repository MCP launcher aligned with the lockfile-managed package. */
+/** Keeps the repository MCP launcher on the exact version pinned in package.json. */
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';

@@ -16,7 +16,7 @@ don't infer milestone status from this file.
 
 **Agent tooling:** MCP configuration discovery is client-specific. Copilot CLI reads
 `.github/mcp.json`; Claude Code uses `.mcp.json`; VS Code uses `.vscode/mcp.json`.
-The shared browser workflow lives in `.github/skills/playwright-visual-check/`; Copilot
+The shared browser workflow lives in `.github/skills/web-client-visual-check/`; Copilot
 CLI discovers project skills there, while other agents may require their own supported
 skill location.
 
@@ -139,10 +139,10 @@ npm run wasm --prefix web            # rebuild only web/src/wasm/
 For native smoke runs and headless telemetry:
 
 ```
-./scripts/cargo.sh run -p native -- --seed 42 --ticks 100000
-./scripts/cargo.sh run --release -p native -- \
+cargo run -p native -- --seed 42 --ticks 100000
+cargo run --release -p native -- \
   --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
-./scripts/cargo.sh run -p native -- diagnose run.jsonl
+cargo run -p native -- diagnose run.jsonl
 ```
 
 Run the smallest relevant checks while developing. Before opening a pull request, run
@@ -151,10 +151,10 @@ authoritative full list.
 
 | Changed surface | Required checks |
 |---|---|
-| Rust | `./scripts/cargo.sh fmt --all --check`; `./scripts/cargo.sh clippy --workspace --all-targets -- -D warnings`; `./scripts/cargo.sh test --workspace` |
-| `sim-core` | Rust checks plus `./scripts/cargo.sh check -p wasm --target wasm32-unknown-unknown` |
-| WASM boundary | `sim-core` checks plus `./scripts/wasm-pack.sh test --node shells/wasm` |
-| Tick arithmetic or determinism | `sim-core` checks plus `./scripts/wasm-pack.sh test --node shells/wasm` |
+| Rust | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace` |
+| `sim-core` | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown` |
+| WASM boundary | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
+| Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
 | Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
 

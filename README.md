@@ -30,10 +30,10 @@ so run it in every clone or worktree and again any time you suspect drift. Add
 Then:
 
 ```bash
-./scripts/cargo.sh test --workspace  # unit tests, invariant scan, no-alloc check
+cargo test --workspace               # unit tests, invariant scan, no-alloc check
 npm run dev --prefix web             # client on http://localhost:5173
-./scripts/cargo.sh run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
-./scripts/cargo.sh run -p native -- diagnose run.jsonl
+cargo run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
 ```
 
 On Windows, run `setup.sh` from WSL or Git Bash — the Rust and Node steps are

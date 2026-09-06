@@ -10,6 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+original_path="$PATH"
 run_tests=1
 install_browser=0
 for arg in "$@"; do
@@ -26,25 +27,65 @@ WASM_PACK_VERSION="0.15.0"
 
 info() { printf '\n==> %s\n' "$1"; }
 warn() { printf '    warning: %s\n' "$1" >&2; }
+path_hint() {
+  printf '    Add it to PATH in the profile your shell reads:\n'
+  printf '        export PATH="%s:$PATH"\n' "$1"
+}
+normalize_path() {
+  case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*)
+      if command -v cygpath >/dev/null 2>&1; then
+        cygpath -u "$1"
+        return
+      fi
+      ;;
+  esac
+  printf '%s\n' "$1"
+}
+normalize_executable_path() {
+  if [ -z "$1" ]; then
+    printf '\n'
+    return
+  fi
+  executable_path="$(normalize_path "$1")"
+  case "$(uname -s)" in
+    CYGWIN*|MINGW*|MSYS*)
+      executable_path="${executable_path%.exe}"
+      executable_path="${executable_path%.EXE}"
+      ;;
+  esac
+  printf '%s\n' "$executable_path"
+}
 
 info "Rust toolchain"
-if ! command -v rustup >/dev/null 2>&1; then
-  echo "rustup is not on your PATH. Install it from https://rustup.rs" >&2
-  exit 1
-fi
 # Reads rust-toolchain.toml and installs the pinned compiler, components, and the
 # wasm target if they are missing. Nobody has to remember `rustup target add`.
-rustup show
-cargo_path="$(rustup which cargo)"
+rustup_bin="$(./scripts/rustup.sh --print-bin)"
+./scripts/rustup.sh show
+cargo_path="$(./scripts/rustup.sh which cargo)"
 export PATH="$(dirname "$cargo_path"):$PATH"
 
 info "Rust binary tools"
 # Cargo-installed tools live outside the selected toolchain. Use Cargo's configured
 # install root directly so setup does not depend on a particular shell profile.
-CARGO_INSTALL_DIR="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
+CARGO_INSTALL_DIR="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-}}"
+if [ -z "$CARGO_INSTALL_DIR" ]; then
+  if [ -z "${HOME:-}" ]; then
+    echo "HOME or CARGO_HOME must be set so Cargo tools have an install directory." >&2
+    exit 1
+  fi
+  CARGO_INSTALL_DIR="$HOME/.cargo"
+fi
+CARGO_INSTALL_DIR="$(normalize_path "$CARGO_INSTALL_DIR")"
 CARGO_BIN="$CARGO_INSTALL_DIR/bin"
-wasm_pack_path="$CARGO_BIN/wasm-pack"
-if [ ! -x "$wasm_pack_path" ]; then
+wasm_pack_path=""
+for candidate in "$CARGO_BIN/wasm-pack" "$CARGO_BIN/wasm-pack.exe"; do
+  if [ -x "$candidate" ]; then
+    wasm_pack_path="$candidate"
+    break
+  fi
+done
+if [ -z "$wasm_pack_path" ]; then
   wasm_pack_path="$(command -v wasm-pack || true)"
 fi
 installed_wasm_pack=""
@@ -57,6 +98,16 @@ else
   # --locked builds wasm-pack against its own committed lockfile; without it cargo
   # resolves its dependencies fresh and the build occasionally fails.
   "$cargo_path" install --locked --root "$CARGO_INSTALL_DIR" "wasm-pack@$WASM_PACK_VERSION"
+  for candidate in "$CARGO_BIN/wasm-pack" "$CARGO_BIN/wasm-pack.exe"; do
+    if [ -x "$candidate" ]; then
+      wasm_pack_path="$candidate"
+      break
+    fi
+  done
+  if [ -z "$wasm_pack_path" ]; then
+    echo "cargo install succeeded but wasm-pack was not found under $CARGO_BIN" >&2
+    exit 1
+  fi
 fi
 
 info "Node"
@@ -106,5 +157,33 @@ else
   echo "    skipped (--skip-tests)"
 fi
 printf '\nSetup complete.\n'
-printf '  ./scripts/cargo.sh test --workspace  run the test suite\n'
+printf '  cargo test --workspace       run the test suite\n'
 printf '  npm run dev --prefix web     start the client (use the URL Vite prints)\n'
+
+cargo_on_path="$(PATH="$original_path" command -v cargo || true)"
+cargo_proxy="$rustup_bin/cargo"
+if [ -x "$rustup_bin/cargo.exe" ]; then
+  cargo_proxy="$rustup_bin/cargo.exe"
+fi
+cargo_on_path_normalized="$(normalize_executable_path "$cargo_on_path")"
+cargo_proxy_normalized="$(normalize_executable_path "$cargo_proxy")"
+if [ -z "$cargo_on_path" ] ||
+   [ "$cargo_on_path_normalized" != "$cargo_proxy_normalized" ]; then
+  printf '\n'
+  warn "PATH does not select the rustup proxy for Cargo."
+  path_hint "$rustup_bin"
+fi
+wasm_pack_on_path="$(PATH="$original_path" command -v wasm-pack || true)"
+wasm_pack_on_path_version=""
+if [ -n "$wasm_pack_on_path" ]; then
+  wasm_pack_on_path_version="$("$wasm_pack_on_path" --version 2>/dev/null | awk '{print $2}' || true)"
+fi
+wasm_pack_on_path_normalized="$(normalize_executable_path "$wasm_pack_on_path")"
+wasm_pack_path_normalized="$(normalize_executable_path "$wasm_pack_path")"
+if [ -z "$wasm_pack_on_path" ] ||
+   [ "$wasm_pack_on_path_version" != "$WASM_PACK_VERSION" ] ||
+   [ "$wasm_pack_on_path_normalized" != "$wasm_pack_path_normalized" ]; then
+  printf '\n'
+  warn "PATH does not select the pinned wasm-pack $WASM_PACK_VERSION."
+  path_hint "$(dirname "$wasm_pack_path")"
+fi

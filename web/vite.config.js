@@ -14,10 +14,10 @@ const crossOriginIsolation = {
 // subdirectory is silently ignored — the most common way isolation "breaks" with no
 // error at all (spec §7.7).
 export default defineConfig(({ mode }) => {
-  const headers = mode === 'transferable' ? {} : { headers: crossOriginIsolation };
+  const serverOptions = mode === 'transferable' ? {} : { headers: crossOriginIsolation };
   return {
     plugins: [svelte()],
-    server: headers,
-    preview: headers,
+    server: serverOptions,
+    preview: serverOptions,
   };
 });

@@ -1,9 +1,9 @@
 ---
-name: playwright-visual-check
-description: Visually verify the Svelte + WebGL2 client using the Playwright MCP browser tools — take screenshots, read console/network errors, and inspect rendered DOM/canvas state. Use after any change under web/, and whenever fixing or validating a UI bug, to confirm the client actually renders and behaves as intended rather than relying on TypeScript checks alone.
+name: web-client-visual-check
+description: Load the Svelte + WebGL2 client in a browser and verify that it renders and responds correctly. Use after any change under web/, and whenever fixing or validating a UI bug, to catch runtime, canvas, interaction, and responsive-layout failures that static checks cannot see.
 ---
 
-# Playwright visual check
+# Web client visual check
 
 `npm run check --prefix web` and `npm test --prefix web` catch type errors and
 logic bugs, but neither one renders the page. WebGL2 and Svelte runtime
@@ -19,6 +19,19 @@ what this skill is for.
 - Before handing off a PR touching `web/`, as a last sanity check.
 
 Don't use it for changes confined to `sim-core`, `shells/native`, or docs.
+
+## Requirements
+
+Use whatever browser automation and inspection capabilities the current agent
+provides. Copilot CLI can obtain them from the repository's pinned Playwright MCP
+configuration.
+
+If no browser tools are available, stop and tell the user that visual validation
+cannot be performed in the current session. Offer to either configure browser tooling
+for their agent or proceed with the visual check explicitly skipped. Explain that MCP
+configuration locations are agent-specific and that adding a server usually requires
+restarting the session before its tools appear. Never install or configure browser
+tooling without the user's approval, and never report a skipped visual check as passed.
 
 ## How to run it
 
