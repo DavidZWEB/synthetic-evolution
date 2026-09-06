@@ -62,9 +62,8 @@ jobs:
 
       # scripts/setup.sh is the single source of truth for what a working checkout
       # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
-      # and npm ci. --skip-tests drops only its verification tail, because ci.yml has
-      # already run the suite on this commit — and, for a production deploy, has to
-      # have passed before this workflow is triggered at all.
+      # and npm ci. ci.yml has already run the suite on this commit before this
+      # workflow is triggered; browser automation is opt-in and is not requested here.
       - name: Set up toolchains and install dependencies
         run: ./scripts/setup.sh --skip-tests
 
