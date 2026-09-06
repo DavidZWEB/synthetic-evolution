@@ -8,8 +8,8 @@ description: Load the Svelte + WebGL2 web client in a browser and verify it rend
 `npm run check --prefix web` and `npm test --prefix web` catch type errors and
 browser-independent logic bugs. Neither one draws a frame. WebGL2 and Svelte
 runtime failures — a blank canvas, a control that never wires up, an exception
-thrown only in the browser — are invisible to both, and several have reached
-`main` in this repository already: a vertex attribute declared `normalized`
+thrown only in the browser — are invisible to both. Three from M9 and M10, each
+caught only by loading the page: a vertex attribute declared `normalized`
 divided the alive flag by 255 and rendered an empty world with no error at all;
 a backtick inside a GLSL comment terminated the shader template and blanked the
 page; a throw inside the worker's timer loop froze the clock while the renderer
@@ -118,6 +118,6 @@ what was on screen, what you operated, the before and after, and any console or
 network output verbatim. For a failure, give the viewport, the measured overflow
 or bounds, and the exact error.
 
-This is evidence for a human, not a verdict. `AGENTS.md` puts UI and behaviour
-questions on the judgment side of "Declaring a phase complete", and that side
-explicitly cannot be self-certified.
+This is evidence for a human, not a verdict. `AGENTS.md` separates mechanical
+checks from judgment and says the judgment half cannot be self-certified; a visual
+check produces the observations, not the conclusion.
