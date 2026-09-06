@@ -178,3 +178,20 @@ fn inspecting_an_empty_slot_is_an_error() {
         "past capacity entirely"
     );
 }
+
+#[wasm_bindgen_test]
+fn inspector_reports_compensated_energy() {
+    let params = r#"{
+        "world":{"max_agents":1},
+        "feeding":{"rate":0.0},
+        "metabolism":{"base":1.0,"k_size":0.0,"k_brain":0.0,"k_sensor":0.0,"k_move":0.0},
+        "reproduction":{"start_energy":10000000000.0,"threshold":20000000000.0}
+    }"#;
+    let mut sim = Sim::new(7, Some(params.into())).expect("valid params");
+    assert_eq!(sim.seed_founders(1), 1);
+    sim.step_many(1);
+
+    let json = sim.inspect_agent(0, 1).expect("slot 0 is alive");
+    let inspection: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(inspection["energy"].as_f64(), Some(9_999_999_999.0));
+}

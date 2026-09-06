@@ -3,12 +3,16 @@
 These instructions apply to every coding agent working in this repository. Tool-specific
 instruction files should point here rather than duplicate this guidance.
 
-**Synthetic Evolution** — an open-ended artificial life simulator: neural-network-brained organisms under implicit selection in a closed energy economy. Rust sim core compiled to WASM, Svelte + Three.js client. Full design in `docs/synthetic-evolution-spec.md`.
+**Synthetic Evolution** — an open-ended artificial life simulator: neural-network-brained organisms under implicit selection in a closed energy economy. Rust sim core compiled to WASM, Svelte + WebGL2 client. Full design in `docs/synthetic-evolution-spec.md`.
 
-**Read `docs/synthetic-evolution-spec.md` §1–§2 before your first change.** Read the sections a phase names when you start that phase. Don't load the whole spec every session.
+**Before changing `sim-core`, simulation behavior, or serialized world state, read
+`docs/synthetic-evolution-spec.md` §1–§2 once and the sections relevant to the task.**
+For tooling, documentation, or UI-only changes, read only the relevant documentation.
+Don't load the whole spec every session.
 
 **Setup, toolchains, and dependency rules:** `docs/development.md`. A fresh machine is `./scripts/setup.sh`; `README.md` is the entry point for a human arriving at the repo.
-**Current work:** `docs/phase-1-implementation-plan.md` — the milestone breakdown and what is done so far.
+**Roadmap and current status:** `docs/phase-1-implementation-plan.md` is authoritative;
+don't infer milestone status from this file.
 
 ## The five invariants
 
@@ -18,7 +22,12 @@ Violating any of these is a bug even if tests pass and the sim runs.
 2. **`sim-core` does no I/O.** No file access, no network, no time, no logging to stdout. It is a pure library. The wasm and native shells own all I/O.
 3. **No `static` mutable state in `sim-core`.** Including the innovation-ID counter, which is a field on `World`. A process must be able to hold several worlds.
 4. **No allocation in the hot loop.** Fixed-capacity pools with free lists, arenas for variable-length data. There is a test for this.
-5. **Every tunable is runtime config.** All constants live in `SimParams` (serde-serializable, settable from JS). Never hardcode a number someone might want to twiddle — tuning happens in the browser, not the compiler.
+5. **Every tunable is runtime config.** Every value that changes simulation behavior or
+   might reasonably be tuned belongs in `SimParams` (serde-serializable, settable from
+   JS). Constants that encode representation rather than a runtime choice, such as
+   sentinel values or serialized byte widths, may remain compile-time constants. Never
+   hardcode a behavioral number someone might want to twiddle — tuning happens in the
+   browser, not the compiler.
 
 ## Do not simplify these
 
@@ -35,9 +44,9 @@ They look arbitrary. They are load-bearing, and removing them produces a sim tha
 
 ### Shape
 
-- **One module, one concept.** A file should be describable in a single sentence without "and."
-- **~400 lines is a smell, 500 means split** (excluding inline `#[cfg(test)]` blocks). Long files here almost always mean several systems got tangled — split by responsibility, not by cutting at a line count.
-- **Every file opens with a `//!` module doc**: what it's responsible for, and what it deliberately isn't. Two or three sentences.
+- **One module, one concept.** A file should be describable in a single sentence without "and." That's the real test — not a line count.
+- **Long files are worth a second look, not an automatic split.** Past ~500 lines (excluding inline `#[cfg(test)]` blocks), ask whether it's still one concept. A flat list of fields (`params.rs`) or a struct's `impl` split across sibling files by convention (`world.rs`/`tick.rs`) can honestly stay long. Several unrelated systems sharing a file cannot — split by responsibility.
+- **Every Rust source module opens with a `//!` module doc**: what it's responsible for, and what it deliberately isn't. Two or three sentences.
 - **Public surface is small.** Default to private; `pub` is a decision. A module exposing its internals invites the next module to reach in.
 
 ### Data-oriented, not object-oriented
@@ -68,20 +77,20 @@ This isn't style preference. Narrow signatures are what let you run systems in i
 - **Polymorphism at the edges, monomorphic core.** Traits at boundaries (`SnapshotTransport`), concrete types inside. No `dyn` in the tick — indirect calls through WASM function tables are expensive (spec §7.5).
 - **Validate at the boundary, then use total functions.** `Result` at deserialization and shell entry points, where malformed input is a real possibility. Inside the tick, invariants are already established — use `debug_assert!` rather than threading `Result` through the hot loop. `sim-core` must not panic in release on any input that passed validation.
 - **Instrumentation behind a feature or callback.** Stats collection must cost nothing in a headless overnight run.
+- **Evolve through gene kinds, not fixed fields.** Prefer adding a gene kind over adding
+  a fixed field. The genome is a typed-gene list precisely so extensions stay additive
+  (spec §3.1).
 
 ### Comments
 
 - **Explain why, never what.** `// increment index` is noise. `// previous activations, so behavior doesn't depend on pool order` is the reason the line exists.
-- **Cite the spec, never this file.** `AGENTS.md` is instructions for coding agents, not
-  project documentation — it is not shipped, not versioned with the design, and means
-  nothing to someone reading `sim-core` on its own. Every rule worth putting in a comment
-  has a home in `docs/synthetic-evolution-spec.md`; cite that. Where a rule genuinely
-  has no spec section, state the reasoning in the comment rather than pointing at
-  anything.
-- **Keep the spec authoritative.** If implementation needs a design change, discuss it
-  with a human first and update the spec in the same change. Do not leave the spec stale
-  and compensate with a long code comment explaining the divergence.
-
+- **Cite the spec, never this file.** `AGENTS.md` is agent guidance, not the authoritative
+  project design, and means nothing to someone reading `sim-core` on its own. Every rule
+  worth putting in a comment has a home in `docs/synthetic-evolution-spec.md`; cite that.
+  Where a rule genuinely has no spec section, state the reasoning in the comment rather
+  than pointing at anything. If implementation needs a design change, discuss it with a
+  human first and update the spec in the same change — don't leave the spec stale and
+  compensate with a long code comment explaining the divergence.
 - **Anything load-bearing and strange gets a comment naming the spec section.** This is the important one. Code like the `parentB` field, the clamped elevation param, or deferring births to step 10 all look like dead weight or arbitrary choices. Without an anchor, someone eventually tidies them away.
 
   ```rust
@@ -100,78 +109,60 @@ The forward-compatibility hedges in the phase plan are **exhaustive** — take t
 ## Layout
 
 ```
-synthetic-evolution/         cargo workspace root
-AGENTS.md        shared instructions for every coding agent
-CLAUDE.md        Claude Code compatibility shim importing AGENTS.md
-docs/            spec, phase build plans, development.md
-scripts/         setup.sh — one command to make a fresh machine work
-sim-core/        pure Rust, no I/O, no wasm-bindgen — the invariants above apply here
-  ids.rs         newtype ids. InnovationId is genome identity; NeuronId is a brain slot
-  math.rs        libm wrappers, yaw-constrained quaternion helpers
-  rng.rs         the world's seeded PRNG
-  params.rs      SimParams — every tunable constant
-  pool.rs        fixed-capacity slot allocation, free list, alive flags
-  arena.rs       flat arenas for variable-length per-agent data
-  agents.rs      the SoA state arrays (spec §2.2a)
-  spatial.rs     uniform grid hash over a toroidal world, plus its brute-force reference
-  genome.rs      the typed-gene list and the rules that make one coherent
-  founder.rs     Phase 1's fixed topology, instantiated with random scalars
-  brain.rs       CTRNN: compiling a genome to a runnable network, and the Euler step
-  perceive.rs    sensors: running an agent's organs against the world, into its brain
-  chemo.rs       the pheromone field — sample, gradient, deposit, diffuse, decay
-  effectors.rs   brain outputs into the intent buffer; changes nothing itself
-  movement.rs    draining the thrust and turn intents into velocity and position
-  plants.rs      the autotrophs: where every joule enters the world
-  metabolism.rs  spec §5.2's cost function; what it costs to be alive for a tick
-  ledger.rs      every joule in and out, so conservation is measured not assumed
-  feeding.rs     moving energy from a plant into the agent touching it
-  reproduction.rs when an agent may bud, and where the offspring lands
-  mutate.rs      mutation operators (scalars only this phase)
-  crossover.rs   NEAT alignment. Written and tested; nothing calls it until Phase 6
-  world.rs       World struct, spawn/despawn, the command queue, and the accessors
-  tick.rs        spec §2.4's eleven steps, in the order that makes them reproducible
-  command.rs     the serde-serializable way anything outside asks the world to change
-  state_hash.rs  folds a whole world into one number; what the golden test compares
-  tests/         invariants.rs scans src for banned patterns; no_alloc, footprint,
-                 conservation, steering, forward_compat, and golden
-shells/wasm/     wasm-bindgen bindings, snapshot pointer export
-shells/native/   CLI: headless runs, batch sweeps, golden-hash tests
-web/             Vite + Svelte 5 client. src/generated/ is committed ts-rs output;
-                 src/wasm/ is wasm-pack output and never committed
+docs/          authoritative design, roadmap, and development workflow
+sim-core/      deterministic, I/O-free Rust simulation; all five invariants apply
+shells/wasm/   wasm-bindgen boundary and snapshot-memory export
+shells/native/ native CLI and host-side I/O
+web/           Svelte 5 + WebGL2 renderer and snapshot transport
+scripts/       repository setup and automation
 ```
 
-`world.rs` and `tick.rs` write two halves of one `impl`, which is why `World`'s fields
-are `pub(crate)` rather than private — Rust needs crate visibility to split an `impl`
-across files. Nothing outside the crate gains by it: the shells and the integration
-tests still go through the accessors.
+Module responsibilities live in each module's `//!` documentation.
+`sim-core/src/lib.rs` is the authoritative module index; inspect the tree rather than
+maintaining a second inventory here. `web/src/generated/` is committed; `web/src/wasm/`
+is generated locally and is not.
 
-## Commands
+## Commands and validation
 
 ```
 ./scripts/setup.sh                   # fresh machine: toolchain, wasm-pack, npm ci
-cargo test --workspace               # unit tests, invariant scan, no-alloc, golden hash
-wasm-pack test --node shells/wasm    # the other half of the hash: wasm agrees with native
-cargo run -p native -- --seed 42 --ticks 100000
-npm run wasm --prefix web            # rebuild bindings into web/src/wasm/
-npm test --prefix web                # Node tests for browser-independent client logic
-npm run check --prefix web           # TypeScript and Svelte diagnostics
 npm run dev  --prefix web            # client on http://localhost:5173
+npm run wasm --prefix web            # rebuild only web/src/wasm/
 ```
 
-`npm run dev` and `npm run build` rebuild the wasm bindings before Vite starts. Run
-`npm run wasm --prefix web` directly when only the generated bindings are needed.
+For native smoke runs and headless telemetry:
 
-`cargo test --workspace` runs everything that can run natively, the golden hash
-included. It cannot run the cross-target half: `wasm-pack test --node shells/wasm`
-compiles `sim-core` to wasm32 and asserts the same seeds produce the same hashes, which
-is what catches a platform transcendental or a width assumption no native test can see.
-Run it after anything that touches arithmetic inside the tick.
+```
+cargo run -p native -- --seed 42 --ticks 100000
+cargo run --release -p native -- \
+  --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
+```
 
-## Definition of done
+Run the smallest relevant checks while developing. Before opening a pull request, run
+the checks covering every changed surface; `.github/workflows/ci.yml` is the
+authoritative full list.
+
+| Changed surface | Required checks |
+|---|---|
+| Rust | `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings`; `cargo test --workspace` |
+| `sim-core` | Rust checks plus `cargo check -p wasm --target wasm32-unknown-unknown` |
+| WASM boundary | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
+| Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
+| Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
+| Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
+
+`npm run dev` and `npm run build` rebuild the WASM bindings before Vite starts.
+Native tests include the golden hash but cannot prove cross-target agreement; run the
+WASM test after anything that touches tick arithmetic.
+
+## Declaring a phase complete
 
 A phase is complete when **both** hold:
 
-- **Mechanical:** golden-hash test updated and passing, energy conservation passing, no-alloc test passing, cross-target hash agreement.
+- **Mechanical:** the golden hash, energy conservation, no-allocation, and cross-target
+  agreement tests pass. Update the golden hash only for a deliberate behavior change,
+  in the same commit, and explain why it changed.
 - **Judgment:** the phase's success criterion in spec §8 is met, verified by a human watching the sim.
 
 The second cannot be self-certified. Phase success criteria are about whether something *interesting* evolved, which no test asserts. Report what you observe and let the human make the call. Never mark a phase done on mechanical tests alone.
@@ -180,9 +171,16 @@ The second cannot be self-certified. Phase success criteria are about whether so
 
 These are separate loops and must stay separate.
 
-**Tuning `SimParams` is yours.** Run headless sweeps, read metrics, run `diagnose`, report findings (spec §7.9). Always use several seeds per configuration and report the variance — a single good run is the most common way an automated report misleads.
+**Adjusting existing `SimParams` values is tuning.** That includes parameters which alter
+selection pressure. Changing checked-in defaults is also a deliberate behavior change
+and follows the golden-hash rule above. Changing algorithms, state flow, energy
+accounting, or the mechanisms that create selection pressure is a code or design change
+and requires human review first. Check spec §10 before proposing one — most symptoms
+there map to a parameter, not a bug.
 
-**Editing `sim-core` in response to metric outcomes requires human review.** "Population is unstable" can be fixed by weakening a metabolic cost: every metric improves and the simulation is quietly ruined. If a metric looks wrong, check spec §10 first — most symptoms there map to one constant, not to a bug.
+Use several seeds per configuration and report the variance. When the active phase
+provides the experiment tooling, use its headless metrics and `diagnose` command
+(spec §7.9). A single good run is the most common way an automated report misleads.
 
 **Never optimize toward a scalar objective.** Report a vector of metrics with the random-brain control alongside. Don't rank configurations or pick a winner; produce a shortlist for a human to watch. Every metric here is Goodhart-able — maximizing species count just means lowering the speciation threshold until noise counts as speciation.
 
@@ -196,32 +194,14 @@ exception: a docs change that records a decision is exactly the kind worth a sec
 eyes, because nothing else in the repo will catch it if the reasoning is wrong. Branch names
 follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena-empty-block`.
 
-**Then review the PR you just raised.** Opening it is not the end of the task. Read the diff
-back as a reviewer would — use the agent's code-review workflow or `gh pr diff` — and report
-the findings in the same reply that hands over the PR. What to look for, roughly in the order
-things go wrong here:
+**Then review the PR you just raised.** Opening it is not the end of the task. Read the
+diff back as a reviewer would — use the agent's code-review workflow or `gh pr diff` —
+and report the findings in the same reply that hands over the PR. Review against the
+five invariants, load-bearing rules, and code-design guidance above, then check ordinary
+correctness, every changed caller, and whether each test could fail for the bug it claims
+to catch. Report explicitly when the review is clean.
 
-- **The five invariants.** `tests/invariants.rs` scans for 1–3 lexically and `no_alloc.rs`
-  measures 4, so the review's job is the part a grep cannot see: a constant hardcoded where
-  a `SimParams` field belongs — invariant 5, which nothing tests — and determinism that is
-  semantic rather than textual, such as a summation whose order varies with input, or
-  iteration driven by anything but agent index. The golden hash catches that second class
-  from M8 onward; until M8 this review is the only thing that does.
-- **The load-bearing and strange.** Dead genome fields, the clamped elevation param, deferred
-  births. Check each one still has a comment naming the spec section that justifies it —
-  these are what a later tidy-up removes.
-- **Comments.** Why and not what, citing `docs/synthetic-evolution-spec.md` and never this
-  file (see *Comments* above).
-- **Shape.** A module doc on every file, ~400 lines a smell and 500 a split, systems taking
-  the slices they need rather than `&mut World`, newtype IDs at the boundaries, `pub` as a
-  decision.
-- **Ordinary correctness.** Inverted conditions, off-by-one, the other callers of a changed
-  function, a validation quietly dropped.
-- **Tests that assert less than they appear to.** A misparenthesised `abs`, a threshold
-  loose enough to pass either way, a fixture rich enough that the thing under test never
-  binds. A green test that cannot fail is worse than no test.
-
-**Fixes from the review land as a second commit on the PR** — never amended into the first.
+**Fixes found after the PR opens land as a second commit** — never amended into the first.
 The audience is the human reading the open PR, not `main`'s history: a separate commit hands
 them the corrections as a diff of their own, and lets GitHub show what moved since they last
 looked. Amending destroys precisely that, and makes a review that caught a real error look
@@ -230,16 +210,7 @@ identical to one that caught nothing.
 **PRs squash on merge**, so the branch collapses to a single commit on `main`. GitHub
 prefills that commit's body by concatenating the branch's messages, which is why each one is
 still worth writing properly — but the prefill is editable and the title falls back to the
-PR's, so read the squash message before merging rather than trusting it. Anything *Working
-style* requires has to survive into it, the note explaining a golden-hash update above all.
+PR's, so read the squash message before merging rather than trusting it. The explanation
+for any golden-hash update must survive into the squash message.
 
-Fix what is plainly wrong; raise what is a judgment call as a comment and let the human
-decide. Say what you reviewed even when you found nothing — an explicit "here is what I
-checked and it was clean" is worth reading, and a silent PR is indistinguishable from an
-unreviewed one.
-
-## Working style
-
-- Behavior changes require updating the golden hash deliberately, in the same commit, with a note on why the behavior changed. An unexplained hash update is a red flag.
-- When a phase's tuning constants don't produce the expected outcome, that is a tuning problem, not a code bug. Check spec §10 before refactoring — most symptoms there map to one constant.
-- Prefer adding a gene *kind* over adding a fixed field. The genome is a typed-gene list precisely so extensions stay additive (spec §3.1).
+Fix what is plainly wrong; raise judgment calls as comments and let the human decide.

@@ -485,6 +485,21 @@ impl SimParams {
         if self.plants.max_plants > MAX_PLANTS {
             return Err(ParamError("plants.max_plants exceeds the pool ceiling"));
         }
+        if !(self.plants.energy_input_rate >= 0.0) || !self.plants.energy_input_rate.is_finite() {
+            return Err(ParamError(
+                "plants.energy_input_rate must be finite and non-negative",
+            ));
+        }
+        if !(self.plants.max_energy >= 0.0) || !self.plants.max_energy.is_finite() {
+            return Err(ParamError(
+                "plants.max_energy must be finite and non-negative",
+            ));
+        }
+        if !(self.plants.max_energy * self.plants.max_plants as f32).is_finite() {
+            return Err(ParamError(
+                "plants.max_energy times max_plants exceeds the finite energy ledger",
+            ));
+        }
         if self.sensing.vision_rays > MAX_VISION_RAYS {
             return Err(ParamError(
                 "sensing.vision_rays exceeds the per-agent ceiling",
@@ -576,6 +591,25 @@ impl SimParams {
         }
         if !(0.0..=1.0).contains(&self.movement.drag) {
             return Err(ParamError("movement.drag must be in [0, 1]"));
+        }
+        if !(self.movement.max_speed >= 0.0) || !self.movement.max_speed.is_finite() {
+            return Err(ParamError(
+                "movement.max_speed must be finite and non-negative",
+            ));
+        }
+        if [
+            self.metabolism.base,
+            self.metabolism.k_size,
+            self.metabolism.k_brain,
+            self.metabolism.k_sensor,
+            self.metabolism.k_move,
+        ]
+        .iter()
+        .any(|&cost| !(cost >= 0.0) || !cost.is_finite())
+        {
+            return Err(ParamError(
+                "metabolism costs must be finite and non-negative",
+            ));
         }
         Ok(())
     }
@@ -865,6 +899,9 @@ mod tests {
             ("absurd ray count", |p| {
                 p.sensing.vision_rays = 2_000_000_000
             }),
+            ("plant stock overflows the ledger", |p| {
+                p.plants.max_energy = f32::MAX
+            }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
             ("sense radius too small for the world", |p| {
                 p.sensing.vision_range = 0.01;
@@ -881,6 +918,8 @@ mod tests {
                 p.plants.signature = [1.0e6, -50.0, f32::MAX]
             }),
             ("decay above 1", |p| p.chemo.decay = vec![1.4]),
+            ("negative max speed", |p| p.movement.max_speed = -1.0),
+            ("negative metabolic cost", |p| p.metabolism.base = -1.0),
         ];
         for (name, break_it) in cases {
             let mut params = SimParams::default();

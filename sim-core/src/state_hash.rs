@@ -144,6 +144,19 @@ fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
     }
 }
 
+/// Stable fingerprint of one genome for telemetry and lineage counting.
+///
+/// This is not an identity assigned by the simulation and collisions remain possible;
+/// it is a compact observation of every serialized gene field in deterministic order.
+pub fn genome_fingerprint(genes: &[Gene]) -> u64 {
+    let mut hash = Fnv1a::new();
+    hash.u32(genes.len() as u32);
+    for gene in genes {
+        fold_gene(&mut hash, gene);
+    }
+    hash.finish()
+}
+
 impl World {
     /// Folds the whole world into one number.
     ///
@@ -188,6 +201,7 @@ impl World {
             h.f32(q.w);
 
             h.f32(agents.energy[i]);
+            h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.age[i]);
             h.u32(agents.species_id[i]);
@@ -210,10 +224,16 @@ impl World {
         // even when every agent still agrees.
         let plants = self.plants();
         h.u32(plants.len() as u32);
-        for (&p, &e) in plants.position().iter().zip(plants.energy().iter()) {
+        for ((&p, &e), &reserve) in plants
+            .position()
+            .iter()
+            .zip(plants.energy().iter())
+            .zip(plants.energy_reserve().iter())
+        {
             h.f32(p.x);
             h.f32(p.y);
             h.f32(e);
+            h.f64(reserve);
         }
 
         // Commands not yet due are state too: two worlds identical in every other way
@@ -336,6 +356,24 @@ mod tests {
             h.finish()
         };
         assert_ne!(bits(0.0), bits(-0.0));
+    }
+
+    #[test]
+    fn genome_fingerprint_tracks_neural_scalars() {
+        let world = populated(1);
+        let id = world.pool().iter_live().next().expect("one agent");
+        let a = world.genome(id).to_vec();
+        let mut b = a.clone();
+        let connection = b
+            .iter_mut()
+            .find_map(|gene| match gene {
+                Gene::Connection(connection) => Some(connection),
+                _ => None,
+            })
+            .expect("founder has connections");
+        connection.weight += 0.25;
+        assert_eq!(genome_fingerprint(&a), genome_fingerprint(&a));
+        assert_ne!(genome_fingerprint(&a), genome_fingerprint(&b));
     }
 
     #[test]
