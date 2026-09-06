@@ -213,8 +213,9 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 
 | Operator | Default rate | Notes |
 |---|---|---|
-| Weight perturbation | 0.8 per connection | Gaussian, σ evolvable |
-| Weight reset | 0.05 | Uniform resample |
+| Weight perturbation | 0.025 per connection | Gaussian, σ evolvable; ~6 of Phase 1's 240 connections per birth |
+| Weight reset | 0.0015625 per connection | Uniform resample; ~0.375 per Phase 1 birth |
+| Neuron scalar perturbation | 0.00625 per neuron | Bias, tau, and oscillator period; ~0.175 of Phase 1's 28 neurons per birth |
 | Add connection | 0.05 | Between existing neurons |
 | Add neuron | 0.02 | Split an existing connection |
 | Disable/enable connection | 0.02 | |
@@ -430,21 +431,24 @@ Offspring spawn within a small radius of the parent, with parent energy split be
 
 ### 5.5 Starting constants
 
-Every number here is a guess that exists so nothing gets invented ad hoc. Expect to change all of them — §10's failure modes are almost entirely about these values. What matters more than the absolutes are the **relationships**, which are stated alongside.
+These began as guesses so nothing was invented ad hoc. Phase 1 values now include the
+M12 acceptance tuning; future-phase values remain provisional. What matters more than
+the absolutes are the **relationships**, which are stated alongside.
 
 | Constant | Start | Relationship that actually matters |
 |---|---|---|
 | `base_metabolism` | 0.05 /tick | Idling must be fatal within ~2000 ticks on a full tank |
-| `k_size` | 0.02 | Doubling radius should roughly quadruple upkeep |
-| `k_brain` | 0.001 /gene | A 200-gene brain costs ~20% of base — noticeable, not crippling |
-| `k_sensor` | 0.01 each | An eye should cost more than a chemoreceptor |
+| `k_size` | 0.00125 | Doubling radius should roughly quadruple upkeep |
+| `k_brain` | 0.00005 /unit | A 200-unit brain costs ~20% of base — noticeable, not crippling |
+| `k_sensor` | 0.000625 /weighted channel | An eye costs four times a one-channel interoceptor |
 | `k_move` | 0.5 · force² | Sprinting drains a full tank in ~200 ticks |
 | `agent_start_energy` | 100 | — |
-| `reproduce_threshold` | 150 | Above start energy, so growth is required before breeding |
+| `reproduce_threshold` | 200 | With a 50/50 split, a marginal birth leaves both lives at start energy |
+| `feeding_reach` | 4 | Local tolerance beyond body + plant radii; still far below sensor range |
 | `attack_cost` | 8 | **20–40% of typical prey energy** — the single most sensitive ratio in the sim |
 | `attack_damage` | 25 | Several bites to kill, so prey can escape |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
-| `plant_growth_rate` | tuned to hold ~2× carrying capacity | |
+| `plant_energy_input_rate` | 12000 /sim-second | Supports the 2,000-founder web profile while plant caps reject unused supply |
 | `chemo_decay` | 0.98 /tick per channel | Trails persist ~50 ticks; **make this per-channel** |
 | `chemo_diffuse` | 0.1 | Too high and every gradient flattens to zero |
 | `mutation_rate_init` | see §3.3 | Evolvable — this is only the seed value |

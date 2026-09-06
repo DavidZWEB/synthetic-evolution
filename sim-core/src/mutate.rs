@@ -88,10 +88,18 @@ mod tests {
 
     #[test]
     fn mutation_moves_weights() {
-        let mut genes = tiny();
+        let params = SimParams::default();
+        let mut next_id = 0;
+        let plan = crate::founder::FounderPlan::new(&params, || {
+            let id = crate::ids::InnovationId::new(next_id);
+            next_id += 1;
+            id
+        });
+        let mut genes = vec![Gene::default(); plan.genes().len()];
+        plan.instantiate(&mut Rng::from_seed(2), &params, &mut genes);
         let before = weights(&genes);
         let mut rng = Rng::from_seed(1);
-        mutate(&mut genes, &mut rng, &MutationParams::default());
+        mutate(&mut genes, &mut rng, &params.mutation);
         assert_ne!(weights(&genes), before, "nothing changed at default rates");
     }
 

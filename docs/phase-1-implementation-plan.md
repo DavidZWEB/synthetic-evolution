@@ -19,12 +19,12 @@ referenced in commit messages.
 | M4 Genome, mutation, crossover | done |
 | M5 CTRNN | done |
 | M6 Sensors and effectors | done |
-| M7 World and economy | done; larder fixed, `k_sensor` unit open — see the budget pass |
+| M7 World and economy | done; larder fixed, metabolic budget tuned at M12 |
 | M8 The tick | done |
 | M9 WASM shell and renderer | shell, worker, transport and renderer done; sim does not hold 1× at 5k |
 | M10 Instrumentation | done |
 | M11 Headless telemetry | done |
-| M12 Acceptance | not started |
+| M12 Acceptance | in progress; candidate defaults selected, visual control comparison pending |
 
 ## Cross-cutting rules for this phase
 
@@ -381,13 +381,12 @@ records it as input. Reproduction will record nothing, because the offspring's e
 comes out of its parent. `World::spawn` itself records neither and says so, since the two
 callers account differently.
 
-*The budget still overshoots, and is pinned rather than fixed.* At the default body and
-topology an idle agent lasts ~250 ticks against §5.5's ~2000, for the two reasons already
+*At M7, the budget still overshot and was pinned pending M12.* At the default body and
+topology an idle agent lasted ~250 ticks against §5.5's ~2000, for the two reasons already
 recorded: `k_size` is quadratic in a `body.size` defaulting to 3, and `k_sensor` is
-charged per channel. `metabolism`'s `the_default_budget_is_still_the_known_overshoot`
-pins the figure so a change is deliberate. It is not fixed here because the plan is
-explicit that these move against a running population and several seeds, and reproduction
-does not exist yet — that is the next change.
+charged per channel. A tripwire pinned the figure so a later change would be deliberate.
+It was not fixed here because the plan required tuning against a running population and
+several seeds; the M12 record below resolves it.
 
 **Decisions taken in the transfer half.**
 
@@ -449,12 +448,10 @@ Untested directions worth a look: many more founders, far denser plants, a
 `reproduction.threshold` closer to `start_energy`, or a lower `start_energy` so a full
 tank is cheaper to reach.
 
-No parameter has been changed on the strength of any of this. The values are a human's
-call, and the plan is explicit that a metric improving is not a reason on its own —
-weakening a metabolic cost makes every number look better and is how a simulation quietly
-stops selecting for anything (spec §10). The known figure remains an idle agent's ~250
-ticks against §5.5's ~2000, pinned by `metabolism`'s
-`the_default_budget_is_still_the_known_overshoot`.
+No parameter was changed during M7 on the strength of this pass. The values were left for
+a human decision after instrumentation and multi-seed controls existed: weakening a
+metabolic cost makes every number look better and is how a simulation quietly stops
+selecting for anything (spec §10). The M12 record below contains that later decision.
 
 **The budget pass was measuring an empty larder.** `Plants::new` seeded every site at
 zero energy, and filling one takes `max_energy · max_plants / energy_input_rate`
@@ -845,8 +842,8 @@ neutral mutation alone can move it.
 The mechanical criterion was exercised with a 500,000-tick, same-seed paired run using
 a deliberately cheap 32-slot, 8×8-field fixture. Both cohorts reached and retained the
 32-agent ceiling, each ended with 24 living descendants, and their final state hashes
-diverged (`e590467d78fce49a` evolving, `fbe1dd0070b40308` control). It produced a header
-plus six samples in about 65 seconds in release mode:
+diverged (`ac8cb1852faeb904` evolving, `3307097b6bb7365c` control). It produced a header
+plus six samples in about 41 seconds in release mode:
 
 ```bash
 cargo run --release -p native -- \
@@ -862,14 +859,14 @@ seed 20 begins with two distinct founder genomes and ends at tick 4,000 with 21 
 The sustaining fixture sets metabolic costs to zero and is intentionally not evidence
 of ecological viability; it exists to exercise 500k ticks, births, randomized control
 heredity, paired sampling, and final hashes. Shipped defaults still go extinct before
-selection can accumulate, which remains the M12 tuning question. Brain-inheritance mode
-is experiment configuration like `SimParams`, not mutable world state, so it is not
-folded into `state_hash`, and it does not alter default physical dynamics. The later
-conservation correction does: ledger input now accumulates actual plant deltas in `f64`,
-and per-entity rounding reserves preserve sub-`f32` energy for its plant or agent owner
-rather than minting, losing, redirecting, or permanently blocking the difference. Those
-accounting and transfer changes move `state_hash`, so the native and WASM golden
-constants were deliberately updated together.
+selection can accumulate at the end of M11; M12's tuning record below supersedes that
+baseline. Brain-inheritance mode is experiment configuration like `SimParams`, not mutable
+world state, so it is not folded into `state_hash`, and it does not alter default physical
+dynamics. The later conservation correction does: ledger input now accumulates actual plant
+deltas in `f64`, and per-entity rounding reserves preserve sub-`f32` energy for its plant or
+agent owner rather than minting, losing, redirecting, or permanently blocking the
+difference. Those accounting and transfer changes move `state_hash`, so the native and
+WASM golden constants were deliberately updated together.
 
 The header embeds the package version and Git revision (`-dirty` when the runtime Rust
 sources, manifests, lockfile, or pinned toolchain do not match that revision), and the
@@ -892,3 +889,46 @@ human. Not self-certifiable (AGENTS.md, spec §7.8 tier 3).
 If food-seeking does not emerge, check spec §10 before changing code. It is almost always
 metabolic cost too low, energy input too high, or mutation rate past error catastrophe — all
 tuning, not bugs.
+
+**M12 tuning record.** The shipped M11 defaults failed before selection began: five seeds
+(42, 117, 314, 2718, 9001), 2,000 founders each, reached zero population by tick 575 and
+produced no descendants. The founder layout also had a confound: golden-angle azimuth with
+linear radius put half the population in the inner quarter of the disc. Radius now scales
+with the square root of area fraction, preserving deterministic even coverage without
+consuming RNG draws.
+
+The accepted tuning candidate changes one coherent set of relationships:
+
+| Parameter | Before | M12 candidate | Reason |
+|---|---:|---:|---|
+| `metabolism.k_size` | 0.02 | 0.00125 | default radius no longer costs 3.6× base |
+| `metabolism.k_sensor` | 0.01 | 0.000625 | 16 weighted channels cost 0.01/tick total |
+| `feeding.reach` | 0 | 4 | a steering agent can remain in range long enough to feed |
+| `plants.energy_input_rate` | 600 | 12,000 | at most 200/tick for the 2,000-founder profile |
+| `reproduction.threshold` | 150 | 200 | a 50/50 marginal birth leaves two 100-energy lives |
+| `mutation.weight_perturb_rate` | 0.8 | 0.025 | about six rather than 192 perturbed connections per birth |
+| `mutation.weight_reset_rate` | 0.05 | 0.0015625 | about 0.375 rather than 12 reset connections per birth |
+| `mutation.neuron_perturb_rate` | 0.2 | 0.00625 | about 0.175 rather than 5.6 perturbed neurons per birth |
+
+The mutation reduction is not optional polish. With the tuned economy and zero mutation,
+seed 42 retained 178 agents at tick 20,000; the original mutation rates retained 20.
+The old per-gene rates were an error catastrophe, replacing most of a 240-connection brain
+on every birth instead of producing a heritable variation.
+
+At 50,000 ticks the selected nonzero-mutation candidate produced:
+
+| Seed | Evolving population | Evolving descendants | Exact variants | Random-control population |
+|---:|---:|---:|---:|---:|
+| 42 | 355 | 346 | 354 | 13 |
+| 117 | 542 | 533 | 542 | 12 |
+| 314 | 286 | 280 | 286 | 6 |
+
+All three evolving cohorts recovered after the generation-zero crash and were dominated
+by descendants; the randomized-at-birth controls did not. A human observer reported
+visible food-seeking and preferred this higher-mutation candidate over both the
+lower-mutation version, which appeared to stall, and a 9,000-input version, which was too
+harsh. Rapid reproducers dominate the homogeneous Phase 1 world, as expected: there is no
+senescence or cooldown, but every successful birth transfers half the parent's energy to
+the child. Senescence is deliberately scheduled for Phase 6 (spec §5.6), when longevity
+can trade against sexual and seasonal life history rather than becoming an extra Phase 1
+death rule.

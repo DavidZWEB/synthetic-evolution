@@ -240,12 +240,17 @@ fn an_agent_that_starves_takes_nothing_with_it() {
     // Death is where energy most easily vanishes unaccounted: an agent charged past
     // zero dissipates joules the world never held, and one despawned with energy still
     // in it deletes joules that were never spent.
-    let (mut world, params) = populated(7, 50);
+    let mut params = SimParams::default();
+    params.world.max_agents = 50;
+    params.plants.max_plants = 400;
+    params.feeding.rate = 0.0;
+    let mut world = World::new(7, params.clone()).expect("valid params");
+    assert_eq!(world.seed_founders(50), 50, "pool has room");
     let start = world.population();
     assert!(start > 0);
 
-    // Long enough for the default budget to starve every one of them — an idle agent
-    // lasts a few hundred ticks, and none of them can eat yet.
+    // Isolate death accounting from foraging. Long enough for the tuned default budget
+    // to starve every founder even if its brain happens to spend nothing on movement.
     for _ in 0..4_000 {
         world.step();
         assert!(
