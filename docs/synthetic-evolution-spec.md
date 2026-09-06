@@ -452,6 +452,21 @@ Every number here is a guess that exists so nothing gets invented ad hoc. Expect
 
 All of these live in a single `SimParams` struct, serde-serializable, settable at runtime from JS (§7.6). None are compile-time constants.
 
+### 5.6 Senescence (Phase 6)
+
+Through Phase 5, age is observable state and a reproductive-maturity gate, not a direct
+cause of death. A successful forager can therefore live indefinitely. **Senescence lands
+in Phase 6**, alongside sexual reproduction, mate choice, and seasons, where lifespan and
+reproductive timing become meaningful life-history tradeoffs rather than an extra Phase 1
+survival penalty.
+
+Start with an age-dependent maintenance cost rather than deleting every agent at a hard
+maximum age. That keeps death inside the closed energy economy: old age becomes
+progressively expensive, and a lineage pays for longevity through continued foraging.
+The onset and slope are runtime `SimParams`; any genetically evolvable repair or longevity
+trait belongs to the same phase and must trade energy against reproduction. Do not add a
+free age reset at reproduction or an unledgered age-death sink.
+
 ---
 
 ## 6. Observability
@@ -748,7 +763,11 @@ Determinism is what makes this trustworthy: every result is a reproducible `(see
 
 This phase is genuinely optional: the roadmap is complete and the simulator is finished without it. Consequently **Phase 5's procedural renderer must stand on its own** — genome-driven pigment, part shape, and hash-seeded texture built to look good, not built as a placeholder for something better. If 5b never happens, nothing is missing; if it does, the procedural layer is still what draws at LOD-far and what fills the gap before an asset resolves.
 
-**Phase 6 — depth.** Sexual reproduction and mate choice, seasons, terrain heterogeneity, `grab`/symbiosis, gene duplication. *Success for the sex unlock specifically: a sexual lineage persists rather than being outcompeted by asexual cousins. If it doesn't, the Red Queen pressure from Phase 3 is too weak — that's a predation-tuning problem, not a reproduction bug.*
+**Phase 6 — depth.** Sexual reproduction and mate choice, senescence and evolvable
+longevity tradeoffs (§5.6), seasons, terrain heterogeneity, `grab`/symbiosis, gene
+duplication. *Success for the sex unlock specifically: a sexual lineage persists rather
+than being outcompeted by asexual cousins. If it doesn't, the Red Queen pressure from
+Phase 3 is too weak — that's a predation-tuning problem, not a reproduction bug.*
 
 **Phase 7 — performance and scale.** SIMD in the perception and CTRNN phases, `wasm-bindgen-rayon` if needed, checkpointed overnight runs on the native shell, batch parameter sweeps. Push to the 50k target. (The sim core is already Rust/WASM from Phase 1 — this phase is optimization, not a port.)
 
