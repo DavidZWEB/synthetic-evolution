@@ -23,16 +23,17 @@ git clone <this repo> && cd synthetic-evolution
 ```
 
 The script installs the pinned Rust toolchain and the wasm target, installs `wasm-pack`,
-installs the npm packages from the lockfile, and runs the test suite to prove it worked.
-It is idempotent, so run it again any time you suspect drift.
+installs the npm packages plus the browser matching the locked Playwright version, and
+runs the test suite to prove it worked. It is idempotent, so run it in every clone or
+worktree and again any time you suspect drift.
 
 Then:
 
 ```bash
-cargo test --workspace               # unit tests, invariant scan, no-alloc check
+./scripts/cargo.sh test --workspace  # unit tests, invariant scan, no-alloc check
 npm run dev --prefix web             # client on http://localhost:5173
-cargo run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
-cargo run -p native -- diagnose run.jsonl
+./scripts/cargo.sh run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
+./scripts/cargo.sh run -p native -- diagnose run.jsonl
 ```
 
 On Windows, run `setup.sh` from WSL or Git Bash — the Rust and Node steps are

@@ -20,11 +20,13 @@ Only two things installed globally:
 
 Then `git clone`, `./scripts/setup.sh`, `npm run dev --prefix web`.
 
-**One PATH trap, on macOS.** `cargo install` writes binaries to `~/.cargo/bin`. The rustup.rs installer puts that on your PATH; a Homebrew rustup does not — the formula is keg-only and never touches your profile. The symptom is `wasm-pack: command not found` after a setup run that reported success. `setup.sh` detects it and prints the fix:
-
-```bash
-echo 'export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:$PATH"' >> ~/.zshrc
-```
+Run setup once in every clone or worktree. Rust toolchains and downloaded browser
+binaries are reused from their user-level caches, but `web/node_modules/` is
+intentionally checkout-local. The setup and WASM build scripts resolve Cargo through
+rustup and `wasm-pack` through Cargo's configured install root, so the web build does
+not depend on machine-specific PATH entries. Repository command examples use
+`scripts/cargo.sh` for the same reason; direct `cargo` commands remain equivalent when
+the rustup proxies are already on `PATH`.
 
 ## Files
 
@@ -124,9 +126,17 @@ flamegraph.svg
 
 ### `scripts/setup.sh`
 
-In order: `rustup show` (installs the pinned toolchain, components, and wasm target), `cargo install --locked wasm-pack@0.15.0`, Node via nvm if it is present, `npm ci --prefix web`, then `cargo test --workspace` to prove it worked. It is idempotent — running it on an already-set-up machine does nothing but check.
+In order: `rustup show` (installs the pinned toolchain, components, and wasm target),
+`cargo install --locked wasm-pack@0.15.0`, Node via nvm if it is present,
+`npm ci --prefix web`, the lockfile-matched Playwright Chromium, then
+`cargo test --workspace` to prove it worked. It is idempotent — running it on an
+already-set-up machine does nothing but check.
 
-`--skip-tests` drops that last step and nothing else. It exists for the deploy workflow, which needs the same toolchain a developer needs but runs on a commit `ci.yml` has already tested; running the suite twice for one answer is the only thing CI wants to leave out. Use the default interactively — on a fresh machine the verification step is how you learn the install actually works.
+`--skip-tests` drops the verification step. `--skip-browser` drops the browser download
+for CI and deployment jobs that do not perform visual validation. Use the default
+interactively — on a fresh checkout the verification step is how you learn the install
+actually works. On Linux, setup also installs Chromium's required system libraries;
+other platforms only need the browser download.
 
 Read the script rather than trusting a copy pasted here; a duplicated script drifts. Four details in it are worth understanding:
 
@@ -136,19 +146,27 @@ Read the script rather than trusting a copy pasted here; a duplicated script dri
 
 **nvm has to be sourced, not called.** `nvm` is a shell function rather than a binary, so a script cannot invoke it without first sourcing `$NVM_DIR/nvm.sh` — and under `set -u` the naive version fails outright. The script sources it when it exists, and otherwise compares your installed Node against `.nvmrc` and warns rather than failing. Requiring one particular version manager to build the project is not worth it.
 
-**It checks that `~/.cargo/bin` is on your PATH** and says so if it isn't. See the trap above; this is the difference between a setup that works and one that reports success and then can't find `wasm-pack`.
+**Rust tools are resolved, not assumed.** `rustup which cargo` selects the Cargo paired
+with the repository's pinned toolchain. `scripts/cargo.sh` exposes that Cargo to
+repository commands, while `scripts/wasm-pack.sh` also locates the Cargo install root
+and makes Cargo visible to `wasm-pack`. Package scripts invoke these through `bash`, so
+the documented Git Bash workflow does not depend on npm's platform-specific script
+shell.
 
 ### `web/package.json` (scripts section)
 
 ```json
 {
   "scripts": {
-    "wasm": "wasm-pack build ../shells/wasm --target web --out-dir ../../web/src/wasm",
-    "types": "cargo test -p sim-core --lib export_bindings",
+    "wasm": "bash ../scripts/wasm-pack.sh build shells/wasm --target web --out-dir ../../web/src/wasm",
+    "browser:install": "playwright install chromium",
+    "browser:install-with-deps": "playwright install --with-deps chromium",
+    "types": "bash ../scripts/cargo.sh test -p sim-core --lib export_bindings",
     "test": "node --test src/**/*.test.js src/**/*.test.ts",
     "check:types": "tsc --noEmit",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "dev": "npm run wasm && vite",
+    "dev:transferable": "npm run wasm && vite --mode transferable",
     "build": "npm run wasm && vite build",
     "preview": "vite preview"
   }
@@ -159,6 +177,17 @@ The WASM build has to run before Vite, since M9's worker imports its output. Cha
 into both entry points means `dev` and `build` work from a clean checkout and cannot
 silently use stale local bindings.
 
+`dev` supplies the cross-origin isolation headers required for the shared-buffer
+transport. `dev:transferable` deliberately omits them so the browser fallback can be
+exercised rather than only unit-tested.
+
+The Playwright MCP package is an exact dev dependency, so its server and Playwright
+versions are recorded in `package-lock.json`; a test keeps that pin aligned with
+`.github/mcp.json`. `setup.sh` installs that version's Chromium binary.
+`.github/mcp.json` is Copilot CLI's repository configuration; other agents use their
+own MCP discovery locations, listed in `AGENTS.md`. Copilot CLI also discovers the
+shared visual-check skill under `.github/skills/`.
+
 `web/src/generated/` is different from `web/src/wasm/`: its TypeScript genome bindings
 are generated by `ts-rs` and committed so the inspector has a reviewable contract.
 `npm run types --prefix web` refreshes them. Native tests generate the same files, and
@@ -168,10 +197,10 @@ CI fails if that changes the checked-in output.
 
 ```bash
 # Rust
-cargo add glam --package sim-core        # updates Cargo.toml + Cargo.lock
+./scripts/cargo.sh add glam --package sim-core  # updates Cargo.toml + Cargo.lock
 
 # Node
-npm install three --prefix web           # updates package.json + package-lock.json
+npm install package-name --prefix web    # updates package.json + package-lock.json
 ```
 
 Commit the lockfile change in the same commit as the manifest change. A manifest change without its lockfile change is what breaks the next machine.
@@ -182,9 +211,9 @@ The native shell runs an evolving world beside a same-seed, same-params random-b
 control and writes both metric vectors into one self-describing JSONL stream:
 
 ```bash
-cargo run --release -p native -- \
+./scripts/cargo.sh run --release -p native -- \
   --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
-cargo run -p native -- diagnose run.jsonl
+./scripts/cargo.sh run -p native -- diagnose run.jsonl
 ```
 
 Use `--params params.json` for a partial or complete `SimParams` document; absent fields
@@ -211,9 +240,8 @@ Not really dependency management, but it belongs in the same habit. You will hit
 ## Windows
 
 The Rust and Node toolchains are cross-platform; `scripts/setup.sh` is bash. Run it from
-WSL or Git Bash, or perform its four steps by hand — `rustup show`,
-`cargo install --locked wasm-pack@0.15.0`, `npm ci --prefix web`, `cargo test --workspace`.
-Nobody has tried this yet, so treat it as untested rather than supported.
+WSL or Git Bash, or follow the current steps in that script manually. Nobody has tried
+this yet, so treat it as untested rather than supported.
 
 ## Not yet
 

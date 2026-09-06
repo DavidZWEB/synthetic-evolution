@@ -2,19 +2,21 @@
 # One-command setup for a fresh machine. If a new checkout needs a step that is not in
 # here, this script is wrong — fix it rather than documenting the step.
 #
-#   --skip-tests   install everything, but do not run the suite at the end.
+#   --skip-tests     install everything, but do not run the suite at the end.
+#   --skip-browser   skip the Playwright browser used only for visual validation.
 #
-# CI uses --skip-tests: the deploy workflow needs the same toolchain a developer needs,
-# but ci.yml has already run the suite on that commit and running it twice buys
-# nothing. Interactively you want the default — the verification step is how you find
-# out the install actually works.
+# CI uses both flags: its jobs do not run browser automation, and the deploy workflow
+# has already seen the test workflow pass. Interactively you want the default — the
+# verification step is how you find out the install actually works.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 run_tests=1
+install_browser=1
 for arg in "$@"; do
   case "$arg" in
     --skip-tests) run_tests=0 ;;
+    --skip-browser) install_browser=0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -26,38 +28,36 @@ WASM_PACK_VERSION="0.15.0"
 info() { printf '\n==> %s\n' "$1"; }
 warn() { printf '    warning: %s\n' "$1" >&2; }
 
-# Prints how to put a directory on PATH without assuming a shell or an OS.
-path_hint() {
-  printf '    Add it to your PATH, in whichever profile your shell reads\n'
-  printf '    (~/.zshrc, ~/.bashrc, ~/.config/fish/config.fish, ...):\n'
-  printf '        export PATH="%s:$PATH"\n' "$1"
-}
-
 info "Rust toolchain"
 if ! command -v rustup >/dev/null 2>&1; then
   echo "rustup is not on your PATH. Install it from https://rustup.rs" >&2
-  if [ "$(uname -s)" = "Darwin" ] && [ -x /opt/homebrew/opt/rustup/bin/rustup ]; then
-    echo "  Homebrew has it installed, but the formula is keg-only:" >&2
-    path_hint "/opt/homebrew/opt/rustup/bin" >&2
-  fi
   exit 1
 fi
 # Reads rust-toolchain.toml and installs the pinned compiler, components, and the
 # wasm target if they are missing. Nobody has to remember `rustup target add`.
 rustup show
+cargo_path="$(rustup which cargo)"
+export PATH="$(dirname "$cargo_path"):$PATH"
 
 info "Rust binary tools"
-# `cargo install` writes here. The rustup.rs installer puts it on your PATH; a
-# Homebrew rustup does not, which is why this is checked explicitly below rather than
-# assumed — `npm run wasm` fails with "command not found" otherwise.
-CARGO_BIN="${CARGO_HOME:-$HOME/.cargo}/bin"
-installed_wasm_pack="$("$CARGO_BIN/wasm-pack" --version 2>/dev/null | awk '{print $2}' || true)"
+# Cargo-installed tools live outside the selected toolchain. Use Cargo's configured
+# install root directly so setup does not depend on a particular shell profile.
+CARGO_INSTALL_DIR="${CARGO_INSTALL_ROOT:-${CARGO_HOME:-$HOME/.cargo}}"
+CARGO_BIN="$CARGO_INSTALL_DIR/bin"
+wasm_pack_path="$CARGO_BIN/wasm-pack"
+if [ ! -x "$wasm_pack_path" ]; then
+  wasm_pack_path="$(command -v wasm-pack || true)"
+fi
+installed_wasm_pack=""
+if [ -n "$wasm_pack_path" ]; then
+  installed_wasm_pack="$("$wasm_pack_path" --version 2>/dev/null | awk '{print $2}' || true)"
+fi
 if [ "$installed_wasm_pack" = "$WASM_PACK_VERSION" ]; then
   echo "    wasm-pack $WASM_PACK_VERSION already installed"
 else
   # --locked builds wasm-pack against its own committed lockfile; without it cargo
   # resolves its dependencies fresh and the build occasionally fails.
-  cargo install --locked "wasm-pack@$WASM_PACK_VERSION"
+  "$cargo_path" install --locked --root "$CARGO_INSTALL_DIR" "wasm-pack@$WASM_PACK_VERSION"
 fi
 
 info "Node"
@@ -90,23 +90,22 @@ info "Node packages"
 # machines diverge — use it only when deliberately adding a dependency.
 npm ci --prefix web
 
+if [ "$install_browser" -eq 1 ]; then
+  info "Browser automation"
+  if [ "$(uname -s)" = "Linux" ]; then
+    npm run browser:install-with-deps --prefix web
+  else
+    npm run browser:install --prefix web
+  fi
+fi
+
 if [ "$run_tests" -eq 1 ]; then
   info "Verifying"
-  cargo test --workspace
+  "$cargo_path" test --workspace
 else
   info "Verifying"
   echo "    skipped (--skip-tests)"
 fi
-
 printf '\nSetup complete.\n'
-printf '  cargo test --workspace       run the test suite\n'
-printf '  npm run dev --prefix web     start the client at http://localhost:5173\n'
-
-case ":$PATH:" in
-  *":$CARGO_BIN:"*) ;;
-  *)
-    printf '\n'
-    warn "$CARGO_BIN is not on your PATH, so wasm-pack will not be found."
-    path_hint "$CARGO_BIN"
-    ;;
-esac
+printf '  ./scripts/cargo.sh test --workspace  run the test suite\n'
+printf '  npm run dev --prefix web     start the client (use the URL Vite prints)\n'
