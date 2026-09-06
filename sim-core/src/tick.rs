@@ -220,12 +220,12 @@ impl World {
             // Only what is there. Charging past zero would dissipate energy the world
             // never held, and the ledger would report a leak that is really an
             // overdraft.
-            let charged = energy::take(
+            let charged = energy::take_amount(
                 &mut self.agents.energy[i],
                 &mut self.agents.energy_reserve[i],
                 cost as f64,
             );
-            self.ledger.record_dissipated(charged);
+            self.ledger.record_dissipated_amount(charged);
             if energy::total(self.agents.energy[i], self.agents.energy_reserve[i]) <= 0.0 {
                 self.dying.push(id);
             }
@@ -299,7 +299,8 @@ impl World {
         for id in self.pool.iter_live() {
             let i = id.index();
             if reproduction::ready(
-                energy::total(self.agents.energy[i], self.agents.energy_reserve[i]),
+                self.agents.energy[i],
+                self.agents.energy_reserve[i],
                 self.agents.age[i],
                 self.intents.reproduce[i],
                 &self.params.reproduction,
@@ -326,8 +327,9 @@ impl World {
 
         for &parent in &breeding {
             let p = parent.index();
-            let share = energy::total(self.agents.energy[p], self.agents.energy_reserve[p])
-                * self.params.reproduction.energy_split as f64;
+            let split = self.params.reproduction.energy_split as f64;
+            let visible_share = self.agents.energy[p] as f64 * split;
+            let residual_share = self.agents.energy_reserve[p] * split;
 
             // Built before the spawn so the parent's genome can be read while the world
             // is otherwise untouched; mutation is what makes the child a variation
@@ -384,7 +386,14 @@ impl World {
                     &mut parent_reserve,
                     &mut child_energy,
                     &mut child_reserve,
-                    share,
+                    visible_share,
+                );
+                energy::transfer(
+                    &mut parent_energy,
+                    &mut parent_reserve,
+                    &mut child_energy,
+                    &mut child_reserve,
+                    residual_share,
                 );
                 self.agents.energy[p] = parent_energy;
                 self.agents.energy_reserve[p] = parent_reserve;

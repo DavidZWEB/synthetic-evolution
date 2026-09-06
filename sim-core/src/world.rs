@@ -345,11 +345,12 @@ impl World {
             return false;
         }
         let i = id.index();
-        let remaining =
-            self.agents.energy[i].max(0.0) as f64 + self.agents.energy_reserve[i].max(0.0);
-        if remaining > 0.0 {
-            self.ledger.record_dissipated(remaining);
-        }
+        let remaining = crate::energy::take_amount(
+            &mut self.agents.energy[i],
+            &mut self.agents.energy_reserve[i],
+            f64::MAX,
+        );
+        self.ledger.record_dissipated_amount(remaining);
         self.brains.free(self.agents.brain[i]);
         self.synapses.free(self.agents.synapses[i]);
         self.sensors.free(self.agents.sensors[i]);

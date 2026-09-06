@@ -22,6 +22,7 @@
 
 use glam::Vec3;
 
+use crate::energy;
 use crate::math;
 use crate::params::ReproductionParams;
 use crate::rng::Rng;
@@ -35,8 +36,16 @@ use crate::spatial::wrap_scalar;
 /// stops a lineage collapsing into a chain of instant births that never has to survive
 /// anything.
 #[inline]
-pub fn ready(energy: f64, age: u32, drive: f32, params: &ReproductionParams) -> bool {
-    drive > params.gate && energy >= params.threshold as f64 && age >= params.maturity_ticks
+pub fn ready(
+    energy: f32,
+    energy_residual: f64,
+    age: u32,
+    drive: f32,
+    params: &ReproductionParams,
+) -> bool {
+    drive > params.gate
+        && energy::at_least(energy, energy_residual, params.threshold)
+        && age >= params.maturity_ticks
 }
 
 /// Where an offspring appears: uniformly inside `spawn_radius` of its parent, wrapped
@@ -79,10 +88,10 @@ mod tests {
         // An energy threshold alone would make reproduction automatic, and life-history
         // strategy would stop being something a lineage can evolve (spec §4.2).
         let p = params();
-        let rich = p.threshold as f64 + 50.0;
-        assert!(ready(rich, p.maturity_ticks, p.gate + 0.1, &p));
+        let rich = p.threshold + 50.0;
+        assert!(ready(rich, 0.0, p.maturity_ticks, p.gate + 0.1, &p));
         assert!(
-            !ready(rich, p.maturity_ticks, p.gate - 0.1, &p),
+            !ready(rich, 0.0, p.maturity_ticks, p.gate - 0.1, &p),
             "bred without asking"
         );
     }
@@ -97,12 +106,12 @@ mod tests {
             p.threshold > p.start_energy,
             "threshold must require growth"
         );
-        assert!(!ready(p.start_energy as f64, p.maturity_ticks, 1.0, &p));
-        assert!(ready(p.threshold as f64, p.maturity_ticks, 1.0, &p));
-        let just_below = p.threshold as f64 - 1e-6;
-        assert_eq!(just_below as f32, p.threshold);
+        assert!(!ready(p.start_energy, 0.0, p.maturity_ticks, 1.0, &p));
+        assert!(ready(p.threshold, 0.0, p.maturity_ticks, 1.0, &p));
+        let visible = f32::from_bits(p.threshold.to_bits() - 1);
+        let residual = p.threshold as f64 - visible as f64 - 1e-6;
         assert!(
-            !ready(just_below, p.maturity_ticks, 1.0, &p),
+            !ready(visible, residual, p.maturity_ticks, 1.0, &p),
             "rounded a sub-threshold compensated balance up to the threshold"
         );
     }
@@ -110,10 +119,13 @@ mod tests {
     #[test]
     fn a_newborn_has_to_survive_something_first() {
         let p = params();
-        let rich = p.threshold as f64 + 50.0;
-        assert!(!ready(rich, 0, 1.0, &p), "bred on the tick it was born");
-        assert!(!ready(rich, p.maturity_ticks - 1, 1.0, &p));
-        assert!(ready(rich, p.maturity_ticks, 1.0, &p));
+        let rich = p.threshold + 50.0;
+        assert!(
+            !ready(rich, 0.0, 0, 1.0, &p),
+            "bred on the tick it was born"
+        );
+        assert!(!ready(rich, 0.0, p.maturity_ticks - 1, 1.0, &p));
+        assert!(ready(rich, 0.0, p.maturity_ticks, 1.0, &p));
     }
 
     #[test]

@@ -86,8 +86,9 @@ Fixed-capacity pools with a free list. Never allocate in the loop. Brains and ge
 `energyResidual`: compensated storage for a quantity below the current `Float32`
 resolution. Energy operations act on the pair. This prevents long runs from creating,
 destroying, or permanently blocking energy when a cost or transfer is smaller than one
-endpoint's ULP. Residuals are authoritative state and participate in deterministic
-hashing, but the render snapshot needs only the rounded visible value.
+endpoint's `Float32` ULP; operations account for the delta actually represented at the
+remaining `Float64` precision floor. Residuals are authoritative state and participate
+in deterministic hashing, but the render snapshot needs only the rounded visible value.
 
 #### (b) Render snapshot — the SharedArrayBuffer, leased and triple-buffered
 

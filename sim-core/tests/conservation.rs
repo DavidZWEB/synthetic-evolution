@@ -187,6 +187,38 @@ fn sub_ulp_feeding_progress_stays_with_each_agent() {
 }
 
 #[test]
+fn sub_f64_ulp_metabolism_reduces_the_authoritative_balance() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 0;
+    params.reproduction.start_energy = 10_000_000_000.0;
+    params.reproduction.threshold = 20_000_000_000.0;
+    params.metabolism.base = 1e-7;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.0;
+    let mut world = World::new(15, params).expect("valid params");
+    let id = world
+        .spawn_founder(glam::Vec3::ZERO)
+        .expect("room for founder");
+
+    for _ in 0..10 {
+        world.charge_metabolism();
+    }
+
+    let agents = world.agents();
+    assert_eq!(agents.energy[id.index()], 9_999_998_976.0);
+    assert!(agents.energy_reserve[id.index()] < 1_024.0);
+    assert!(
+        world.energy_drift().abs() < 1e-9,
+        "{}",
+        world.energy_drift()
+    );
+}
+
+#[test]
 fn conservation_holds_across_seeds() {
     // One seed passing is a weaker claim than it looks: the flows depend on where
     // agents start and how long they live.

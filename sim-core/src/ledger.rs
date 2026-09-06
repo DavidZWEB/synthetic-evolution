@@ -22,6 +22,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::energy::Amount;
+
 /// Running totals for one world.
 ///
 /// `f64` accumulators over `f32` quantities, deliberately. A 10k-tick run at the
@@ -60,6 +62,13 @@ impl EnergyLedger {
     pub fn record_dissipated(&mut self, amount: f64) {
         debug_assert!(amount >= 0.0, "negative dissipation: {amount}");
         self.dissipated += amount;
+    }
+
+    #[inline]
+    pub(crate) fn record_dissipated_amount(&mut self, amount: Amount) {
+        let total = amount.approximate();
+        debug_assert!(total >= 0.0, "negative dissipation: {total}");
+        self.dissipated += total;
     }
 
     #[inline]
