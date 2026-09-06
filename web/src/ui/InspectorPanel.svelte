@@ -15,6 +15,10 @@
   } = $props();
 
   const activationLevel = (value: number) => `${Math.min(1, Math.abs(value)) * 100}%`;
+  const NULL_AGENT = 0xffff_ffff;
+  const parentA = (id: number) => (id === NULL_AGENT ? '— (founder)' : `slot #${id} at birth`);
+  const parentB = (id: number) =>
+    id === NULL_AGENT ? '— (asexual in Phase 1)' : `slot #${id} at birth`;
   let genomeOpen = $state(false);
   let genomeJson = $state('');
   let geneSummary = $state<Array<{ kind: string; count: number }>>([]);
@@ -52,15 +56,15 @@
   {:else}
     <dl>
       <div><dt>tick</dt><dd>{inspection.tick}</dd></div>
-      <div><dt>incarnation</dt><dd>{inspection.incarnation}</dd></div>
+      <div><dt>slot incarnation</dt><dd>{inspection.incarnation}</dd></div>
       <div><dt>energy</dt><dd>{inspection.energy.toFixed(2)}</dd></div>
       <div><dt>age</dt><dd>{inspection.age}</dd></div>
-      <div><dt>species</dt><dd>{inspection.species_id}</dd></div>
+      <div><dt>species</dt><dd>{inspection.species_id} (Phase 2 placeholder)</dd></div>
       <div><dt>size</dt><dd>{inspection.size.toFixed(2)}</dd></div>
       <div><dt>brain units</dt><dd>{inspection.brain_units}</dd></div>
       <div><dt>sensor load</dt><dd>{inspection.sensor_load.toFixed(1)}</dd></div>
-      <div><dt>parent A</dt><dd>{inspection.parent_a}</dd></div>
-      <div><dt>parent B</dt><dd>{inspection.parent_b}</dd></div>
+      <div><dt>parent A</dt><dd>{parentA(inspection.parent_a)}</dd></div>
+      <div><dt>parent B</dt><dd>{parentB(inspection.parent_b)}</dd></div>
     </dl>
 
     <section>
