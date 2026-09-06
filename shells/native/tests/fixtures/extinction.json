@@ -1,0 +1,6 @@
+{
+  "world": { "max_agents": 8 },
+  "metabolism": { "base": 200.0 },
+  "plants": { "max_plants": 8 },
+  "chemo": { "cells": [4, 4, 1] }
+}

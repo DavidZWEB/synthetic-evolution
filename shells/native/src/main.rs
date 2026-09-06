@@ -1,11 +1,11 @@
-//! Native shell: headless runs, batch sweeps, and the golden-hash / cross-target
-//! test path. Owns all file and stdout I/O for the simulation; `sim-core` owns none.
+//! Native executable entry point.
+//!
+//! Argument parsing, simulation orchestration, metrics I/O, and diagnostics live in the
+//! library modules so they can be exercised without spawning a subprocess.
 
 fn main() {
-    // Argument parsing and the headless run loop arrive with the tick (M8) and
-    // telemetry (M11). Scaffold only.
-    println!(
-        "synthetic-evolution native shell {}",
-        env!("CARGO_PKG_VERSION")
-    );
+    if let Err(error) = native::run_cli() {
+        eprintln!("error: {error}");
+        std::process::exit(1);
+    }
 }

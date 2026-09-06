@@ -28,7 +28,9 @@ use glam::Vec3;
 
 use crate::agents::SpawnSpec;
 use crate::brain;
+use crate::control::BrainInheritance;
 use crate::effectors::{self, AgentIntents};
+use crate::energy;
 use crate::feeding;
 use crate::genome::{self, BodyTrait};
 use crate::metabolism;
@@ -78,7 +80,9 @@ impl World {
                 index: id.raw(),
                 position: self.agents.position[i],
                 orientation: self.agents.orientation[i],
-                energy_tanks: self.agents.energy[i] / self.params.reproduction.start_energy,
+                energy_tanks: (energy::total(self.agents.energy[i], self.agents.energy_reserve[i])
+                    / self.params.reproduction.start_energy as f64)
+                    as f32,
             };
             let world = WorldView {
                 positions: &self.agents.position,
@@ -187,7 +191,7 @@ impl World {
     /// What the plants *actually* absorbed goes into the ledger, not the nominal input
     /// rate: at carrying capacity the surplus never enters, and conservation has to be
     /// measured rather than inferred.
-    pub fn grow_plants(&mut self) -> f32 {
+    pub fn grow_plants(&mut self) -> f64 {
         let dt = self.params.world.dt;
         let absorbed = self.plants.grow(&self.params.plants, dt);
         self.ledger.record_input(absorbed);
@@ -216,10 +220,13 @@ impl World {
             // Only what is there. Charging past zero would dissipate energy the world
             // never held, and the ledger would report a leak that is really an
             // overdraft.
-            let charged = cost.min(self.agents.energy[i]).max(0.0);
-            self.agents.energy[i] -= charged;
-            self.ledger.record_dissipated(charged);
-            if self.agents.energy[i] <= 0.0 {
+            let charged = energy::take_amount(
+                &mut self.agents.energy[i],
+                &mut self.agents.energy_reserve[i],
+                cost as f64,
+            );
+            self.ledger.record_dissipated_amount(charged);
+            if energy::total(self.agents.energy[i], self.agents.energy_reserve[i]) <= 0.0 {
                 self.dying.push(id);
             }
         }
@@ -273,13 +280,14 @@ impl World {
                 continue;
             }
             let reach = self.agents.size[i] + plant_radius + feeding.reach;
-            let taken = feeding::ingest(
+            feeding::ingest(
                 self.agents.position[i],
                 reach,
                 feeding.rate,
+                &mut self.agents.energy[i],
+                &mut self.agents.energy_reserve[i],
                 &mut self.plants,
             );
-            self.agents.energy[i] += taken;
         }
     }
 
@@ -292,6 +300,7 @@ impl World {
             let i = id.index();
             if reproduction::ready(
                 self.agents.energy[i],
+                self.agents.energy_reserve[i],
                 self.agents.age[i],
                 self.intents.reproduce[i],
                 &self.params.reproduction,
@@ -318,7 +327,9 @@ impl World {
 
         for &parent in &breeding {
             let p = parent.index();
-            let share = self.agents.energy[p] * self.params.reproduction.energy_split;
+            let split = self.params.reproduction.energy_split as f64;
+            let visible_share = self.agents.energy[p] as f64 * split;
+            let residual_share = self.agents.energy_reserve[p] * split;
 
             // Built before the spawn so the parent's genome can be read while the world
             // is otherwise untouched; mutation is what makes the child a variation
@@ -327,7 +338,15 @@ impl World {
             let genome = self.agents.genome[p];
             scratch.clear();
             scratch.extend_from_slice(self.genes.get(genome));
-            mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
+            match self.brain_inheritance {
+                BrainInheritance::Evolving => {
+                    mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
+                }
+                BrainInheritance::RandomizedAtBirth => {
+                    self.plan
+                        .randomize_brain(&mut self.rng, &self.params, &mut scratch);
+                }
+            }
 
             let position = reproduction::offspring_position(
                 self.agents.position[p],
@@ -341,7 +360,7 @@ impl World {
             let spec = SpawnSpec {
                 position,
                 yaw,
-                energy: share,
+                energy: 0.0,
                 size: genome::body_trait(&scratch, BodyTrait::Size)
                     .unwrap_or(self.params.body.size),
                 signature: Vec3::new(
@@ -354,9 +373,32 @@ impl World {
             let spawned = self.spawn(&spec, &scratch);
             self.genome_scratch = scratch;
 
-            if spawned.is_some() {
-                // Only now. A refused birth leaves the parent whole.
-                self.agents.energy[p] -= share;
+            if let Some(child) = spawned {
+                // Only now. A refused birth leaves the parent whole. The shared
+                // rounding reserve keeps both f32 endpoints conservative (spec §5.1).
+                let mut parent_energy = self.agents.energy[p];
+                let c = child.index();
+                let mut child_energy = self.agents.energy[c];
+                let mut parent_reserve = self.agents.energy_reserve[p];
+                let mut child_reserve = self.agents.energy_reserve[c];
+                energy::transfer(
+                    &mut parent_energy,
+                    &mut parent_reserve,
+                    &mut child_energy,
+                    &mut child_reserve,
+                    visible_share,
+                );
+                energy::transfer(
+                    &mut parent_energy,
+                    &mut parent_reserve,
+                    &mut child_energy,
+                    &mut child_reserve,
+                    residual_share,
+                );
+                self.agents.energy[p] = parent_energy;
+                self.agents.energy_reserve[p] = parent_reserve;
+                self.agents.energy[c] = child_energy;
+                self.agents.energy_reserve[c] = child_reserve;
                 born += 1;
             }
         }
@@ -381,6 +423,8 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::BrainInheritance;
+    use crate::genome::Gene;
     use crate::params::SimParams;
 
     fn world_of(agents: u32, seed: u64) -> World {
@@ -520,5 +564,45 @@ mod tests {
         for id in world.pool().iter_live() {
             assert_eq!(world.agents().age[id.index()], 25);
         }
+    }
+
+    #[test]
+    fn random_control_breaks_neural_heredity_at_birth() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 8;
+        params.reproduction.maturity_ticks = 0;
+        let mut world =
+            World::new_with_brain_inheritance(17, params, BrainInheritance::RandomizedAtBirth)
+                .expect("valid params");
+        let parent = world
+            .spawn_founder(Vec3::new(500.0, 500.0, 0.0))
+            .expect("pool has room");
+        let parent_genome = world.genome(parent).to_vec();
+        let rich = world.params().reproduction.threshold + 100.0;
+        world.agents_mut().energy[parent.index()] = rich;
+        world.intents_mut().reproduce[parent.index()] = 1.0;
+
+        assert_eq!(world.resolve_births(), 1);
+        let child = world
+            .pool()
+            .iter_live()
+            .find(|&id| id != parent)
+            .expect("child was born");
+        let child_genome = world.genome(child);
+
+        let mut neural_change = false;
+        for (parent_gene, child_gene) in parent_genome.iter().zip(child_genome) {
+            match (parent_gene, child_gene) {
+                (Gene::Neuron(_), Gene::Neuron(_)) | (Gene::Connection(_), Gene::Connection(_)) => {
+                    neural_change |= parent_gene != child_gene;
+                }
+                _ => assert_eq!(
+                    parent_gene, child_gene,
+                    "control changed inherited non-neural genes"
+                ),
+            }
+        }
+        assert!(neural_change, "control child inherited its parent's brain");
     }
 }

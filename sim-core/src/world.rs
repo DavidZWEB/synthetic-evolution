@@ -17,6 +17,7 @@ use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
 use crate::command::{Command, Kind};
+use crate::control::BrainInheritance;
 use crate::effectors::{self, Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::{self, BodyTrait, Gene};
@@ -41,6 +42,7 @@ const PARTS_PER_AGENT: u32 = 1;
 /// integration tests still go through the accessors at the bottom of this file.
 pub struct World {
     pub(crate) params: SimParams,
+    pub(crate) brain_inheritance: BrainInheritance,
     pub(crate) rng: Rng,
     pub(crate) tick: u64,
     /// Monotonic source of [`InnovationId`]s. A field rather than a `static` so two
@@ -103,6 +105,15 @@ impl World {
     /// their invariants as established and uses `debug_assert!` rather than threading
     /// `Result` through the hot loop.
     pub fn new(seed: u64, params: SimParams) -> Result<Self, ParamError> {
+        Self::new_with_brain_inheritance(seed, params, BrainInheritance::Evolving)
+    }
+
+    /// Builds a world with an explicit neural-heredity mode for controlled experiments.
+    pub fn new_with_brain_inheritance(
+        seed: u64,
+        params: SimParams,
+        brain_inheritance: BrainInheritance,
+    ) -> Result<Self, ParamError> {
         params.validate()?;
         let capacity = params.world.max_agents;
         let mut next_innovation = 0u32;
@@ -126,6 +137,7 @@ impl World {
         let plants = Plants::new(&params, &mut rng);
 
         Ok(Self {
+            brain_inheritance,
             rng,
             tick: 0,
             next_innovation,
@@ -299,7 +311,7 @@ impl World {
             // leak, and recording it as input is what keeps §5.1's books balanced
             // without pretending the agent arrived empty. An *offspring* is different:
             // its energy comes out of its parent, so reproduction records nothing.
-            self.ledger.record_input(spec.energy);
+            self.ledger.record_input(spec.energy as f64);
         }
         spawned
     }
@@ -333,10 +345,12 @@ impl World {
             return false;
         }
         let i = id.index();
-        let remaining = self.agents.energy[i].max(0.0);
-        if remaining > 0.0 {
-            self.ledger.record_dissipated(remaining);
-        }
+        let remaining = crate::energy::take_amount(
+            &mut self.agents.energy[i],
+            &mut self.agents.energy_reserve[i],
+            f64::MAX,
+        );
+        self.ledger.record_dissipated_amount(remaining);
         self.brains.free(self.agents.brain[i]);
         self.synapses.free(self.agents.synapses[i]);
         self.sensors.free(self.agents.sensors[i]);
@@ -499,14 +513,32 @@ impl World {
         self.due_commands = due;
     }
 
-    /// Every joule the world currently holds, in plants and in agents.
-    pub fn total_energy(&self) -> f32 {
-        let agents: f32 = self
+    /// Every joule the world currently holds, in plants, agents, and the transfer
+    /// rounding reserve.
+    ///
+    /// This fixed-order `f64` aggregation is shared by ledger opening, drift checks,
+    /// and shell telemetry. Using a separate `f32` sum for any one of them manufactures
+    /// apparent energy drift from rounding alone (spec §5.1).
+    pub fn total_energy(&self) -> f64 {
+        let agents: f64 = self
             .pool
             .iter_live()
-            .map(|id| self.agents.energy[id.index()])
+            .map(|id| {
+                let i = id.index();
+                self.agents.energy[i] as f64 + self.agents.energy_reserve[i]
+            })
             .sum();
         self.plants.total_energy() + agents
+    }
+
+    /// Energy below the visible `f32` resolution, still owned by plants or agents.
+    pub fn energy_reserve(&self) -> f64 {
+        let agents: f64 = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.energy_reserve[id.index()])
+            .sum();
+        agents + self.plants.energy_reserve().iter().sum::<f64>()
     }
 
     /// Mean energy held by living agents, for on-demand instrumentation.
@@ -521,7 +553,10 @@ impl World {
         let total: f64 = self
             .pool
             .iter_live()
-            .map(|id| self.agents.energy[id.index()] as f64)
+            .map(|id| {
+                let i = id.index();
+                self.agents.energy[i] as f64 + self.agents.energy_reserve[i]
+            })
             .sum();
         total / population as f64
     }

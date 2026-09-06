@@ -26,6 +26,7 @@
 use glam::Vec3;
 
 use crate::chemo::ChemoField;
+use crate::energy;
 use crate::params::{PlantParams, SimParams};
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
@@ -39,6 +40,7 @@ use crate::spatial::SpatialHash;
 pub struct Plants {
     position: Vec<Vec3>,
     energy: Vec<f32>,
+    energy_reserve: Vec<f64>,
     /// One byte per plant, all ones. The spatial hash takes a liveness mask and plants
     /// are always live; keeping the array rather than special-casing the hash is what
     /// lets the same well-tested grid serve both populations.
@@ -70,6 +72,7 @@ impl Plants {
         Self {
             position,
             energy: vec![stock; count],
+            energy_reserve: vec![0.0; count],
             alive,
             hash,
         }
@@ -84,16 +87,14 @@ impl Plants {
     /// honest behaviour for a saturated ecosystem, and it is exactly why the ledger
     /// records the returned figure rather than `energy_input_rate * dt`: conservation
     /// has to be measured, not inferred (spec §5.1).
-    pub fn grow(&mut self, params: &PlantParams, dt: f32) -> f32 {
+    pub fn grow(&mut self, params: &PlantParams, dt: f32) -> f64 {
         if self.energy.is_empty() {
             return 0.0;
         }
         let share = params.energy_input_rate * dt / self.energy.len() as f32;
-        let mut absorbed = 0.0;
-        for energy in self.energy.iter_mut() {
-            let before = *energy;
-            *energy = (*energy + share).min(params.max_energy);
-            absorbed += *energy - before;
+        let mut absorbed = 0.0f64;
+        for (energy, reserve) in self.energy.iter_mut().zip(self.energy_reserve.iter_mut()) {
+            absorbed += energy::add_capped(energy, reserve, share as f64, params.max_energy as f64);
         }
         absorbed
     }
@@ -105,14 +106,23 @@ impl Plants {
     /// It costs the plant nothing: scent is a signal, not a transfer, and charging for
     /// it would be a second energy sink outside the ledger.
     pub fn scent(&self, field: &mut ChemoField, params: &PlantParams, dt: f32) {
-        for (&position, &energy) in self.position.iter().zip(self.energy.iter()) {
-            field.deposit(0, position, energy * params.scent_rate * dt);
+        for (i, &position) in self.position.iter().enumerate() {
+            let held = energy::total(self.energy[i], self.energy_reserve[i]) as f32;
+            field.deposit(0, position, held * params.scent_rate * dt);
         }
     }
 
     /// Total energy held across every plant. The stock half of the conservation check.
-    pub fn total_energy(&self) -> f32 {
-        self.energy.iter().sum()
+    ///
+    /// Values stay `f32` in world state, but the fixed-order sum is `f64`: ledger
+    /// opening and later measurements must use the same aggregation or summation
+    /// rounding alone looks like an energy leak (spec §5.1).
+    pub fn total_energy(&self) -> f64 {
+        self.energy
+            .iter()
+            .zip(self.energy_reserve.iter())
+            .map(|(&energy, &reserve)| energy::total(energy, reserve))
+            .sum()
     }
 
     #[inline]
@@ -136,6 +146,38 @@ impl Plants {
     }
 
     #[inline]
+    pub(crate) fn energy_reserve(&self) -> &[f64] {
+        &self.energy_reserve
+    }
+
+    #[inline]
+    pub(crate) fn energy_at(&self, index: usize) -> f64 {
+        energy::total(self.energy[index], self.energy_reserve[index])
+    }
+
+    pub(crate) fn transfer_to(
+        &mut self,
+        index: usize,
+        destination: &mut f32,
+        destination_reserve: &mut f64,
+        wanted: f32,
+    ) -> f64 {
+        let (Some(source), Some(source_reserve)) = (
+            self.energy.get_mut(index),
+            self.energy_reserve.get_mut(index),
+        ) else {
+            return 0.0;
+        };
+        energy::transfer(
+            source,
+            source_reserve,
+            destination,
+            destination_reserve,
+            wanted as f64,
+        )
+    }
+
+    #[inline]
     pub fn alive(&self) -> &[u8] {
         &self.alive
     }
@@ -146,15 +188,16 @@ impl Plants {
         &self.hash
     }
 
-    /// Takes up to `wanted` energy from one plant, returning what was actually there.
-    /// Used by the ingest resolution, which owns the other side of the transfer.
-    pub fn take(&mut self, index: usize, wanted: f32) -> f32 {
-        let Some(energy) = self.energy.get_mut(index) else {
+    #[cfg(test)]
+    /// Removes up to `wanted` energy from one plant for plant-local tests.
+    pub fn take(&mut self, index: usize, wanted: f32) -> f64 {
+        let (Some(value), Some(reserve)) = (
+            self.energy.get_mut(index),
+            self.energy_reserve.get_mut(index),
+        ) else {
             return 0.0;
         };
-        let taken = wanted.min(*energy).max(0.0);
-        *energy -= taken;
-        taken
+        energy::take(value, reserve, wanted as f64)
     }
 }
 
@@ -215,7 +258,7 @@ mod tests {
         let absorbed = plants.grow(&params.plants, dt);
         let expected = params.plants.energy_input_rate * dt;
         assert!(
-            (absorbed - expected).abs() < expected * 1e-3,
+            (absorbed - expected as f64).abs() < expected as f64 * 1e-3,
             "absorbed {absorbed}, input was {expected}"
         );
         assert!((plants.total_energy() - absorbed).abs() < 1e-2);
@@ -224,7 +267,7 @@ mod tests {
     #[test]
     fn the_larder_is_stocked_before_the_first_tick() {
         let (full, params) = world();
-        let ceiling = params.plants.max_energy * full.len() as f32;
+        let ceiling = params.plants.max_energy as f64 * full.len() as f64;
         assert!((full.total_energy() - ceiling).abs() < 1e-1);
 
         let (half, _) = filled(0.5);
@@ -243,7 +286,7 @@ mod tests {
         for _ in 0..100_000 {
             plants.grow(&params.plants, params.world.dt);
         }
-        let ceiling = params.plants.max_energy * plants.len() as f32;
+        let ceiling = params.plants.max_energy as f64 * plants.len() as f64;
         assert!(
             (plants.total_energy() - ceiling).abs() < 1e-1,
             "did not reach carrying capacity: {} of {ceiling}",

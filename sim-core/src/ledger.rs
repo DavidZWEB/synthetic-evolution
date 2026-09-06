@@ -14,14 +14,15 @@
 //! stock_now  ==  stock_at_start + input - dissipated
 //! ```
 //!
-//! Transfers do not appear here at all, and that is the point: an agent eating a plant
-//! and a parent splitting its tank with a child move energy *within* the stock. If a
-//! transfer is written wrongly the totals stop matching and [`Self::drift`] says so,
-//! without anyone having to think of that particular mistake in advance.
+//! Transfers do not appear here at all, and that is the point: compensated energy
+//! stores preserve ownership while moving stock, so a transfer neither enters nor
+//! leaves the economy.
 //!
 //! Deliberately not here: what charges or credits anything. This module counts.
 
 use serde::{Deserialize, Serialize};
+
+use crate::energy::Amount;
 
 /// Running totals for one world.
 ///
@@ -40,27 +41,34 @@ pub struct EnergyLedger {
 
 impl EnergyLedger {
     /// Starts a ledger against the energy already present.
-    pub fn opening(stock: f32) -> Self {
+    pub fn opening(stock: f64) -> Self {
         Self {
             input: 0.0,
             dissipated: 0.0,
-            initial_stock: stock as f64,
+            initial_stock: stock,
         }
     }
 
     /// Energy that entered the world. Only plants absorbing the input rate may call
     /// this (spec §5.1).
     #[inline]
-    pub fn record_input(&mut self, amount: f32) {
+    pub fn record_input(&mut self, amount: f64) {
         debug_assert!(amount >= 0.0, "negative input: {amount}");
-        self.input += amount as f64;
+        self.input += amount;
     }
 
     /// Energy that left the world, through metabolism or any other sink.
     #[inline]
-    pub fn record_dissipated(&mut self, amount: f32) {
+    pub fn record_dissipated(&mut self, amount: f64) {
         debug_assert!(amount >= 0.0, "negative dissipation: {amount}");
-        self.dissipated += amount as f64;
+        self.dissipated += amount;
+    }
+
+    #[inline]
+    pub(crate) fn record_dissipated_amount(&mut self, amount: Amount) {
+        let total = amount.approximate();
+        debug_assert!(total >= 0.0, "negative dissipation: {total}");
+        self.dissipated += total;
     }
 
     #[inline]
@@ -85,8 +93,8 @@ impl EnergyLedger {
     /// being dissipated. Either is a broken economy, and the sign says which mistake to
     /// look for.
     #[inline]
-    pub fn drift(&self, stock: f32) -> f64 {
-        stock as f64 - self.expected_stock()
+    pub fn drift(&self, stock: f64) -> f64 {
+        stock - self.expected_stock()
     }
 }
 

@@ -42,11 +42,7 @@ fn populated_with_fill(seed: u64, agents: u32, fill: f32) -> (World, SimParams) 
 /// against an absolute figure — a millijoule of float error means something very
 /// different in a world holding 10 joules than one holding 10 million.
 fn relative_drift(world: &World) -> f64 {
-    let scale = world
-        .ledger()
-        .input()
-        .max(world.total_energy() as f64)
-        .max(1.0);
+    let scale = world.ledger().input().max(world.total_energy()).max(1.0);
     world.energy_drift().abs() / scale
 }
 
@@ -71,6 +67,154 @@ fn energy_is_conserved_over_ten_thousand_ticks() {
     assert!(
         world.ledger().dissipated() > 0.0,
         "no energy ever left; the test proved nothing"
+    );
+}
+
+#[test]
+fn fractional_growth_in_a_large_plant_pool_is_recorded_exactly() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 100_000;
+    params.plants.initial_fill = 0.001;
+    params.plants.max_energy = 100.0;
+    params.plants.energy_input_rate = 60_000_000.0;
+    let mut world = World::new(1, params).expect("valid params");
+
+    let absorbed = world.grow_plants();
+    assert!(absorbed > 0.0);
+    assert_eq!(world.ledger().input(), absorbed);
+    assert!(
+        world.energy_drift().abs() < 1e-9,
+        "{} joules drifted from aggregation alone",
+        world.energy_drift()
+    );
+}
+
+#[test]
+fn lowering_the_live_plant_cap_does_not_destroy_stock() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 4;
+    let mut world = World::new(2, params).expect("valid params");
+    let before = world.total_energy();
+    let mut retuned = world.params().clone();
+    retuned.plants.max_energy *= 0.5;
+    world.set_params(retuned).expect("live cap may be lowered");
+
+    assert_eq!(world.grow_plants(), 0.0);
+    assert_eq!(world.total_energy(), before);
+    assert_eq!(world.energy_drift(), 0.0);
+}
+
+#[test]
+fn repeated_feeding_into_a_large_balance_conserves_energy() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 1;
+    params.plants.initial_fill = 0.001;
+    params.plants.max_energy = 100.0;
+    params.plants.energy_input_rate = 60.0;
+    params.reproduction.start_energy = 1_000_000.0;
+    params.reproduction.threshold = 2_000_000.0;
+    params.metabolism.base = 0.0;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.7;
+    params.feeding.gate = 0.0;
+    params.feeding.reach = 0.0;
+    let mut world = World::new(9, params).expect("valid params");
+    let at = world.plants().position()[0];
+    let id = world.spawn_founder(at).expect("room");
+    let agent_before = world.agents().energy[id.index()];
+
+    for tick in 0..100_000 {
+        world.intents_mut().ingest[id.index()] = 1.0;
+        world.resolve_feeding();
+        world.grow_plants();
+        assert!(
+            world.energy_drift().abs() < 1e-9,
+            "tick {tick}: {} joules drifted",
+            world.energy_drift()
+        );
+    }
+    assert!(
+        world.agents().energy[id.index()] > agent_before,
+        "feeding never credited the large agent balance"
+    );
+    assert!(
+        world.agents().energy_reserve[id.index()] < 1.0,
+        "rounding reserve grew without being reclaimed"
+    );
+}
+
+#[test]
+fn sub_ulp_feeding_progress_stays_with_each_agent() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 2;
+    params.plants.max_plants = 1;
+    params.plants.initial_fill = 1.0;
+    params.plants.max_energy = 1_000_000.0;
+    params.plants.energy_input_rate = 0.0;
+    params.metabolism.base = 0.0;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.01;
+    params.feeding.gate = 0.0;
+    params.feeding.reach = 0.0;
+    let mut world = World::new(12, params).expect("valid params");
+    let at = world.plants().position()[0];
+    let a = world.spawn_founder(at).expect("room");
+    let b = world.spawn_founder(at).expect("room");
+    let before_a = world.agents().energy[a.index()] as f64;
+    let before_b = world.agents().energy[b.index()] as f64;
+
+    for _ in 0..10 {
+        world.intents_mut().ingest[a.index()] = 1.0;
+        world.intents_mut().ingest[b.index()] = 1.0;
+        world.resolve_feeding();
+    }
+
+    let agents = world.agents();
+    let after_a = agents.energy[a.index()] as f64 + agents.energy_reserve[a.index()];
+    let after_b = agents.energy[b.index()] as f64 + agents.energy_reserve[b.index()];
+    assert!((after_a - before_a - 0.1).abs() < 1e-8);
+    assert!((after_b - before_b - 0.1).abs() < 1e-8);
+    assert_eq!(world.energy_drift(), 0.0);
+}
+
+#[test]
+fn sub_f64_ulp_metabolism_reduces_the_authoritative_balance() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 0;
+    params.reproduction.start_energy = 10_000_000_000.0;
+    params.reproduction.threshold = 20_000_000_000.0;
+    params.metabolism.base = 1e-7;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.0;
+    let mut world = World::new(15, params).expect("valid params");
+    let id = world
+        .spawn_founder(glam::Vec3::ZERO)
+        .expect("room for founder");
+
+    for _ in 0..10 {
+        world.charge_metabolism();
+    }
+
+    let agents = world.agents();
+    assert_eq!(agents.energy[id.index()], 9_999_998_976.0);
+    assert!(agents.energy_reserve[id.index()] < 1_024.0);
+    assert!(
+        world.energy_drift().abs() < 1e-9,
+        "{}",
+        world.energy_drift()
     );
 }
 
@@ -218,7 +362,7 @@ fn eating_moves_energy_without_creating_it() {
     let eaten = world.agents().energy[id.index()] - agent_before;
     assert!(eaten > 0.0, "nothing was eaten; is the gate right?");
     assert!(
-        (world.plants().total_energy() - (plants_before - eaten)).abs() < 1e-3,
+        (world.plants().total_energy() - (plants_before - eaten as f64)).abs() < 1e-3,
         "the plant did not lose what the agent gained"
     );
     assert!(

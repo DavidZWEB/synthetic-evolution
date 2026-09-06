@@ -6,8 +6,9 @@ objective. Fitness is survival and reproduction.
 
 Rust simulation core compiled to WASM, Svelte + WebGL client.
 
-**Status:** Phase 1, milestone M10 of 12. The complete loop runs in WASM with live
-rendering, charts, agent inspection, and shareable seed URLs. See
+**Status:** Phase 1, milestone M11 of 12. The complete loop runs in WASM with live
+instrumentation, while the native shell produces paired evolving/control telemetry and
+diagnoses known failure modes. See
 [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
 
 ## Quick start
@@ -30,6 +31,8 @@ Then:
 ```bash
 cargo test --workspace               # unit tests, invariant scan, no-alloc check
 npm run dev --prefix web             # client on http://localhost:5173
+cargo run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
 ```
 
 On Windows, run `setup.sh` from WSL or Git Bash — the Rust and Node steps are

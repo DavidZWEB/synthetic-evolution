@@ -62,6 +62,7 @@ positions:    Float32Array(N * 3)   // z pinned to 0 in V1
 velocities:   Float32Array(N * 3)
 orientation:  Float32Array(N * 4)   // quaternion; V1 constrains to yaw about Z
 energy:       Float32Array(N)
+energyResidual: Float64Array(N)      // sub-f32 stock; paired with energy
 health:       Float32Array(N)
 age:          Uint32Array(N)
 speciesId:    Uint32Array(N)
@@ -80,6 +81,14 @@ partCount:    Uint32Array(N)
 Two of these look like over-engineering for a 2D sim with spherical agents, and are deliberate. `orientation` as a quaternion rather than a scalar `heading` float, and the `partOffset`/`partCount` indirection rather than treating an agent as a single sphere, are the two hedges that make the eventual move to volumetric 3D with articulated bodies survivable. See §9 for why these specifically.
 
 Fixed-capacity pools with a free list. Never allocate in the loop. Brains and genomes are variable-size, so they live in separate arenas with per-agent offset/length indices.
+
+`energy` remains the compact, hot-path value. Every agent and plant also owns an
+`energyResidual`: compensated storage for a quantity below the current `Float32`
+resolution. Energy operations act on the pair. This prevents long runs from creating,
+destroying, or permanently blocking energy when a cost or transfer is smaller than one
+endpoint's `Float32` ULP; operations account for the delta actually represented at the
+remaining `Float64` precision floor. Residuals are authoritative state and participate
+in deterministic hashing, but the render snapshot needs only the rounded visible value.
 
 #### (b) Render snapshot — the SharedArrayBuffer, leased and triple-buffered
 
@@ -666,7 +675,7 @@ Cannot be unit tested; must hold across a real run. These exist from Phase 1, no
 
 Every phase success criterion in §8 is a judgment about whether something *interesting* evolved. No assertion covers this, and no amount of Tier 1 and 2 passing implies it. Treat any claim that a phase is complete on the strength of green tests as unverified.
 
-The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Keep a lineage with randomized weights for side-by-side comparison — if you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
+The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them, breaking cumulative neural evolution without changing sensors, body, or ecology. If you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
 
 ### 7.9 The experiment loop
 
@@ -678,7 +687,7 @@ Tuning this simulator is a large, tedious, highly parallel search — exactly th
 cargo run -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
 ```
 
-One JSON line per sample interval: population by species, trophic biomass by tier, mean and max brain size, genome size distribution, energy flow per tier, speciation and extinction events, behavior-probe hits. This runs at 1000× and produces something an agent can actually reason over, which a canvas is not.
+One JSON line per sample interval: population by species, trophic biomass by tier, mean and max brain size, genome size distribution, energy flow per tier, speciation and extinction events, behavior-probe hits. This runs at 1000× and produces something an agent can actually reason over, which a canvas is not. Emit only fields the current phase can measure: before Phase 2 species clustering exists, report exact genome variants and mark species-based diagnostics unavailable rather than treating the placeholder species ID as data.
 
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
 

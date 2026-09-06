@@ -47,6 +47,11 @@ pub struct Agents {
     /// into the serialized world format — see `math::yaw_quat` (spec §9.1).
     pub orientation: Vec<Quat>,
     pub energy: Vec<f32>,
+    /// Energy debited for this agent but below its `f32` tank's current resolution.
+    ///
+    /// It remains owned world stock and is retried on later transfers. Per-agent
+    /// ownership prevents one organism receiving another's deferred food (spec §5.1).
+    pub energy_reserve: Vec<f64>,
     /// Damage pool. Nothing reduces it before predation lands in Phase 3.
     pub health: Vec<f32>,
     pub age: Vec<u32>,
@@ -138,6 +143,7 @@ impl Agents {
             velocity: vec![Vec3::ZERO; n],
             orientation: vec![Quat::IDENTITY; n],
             energy: vec![0.0; n],
+            energy_reserve: vec![0.0; n],
             health: vec![0.0; n],
             age: vec![0; n],
             species_id: vec![0; n],
@@ -171,6 +177,7 @@ impl Agents {
         self.velocity[i] = Vec3::ZERO;
         self.orientation[i] = crate::math::yaw_quat(spec.yaw);
         self.energy[i] = spec.energy;
+        self.energy_reserve[i] = 0.0;
         self.health[i] = 1.0;
         self.age[i] = 0;
         self.species_id[i] = 0;
@@ -203,6 +210,7 @@ impl Agents {
         self.genome[i] = Block::EMPTY;
         self.parts[i] = Block::EMPTY;
         self.energy[i] = 0.0;
+        self.energy_reserve[i] = 0.0;
         self.health[i] = 0.0;
     }
 }
@@ -228,6 +236,7 @@ mod tests {
         assert_eq!(a.capacity(), 16);
         assert_eq!(a.velocity.len(), 16);
         assert_eq!(a.orientation.len(), 16);
+        assert_eq!(a.energy_reserve.len(), 16);
         assert_eq!(a.parent_b.len(), 16);
         assert_eq!(a.parts.len(), 16);
     }
