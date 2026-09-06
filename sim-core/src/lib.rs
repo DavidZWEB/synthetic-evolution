@@ -16,6 +16,7 @@ pub mod command;
 pub mod control;
 pub mod crossover;
 pub mod effectors;
+mod energy;
 pub mod feeding;
 pub mod founder;
 pub mod genome;

@@ -14,10 +14,9 @@
 //! stock_now  ==  stock_at_start + input - dissipated
 //! ```
 //!
-//! Transfers do not appear here at all, and that is the point: an agent eating a plant
-//! and a parent splitting its tank with a child move energy *within* the stock. If a
-//! transfer is written wrongly the totals stop matching and [`Self::drift`] says so,
-//! without anyone having to think of that particular mistake in advance.
+//! Transfers do not appear here at all, and that is the point: compensated energy
+//! stores preserve ownership while moving stock, so a transfer neither enters nor
+//! leaves the economy.
 //!
 //! Deliberately not here: what charges or credits anything. This module counts.
 
@@ -51,16 +50,16 @@ impl EnergyLedger {
     /// Energy that entered the world. Only plants absorbing the input rate may call
     /// this (spec §5.1).
     #[inline]
-    pub fn record_input(&mut self, amount: f32) {
+    pub fn record_input(&mut self, amount: f64) {
         debug_assert!(amount >= 0.0, "negative input: {amount}");
-        self.input += amount as f64;
+        self.input += amount;
     }
 
     /// Energy that left the world, through metabolism or any other sink.
     #[inline]
-    pub fn record_dissipated(&mut self, amount: f32) {
+    pub fn record_dissipated(&mut self, amount: f64) {
         debug_assert!(amount >= 0.0, "negative dissipation: {amount}");
-        self.dissipated += amount as f64;
+        self.dissipated += amount;
     }
 
     #[inline]

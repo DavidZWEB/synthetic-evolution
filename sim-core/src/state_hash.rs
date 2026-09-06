@@ -201,6 +201,7 @@ impl World {
             h.f32(q.w);
 
             h.f32(agents.energy[i]);
+            h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.age[i]);
             h.u32(agents.species_id[i]);
@@ -223,10 +224,16 @@ impl World {
         // even when every agent still agrees.
         let plants = self.plants();
         h.u32(plants.len() as u32);
-        for (&p, &e) in plants.position().iter().zip(plants.energy().iter()) {
+        for ((&p, &e), &reserve) in plants
+            .position()
+            .iter()
+            .zip(plants.energy().iter())
+            .zip(plants.energy_reserve().iter())
+        {
             h.f32(p.x);
             h.f32(p.y);
             h.f32(e);
+            h.f64(reserve);
         }
 
         // Commands not yet due are state too: two worlds identical in every other way

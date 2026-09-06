@@ -311,7 +311,7 @@ impl World {
             // leak, and recording it as input is what keeps §5.1's books balanced
             // without pretending the agent arrived empty. An *offspring* is different:
             // its energy comes out of its parent, so reproduction records nothing.
-            self.ledger.record_input(spec.energy);
+            self.ledger.record_input(spec.energy as f64);
         }
         spawned
     }
@@ -345,7 +345,8 @@ impl World {
             return false;
         }
         let i = id.index();
-        let remaining = self.agents.energy[i].max(0.0);
+        let remaining =
+            self.agents.energy[i].max(0.0) as f64 + self.agents.energy_reserve[i].max(0.0);
         if remaining > 0.0 {
             self.ledger.record_dissipated(remaining);
         }
@@ -511,7 +512,8 @@ impl World {
         self.due_commands = due;
     }
 
-    /// Every joule the world currently holds, in plants and in agents.
+    /// Every joule the world currently holds, in plants, agents, and the transfer
+    /// rounding reserve.
     ///
     /// This fixed-order `f64` aggregation is shared by ledger opening, drift checks,
     /// and shell telemetry. Using a separate `f32` sum for any one of them manufactures
@@ -520,9 +522,22 @@ impl World {
         let agents: f64 = self
             .pool
             .iter_live()
-            .map(|id| self.agents.energy[id.index()] as f64)
+            .map(|id| {
+                let i = id.index();
+                self.agents.energy[i] as f64 + self.agents.energy_reserve[i]
+            })
             .sum();
         self.plants.total_energy() + agents
+    }
+
+    /// Energy below the visible `f32` resolution, still owned by plants or agents.
+    pub fn energy_reserve(&self) -> f64 {
+        let agents: f64 = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.energy_reserve[id.index()])
+            .sum();
+        agents + self.plants.energy_reserve().iter().sum::<f64>()
     }
 
     /// Mean energy held by living agents, for on-demand instrumentation.
@@ -537,7 +552,10 @@ impl World {
         let total: f64 = self
             .pool
             .iter_live()
-            .map(|id| self.agents.energy[id.index()] as f64)
+            .map(|id| {
+                let i = id.index();
+                self.agents.energy[i] as f64 + self.agents.energy_reserve[i]
+            })
             .sum();
         total / population as f64
     }

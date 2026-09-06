@@ -351,30 +351,32 @@ fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonRepor
     let tail: Vec<_> = samples
         .iter()
         .rev()
-        .filter(|sample| sample.evolving.descendants > 0 && sample.random_control.descendants > 0)
+        .take_while(|sample| {
+            sample.evolving.descendants > 0
+                && sample.random_control.descendants > 0
+                && sample.evolving.population >= 10
+                && sample.random_control.population >= 10
+        })
         .take(5)
         .collect();
     if tail.len() < 3 {
-        return ComparisonReport {
-            tail_means: None,
-            findings: Vec::new(),
-            unavailable: Some(
-                "random-control comparison requires at least three samples with living descendants in both cohorts"
-                    .to_owned(),
-            ),
-        };
-    }
-    if tail
-        .iter()
-        .any(|sample| sample.evolving.population < 10 || sample.random_control.population < 10)
-    {
-        return ComparisonReport {
-            tail_means: None,
-            findings: Vec::new(),
-            unavailable: Some(
+        let reason = match samples.last() {
+            Some(sample)
+                if sample.evolving.descendants == 0 || sample.random_control.descendants == 0 =>
+            {
+                "random-control comparison requires living descendants in both cohorts"
+            }
+            Some(sample)
+                if sample.evolving.population < 10 || sample.random_control.population < 10 =>
+            {
                 "random-control comparison requires at least 10 living agents in both cohorts"
-                    .to_owned(),
-            ),
+            }
+            _ => "random-control comparison requires at least three consecutive eligible samples",
+        };
+        return ComparisonReport {
+            tail_means: None,
+            findings: Vec::new(),
+            unavailable: Some(reason.to_owned()),
         };
     }
     let mean = |value: fn(&WorldMetrics) -> f64, cohort: Cohort| {
@@ -504,6 +506,7 @@ mod tests {
             mean_abs_connection_weight: 0.5,
             cumulative_energy_input: 0.0,
             cumulative_dissipation: 0.0,
+            energy_rounding_reserve: 0.0,
             energy_drift: 0.0,
         }
     }
@@ -738,6 +741,50 @@ mod tests {
     }
 
     #[test]
+    fn control_comparison_does_not_reuse_a_stale_eligible_tail() {
+        let mut samples = vec![
+            sample(0, 100, 4),
+            sample(1_000, 100, 4),
+            sample(2_000, 100, 4),
+            sample(3_000, 100, 4),
+            sample(4_000, 0, 0),
+        ];
+        for sample in &mut samples[..4] {
+            sample.evolving.descendants = 10;
+            sample.random_control.descendants = 10;
+        }
+
+        let report = diagnose(&header(4_000), &samples);
+        assert!(report.comparison.tail_means.is_none());
+        assert!(report.comparison.findings.is_empty());
+        assert!(
+            report
+                .comparison
+                .unavailable
+                .as_deref()
+                .is_some_and(|reason| reason.contains("living descendants"))
+        );
+    }
+
+    #[test]
+    fn control_comparison_uses_the_latest_eligible_population_suffix() {
+        let mut samples = vec![
+            sample(0, 9, 4),
+            sample(1_000, 10, 4),
+            sample(2_000, 10, 4),
+            sample(3_000, 10, 4),
+        ];
+        for sample in &mut samples {
+            sample.evolving.descendants = 5;
+            sample.random_control.descendants = 5;
+        }
+
+        let report = diagnose(&header(3_000), &samples);
+        assert!(report.comparison.unavailable.is_none());
+        assert!(report.comparison.tail_means.is_some());
+    }
+
+    #[test]
     fn compares_live_descendant_cohorts_after_randomization() {
         let mut samples = vec![
             sample(0, 100, 4),
@@ -826,7 +873,7 @@ mod tests {
         crate::diagnose_output::write_human(&mut output, &report).expect("writes");
         let output = String::from_utf8(output).expect("UTF-8");
         assert!(output.contains(
-            "comparison:\n  - not run: random-control comparison requires at least three samples"
+            "comparison:\n  - not run: random-control comparison requires living descendants"
         ));
     }
 }

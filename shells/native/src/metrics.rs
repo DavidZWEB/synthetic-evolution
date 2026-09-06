@@ -16,7 +16,7 @@ use sim_core::params::SimParams;
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -82,6 +82,8 @@ pub struct WorldMetrics {
     pub mean_abs_connection_weight: f64,
     pub cumulative_energy_input: f64,
     pub cumulative_dissipation: f64,
+    /// Owned energy below the corresponding visible `f32` value's resolution.
+    pub energy_rounding_reserve: f64,
     pub energy_drift: f64,
 }
 
@@ -157,7 +159,10 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
     for id in world.pool().iter_live() {
         let i = id.index();
         let agents = world.agents();
-        energy.add(agents.energy[i] as f64, "agent energy")?;
+        energy.add(
+            agents.energy[i] as f64 + agents.energy_reserve[i],
+            "agent energy",
+        )?;
         let velocity = agents.velocity[i];
         let speed_value = ((velocity.x as f64).powi(2)
             + (velocity.y as f64).powi(2)
@@ -188,6 +193,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
     let total_energy = finite(world.total_energy(), "total energy")?;
     let cumulative_energy_input = finite(ledger.input(), "cumulative energy input")?;
     let cumulative_dissipation = finite(ledger.dissipated(), "cumulative dissipation")?;
+    let energy_rounding_reserve = finite(world.energy_reserve(), "energy rounding reserve")?;
     let energy_drift = finite(world.energy_drift(), "energy ledger drift")?;
     Ok(WorldMetrics {
         population: world.population(),
@@ -204,6 +210,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         mean_abs_connection_weight: connection_weight.summary().mean,
         cumulative_energy_input,
         cumulative_dissipation,
+        energy_rounding_reserve,
         energy_drift,
     })
 }
@@ -239,6 +246,7 @@ mod tests {
         assert_eq!(metrics.agent_energy, Summary::default());
         assert_eq!(metrics.speed, Summary::default());
         assert!(metrics.plant_energy > 0.0);
+        assert_eq!(metrics.energy_rounding_reserve, 0.0);
     }
 
     #[test]

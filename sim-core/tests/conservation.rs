@@ -71,6 +71,122 @@ fn energy_is_conserved_over_ten_thousand_ticks() {
 }
 
 #[test]
+fn fractional_growth_in_a_large_plant_pool_is_recorded_exactly() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 100_000;
+    params.plants.initial_fill = 0.001;
+    params.plants.max_energy = 100.0;
+    params.plants.energy_input_rate = 60_000_000.0;
+    let mut world = World::new(1, params).expect("valid params");
+
+    let absorbed = world.grow_plants();
+    assert!(absorbed > 0.0);
+    assert_eq!(world.ledger().input(), absorbed);
+    assert!(
+        world.energy_drift().abs() < 1e-9,
+        "{} joules drifted from aggregation alone",
+        world.energy_drift()
+    );
+}
+
+#[test]
+fn lowering_the_live_plant_cap_does_not_destroy_stock() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 4;
+    let mut world = World::new(2, params).expect("valid params");
+    let before = world.total_energy();
+    let mut retuned = world.params().clone();
+    retuned.plants.max_energy *= 0.5;
+    world.set_params(retuned).expect("live cap may be lowered");
+
+    assert_eq!(world.grow_plants(), 0.0);
+    assert_eq!(world.total_energy(), before);
+    assert_eq!(world.energy_drift(), 0.0);
+}
+
+#[test]
+fn repeated_feeding_into_a_large_balance_conserves_energy() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 1;
+    params.plants.initial_fill = 0.001;
+    params.plants.max_energy = 100.0;
+    params.plants.energy_input_rate = 60.0;
+    params.reproduction.start_energy = 1_000_000.0;
+    params.reproduction.threshold = 2_000_000.0;
+    params.metabolism.base = 0.0;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.7;
+    params.feeding.gate = 0.0;
+    params.feeding.reach = 0.0;
+    let mut world = World::new(9, params).expect("valid params");
+    let at = world.plants().position()[0];
+    let id = world.spawn_founder(at).expect("room");
+    let agent_before = world.agents().energy[id.index()];
+
+    for tick in 0..100_000 {
+        world.intents_mut().ingest[id.index()] = 1.0;
+        world.resolve_feeding();
+        world.grow_plants();
+        assert!(
+            world.energy_drift().abs() < 1e-9,
+            "tick {tick}: {} joules drifted",
+            world.energy_drift()
+        );
+    }
+    assert!(
+        world.agents().energy[id.index()] > agent_before,
+        "feeding never credited the large agent balance"
+    );
+    assert!(
+        world.agents().energy_reserve[id.index()] < 1.0,
+        "rounding reserve grew without being reclaimed"
+    );
+}
+
+#[test]
+fn sub_ulp_feeding_progress_stays_with_each_agent() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 2;
+    params.plants.max_plants = 1;
+    params.plants.initial_fill = 1.0;
+    params.plants.max_energy = 1_000_000.0;
+    params.plants.energy_input_rate = 0.0;
+    params.metabolism.base = 0.0;
+    params.metabolism.k_size = 0.0;
+    params.metabolism.k_brain = 0.0;
+    params.metabolism.k_sensor = 0.0;
+    params.metabolism.k_move = 0.0;
+    params.feeding.rate = 0.01;
+    params.feeding.gate = 0.0;
+    params.feeding.reach = 0.0;
+    let mut world = World::new(12, params).expect("valid params");
+    let at = world.plants().position()[0];
+    let a = world.spawn_founder(at).expect("room");
+    let b = world.spawn_founder(at).expect("room");
+    let before_a = world.agents().energy[a.index()] as f64;
+    let before_b = world.agents().energy[b.index()] as f64;
+
+    for _ in 0..10 {
+        world.intents_mut().ingest[a.index()] = 1.0;
+        world.intents_mut().ingest[b.index()] = 1.0;
+        world.resolve_feeding();
+    }
+
+    let agents = world.agents();
+    let after_a = agents.energy[a.index()] as f64 + agents.energy_reserve[a.index()];
+    let after_b = agents.energy[b.index()] as f64 + agents.energy_reserve[b.index()];
+    assert!((after_a - before_a - 0.1).abs() < 1e-8);
+    assert!((after_b - before_b - 0.1).abs() < 1e-8);
+    assert_eq!(world.energy_drift(), 0.0);
+}
+
+#[test]
 fn conservation_holds_across_seeds() {
     // One seed passing is a weaker claim than it looks: the flows depend on where
     // agents start and how long they live.

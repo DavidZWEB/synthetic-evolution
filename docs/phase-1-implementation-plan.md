@@ -822,8 +822,9 @@ identifies a deliberately induced extinction and a deliberately induced monocult
 **Implemented.** A run writes a versioned header with the binary version, full params,
 seed, and control protocol, followed by interval samples. Every sample contains evolving
 and random-control vectors side by side: population, exact genome variants, descendant
-count, agent and plant energy, speed, age, brain/genome size, mean absolute connection
-weight, and cumulative energy-ledger values. The final sample includes both state hashes.
+count, agent and plant energy, rounding reserve, speed, age, brain/genome size,
+mean absolute connection weight, and cumulative energy-ledger values. The final sample
+includes both state hashes.
 Metrics are sampled by the native shell after completed ticks; no counters or callbacks
 were added to the hot loop.
 
@@ -844,7 +845,7 @@ neutral mutation alone can move it.
 The mechanical criterion was exercised with a 500,000-tick, same-seed paired run using
 a deliberately cheap 32-slot, 8×8-field fixture. Both cohorts reached and retained the
 32-agent ceiling, each ended with 24 living descendants, and their final state hashes
-diverged (`ddcbd7e206890fbb` evolving, `7a4526c29488e1cb` control). It produced a header
+diverged (`e590467d78fce49a` evolving, `fbe1dd0070b40308` control). It produced a header
 plus six samples in about 65 seconds in release mode:
 
 ```bash
@@ -863,7 +864,12 @@ of ecological viability; it exists to exercise 500k ticks, births, randomized co
 heredity, paired sampling, and final hashes. Shipped defaults still go extinct before
 selection can accumulate, which remains the M12 tuning question. Brain-inheritance mode
 is experiment configuration like `SimParams`, not mutable world state, so it is not
-folded into `state_hash`; the existing golden constants and default behavior are unchanged.
+folded into `state_hash`, and it does not alter default physical dynamics. The later
+conservation correction does: ledger input now accumulates actual plant deltas in `f64`,
+and per-entity rounding reserves preserve sub-`f32` energy for its plant or agent owner
+rather than minting, losing, redirecting, or permanently blocking the difference. Those
+accounting and transfer changes move `state_hash`, so the native and WASM golden
+constants were deliberately updated together.
 
 The header embeds the package version and Git revision (`-dirty` when the runtime Rust
 sources, manifests, lockfile, or pinned toolchain do not match that revision), and the

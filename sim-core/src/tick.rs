@@ -30,6 +30,7 @@ use crate::agents::SpawnSpec;
 use crate::brain;
 use crate::control::BrainInheritance;
 use crate::effectors::{self, AgentIntents};
+use crate::energy;
 use crate::feeding;
 use crate::genome::{self, BodyTrait};
 use crate::metabolism;
@@ -79,7 +80,9 @@ impl World {
                 index: id.raw(),
                 position: self.agents.position[i],
                 orientation: self.agents.orientation[i],
-                energy_tanks: self.agents.energy[i] / self.params.reproduction.start_energy,
+                energy_tanks: (energy::total(self.agents.energy[i], self.agents.energy_reserve[i])
+                    / self.params.reproduction.start_energy as f64)
+                    as f32,
             };
             let world = WorldView {
                 positions: &self.agents.position,
@@ -188,7 +191,7 @@ impl World {
     /// What the plants *actually* absorbed goes into the ledger, not the nominal input
     /// rate: at carrying capacity the surplus never enters, and conservation has to be
     /// measured rather than inferred.
-    pub fn grow_plants(&mut self) -> f32 {
+    pub fn grow_plants(&mut self) -> f64 {
         let dt = self.params.world.dt;
         let absorbed = self.plants.grow(&self.params.plants, dt);
         self.ledger.record_input(absorbed);
@@ -217,10 +220,13 @@ impl World {
             // Only what is there. Charging past zero would dissipate energy the world
             // never held, and the ledger would report a leak that is really an
             // overdraft.
-            let charged = cost.min(self.agents.energy[i]).max(0.0);
-            self.agents.energy[i] -= charged;
+            let charged = energy::take(
+                &mut self.agents.energy[i],
+                &mut self.agents.energy_reserve[i],
+                cost as f64,
+            );
             self.ledger.record_dissipated(charged);
-            if self.agents.energy[i] <= 0.0 {
+            if energy::total(self.agents.energy[i], self.agents.energy_reserve[i]) <= 0.0 {
                 self.dying.push(id);
             }
         }
@@ -274,13 +280,14 @@ impl World {
                 continue;
             }
             let reach = self.agents.size[i] + plant_radius + feeding.reach;
-            let taken = feeding::ingest(
+            feeding::ingest(
                 self.agents.position[i],
                 reach,
                 feeding.rate,
+                &mut self.agents.energy[i],
+                &mut self.agents.energy_reserve[i],
                 &mut self.plants,
             );
-            self.agents.energy[i] += taken;
         }
     }
 
@@ -292,7 +299,7 @@ impl World {
         for id in self.pool.iter_live() {
             let i = id.index();
             if reproduction::ready(
-                self.agents.energy[i],
+                energy::total(self.agents.energy[i], self.agents.energy_reserve[i]),
                 self.agents.age[i],
                 self.intents.reproduce[i],
                 &self.params.reproduction,
@@ -319,7 +326,8 @@ impl World {
 
         for &parent in &breeding {
             let p = parent.index();
-            let share = self.agents.energy[p] * self.params.reproduction.energy_split;
+            let share = energy::total(self.agents.energy[p], self.agents.energy_reserve[p])
+                * self.params.reproduction.energy_split as f64;
 
             // Built before the spawn so the parent's genome can be read while the world
             // is otherwise untouched; mutation is what makes the child a variation
@@ -350,7 +358,7 @@ impl World {
             let spec = SpawnSpec {
                 position,
                 yaw,
-                energy: share,
+                energy: 0.0,
                 size: genome::body_trait(&scratch, BodyTrait::Size)
                     .unwrap_or(self.params.body.size),
                 signature: Vec3::new(
@@ -363,9 +371,25 @@ impl World {
             let spawned = self.spawn(&spec, &scratch);
             self.genome_scratch = scratch;
 
-            if spawned.is_some() {
-                // Only now. A refused birth leaves the parent whole.
-                self.agents.energy[p] -= share;
+            if let Some(child) = spawned {
+                // Only now. A refused birth leaves the parent whole. The shared
+                // rounding reserve keeps both f32 endpoints conservative (spec §5.1).
+                let mut parent_energy = self.agents.energy[p];
+                let c = child.index();
+                let mut child_energy = self.agents.energy[c];
+                let mut parent_reserve = self.agents.energy_reserve[p];
+                let mut child_reserve = self.agents.energy_reserve[c];
+                energy::transfer(
+                    &mut parent_energy,
+                    &mut parent_reserve,
+                    &mut child_energy,
+                    &mut child_reserve,
+                    share,
+                );
+                self.agents.energy[p] = parent_energy;
+                self.agents.energy_reserve[p] = parent_reserve;
+                self.agents.energy[c] = child_energy;
+                self.agents.energy_reserve[c] = child_reserve;
                 born += 1;
             }
         }
