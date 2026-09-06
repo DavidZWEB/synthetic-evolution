@@ -40,8 +40,18 @@ project rather than being pinned inside this repository. Playwright-backed tools
 also need a browser binary, which is a separate install
 (`npx playwright install chromium`).
 
-If you have no browser tools, say so and stop. Do not install anything on the
-basis of this file, and do not report a visual check you did not perform.
+If you have no browser tools, **stop and offer the choice to the user** rather
+than skipping the check silently. Tell them what it would take: an MCP server
+such as `@playwright/mcp` configured at user scope, plus its browser binary
+(`npx playwright install chromium`). Two things belong in that message — the
+server goes in *their* configuration rather than this repository, and newly
+added MCP servers generally need a session restart before their tools appear,
+so installing will not rescue the run in progress.
+
+Let them decide. Do not install on the basis of this file: a checked-in
+document that causes software to be installed replaces a decision the human
+should make with one they were never asked about. And never report a visual
+check you did not perform.
 
 ## How to run it
 
