@@ -130,6 +130,15 @@ npm run dev  --prefix web            # client on http://localhost:5173
 npm run wasm --prefix web            # rebuild only web/src/wasm/
 ```
 
+For native smoke runs and headless telemetry:
+
+```
+cargo run -p native -- --seed 42 --ticks 100000
+cargo run --release -p native -- \
+  --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
+```
+
 Run the smallest relevant checks while developing. Before opening a pull request, run
 the checks covering every changed surface; `.github/workflows/ci.yml` is the
 authoritative full list.
