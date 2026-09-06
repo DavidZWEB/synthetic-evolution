@@ -7,10 +7,8 @@
 use std::collections::BTreeSet;
 use std::io;
 
-use serde::{Deserialize, Serialize};
-use sim_core::NULL_ID;
-
 use crate::Result;
+use serde::{Deserialize, Serialize};
 use sim_core::genome::Gene;
 use sim_core::params::SimParams;
 use sim_core::state_hash::genome_fingerprint;
@@ -154,7 +152,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
     let mut sensor_load = Accumulator::default();
     let mut genome_genes = Accumulator::default();
     let mut connection_weight = Accumulator::default();
-    let mut descendants = 0u32;
+    let descendants = world.living_descendants();
 
     for id in world.pool().iter_live() {
         let i = id.index();
@@ -181,10 +179,6 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
                 connection_weight
                     .add(connection.weight.abs() as f64, "absolute connection weight")?;
             }
-        }
-
-        if agents.parent_a[i] != NULL_ID {
-            descendants += 1;
         }
     }
 

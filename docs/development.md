@@ -200,7 +200,9 @@ For visual control checks, the web app's **heredity** selector creates either th
 evolving world or the same-seed `randomized_at_birth` control. Changing it takes effect on
 **reseed** because heredity mode is construction-time experiment configuration, not a
 `SimParams` retune. Shared URL fragments retain the mode, so evolving and control tabs can
-be opened with identical seed, founders, and params.
+be opened with identical seed, founders, and params. The live **descendants** count excludes
+generation-zero founders; a control with a few agents but zero descendants has not sustained
+a randomized lineage.
 
 Before adding anything to `sim-core`, check it against the invariants in `AGENTS.md`: no I/O, no allocation in the hot loop, deterministic. A crate that internally uses `HashMap` iteration order or platform floating-point math will silently break replay. This is a real constraint — audit dependencies in the sim core rather than assuming.
 

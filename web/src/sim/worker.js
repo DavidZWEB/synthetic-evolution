@@ -150,6 +150,7 @@ const handlers = {
       source: sourceViews,
       tick: () => sim.tick(),
       population: () => sim.population(),
+      descendants: () => sim.descendants(),
       meanEnergy: () => sim.mean_energy(),
       send: (message, transfer) => sendPublication(message, transfer),
     });

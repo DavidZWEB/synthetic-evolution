@@ -268,6 +268,11 @@ impl Sim {
         self.world.population()
     }
 
+    /// Living agents born in this world; persistent founders are deliberately excluded.
+    pub fn descendants(&self) -> u32 {
+        self.world.living_descendants()
+    }
+
     /// Mean energy of the living population, sampled on demand by the UI.
     pub fn mean_energy(&self) -> f64 {
         self.world.mean_agent_energy()

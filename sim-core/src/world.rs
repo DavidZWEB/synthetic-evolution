@@ -563,6 +563,18 @@ impl World {
         total / population as f64
     }
 
+    /// Number of living agents born inside this world rather than seeded as founders.
+    ///
+    /// Parentage, not age, is the distinction: an old offspring is still a descendant,
+    /// while a founder that survives indefinitely is not evidence of inherited
+    /// adaptation (spec §7.8).
+    pub fn living_descendants(&self) -> u32 {
+        self.pool
+            .iter_live()
+            .filter(|id| self.agents.parent_a[id.index()] != AgentId::NULL.raw())
+            .count() as u32
+    }
+
     #[inline]
     pub fn ledger(&self) -> &EnergyLedger {
         &self.ledger
@@ -752,6 +764,33 @@ mod tests {
         assert_eq!(world.mean_agent_energy(), 20.0);
         world.despawn(a);
         assert_eq!(world.mean_agent_energy(), 30.0);
+    }
+
+    #[test]
+    fn living_descendants_uses_parentage_not_age() {
+        let mut world = small_world();
+        let founder = world
+            .spawn_founder(Vec3::new(1.0, 2.0, 0.0))
+            .expect("pool has room");
+        let descendant = world
+            .spawn(
+                &SpawnSpec {
+                    position: Vec3::new(3.0, 4.0, 0.0),
+                    energy: 100.0,
+                    size: 1.0,
+                    signature: Vec3::ONE,
+                    yaw: 0.0,
+                    parent_a: founder,
+                },
+                &[],
+            )
+            .expect("pool has room");
+        world.agents.age[founder.index()] = 10_000;
+        world.agents.age[descendant.index()] = 0;
+
+        assert_eq!(world.living_descendants(), 1);
+        world.despawn(descendant);
+        assert_eq!(world.living_descendants(), 0);
     }
 
     #[test]

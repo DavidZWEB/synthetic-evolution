@@ -29,6 +29,7 @@ fn a_new_sim_starts_empty_at_tick_zero() {
     let sim = Sim::new(7, None).expect("defaults are valid");
     assert_eq!(sim.tick(), 0);
     assert_eq!(sim.population(), 0);
+    assert_eq!(sim.descendants(), 0);
     assert_eq!(sim.mean_energy(), 0.0);
 }
 
@@ -44,6 +45,8 @@ fn random_control_matches_founders_then_breaks_neural_inheritance() {
         control.state_hash(),
         "control founders must match"
     );
+    assert_eq!(evolving.descendants(), 0);
+    assert_eq!(control.descendants(), 0);
 
     evolving.step_many(100);
     control.step_many(100);
@@ -52,6 +55,8 @@ fn random_control_matches_founders_then_breaks_neural_inheritance() {
         control.state_hash(),
         "control births did not break neural heredity"
     );
+    assert!(evolving.descendants() > 0);
+    assert!(control.descendants() > 0);
 }
 
 #[wasm_bindgen_test]
