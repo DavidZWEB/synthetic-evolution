@@ -30,7 +30,7 @@ pub fn nearest(at: Vec3, reach: f32, plants: &Plants) -> Option<usize> {
             let index = index as usize;
             // An empty plant is still a plant, but there is nothing to take from it and
             // choosing it would block a fuller one right beside it.
-            if plants.energy()[index] <= 0.0 {
+            if plants.energy_at(index) <= 0.0 {
                 return;
             }
             if best.is_none_or(|(_, best_d2)| d2 < best_d2) {
@@ -40,13 +40,20 @@ pub fn nearest(at: Vec3, reach: f32, plants: &Plants) -> Option<usize> {
     best.map(|(index, _)| index)
 }
 
-/// Takes up to `wanted` from the nearest plant in reach, and reports what was actually
-/// there to take.
+/// Moves up to `wanted` from the nearest plant in reach into `agent_energy`.
 ///
-/// The return value is the transfer: the caller credits exactly this to the agent. It
-/// is never more than the plant held, so two agents eating the same plant in the same
-/// tick share what exists rather than each drawing a full portion out of nothing.
-pub fn ingest(at: Vec3, reach: f32, wanted: f32, plants: &mut Plants) -> f32 {
+/// Both stores are `f32`, so independently debiting and crediting a nominal amount can
+/// round to different endpoint deltas. The agent's reserve keeps any debit too small
+/// for the destination to represent and applies it on a later transfer, preserving the
+/// closed economy without permanently stalling at a float boundary (spec §5.1).
+pub fn ingest(
+    at: Vec3,
+    reach: f32,
+    wanted: f32,
+    agent_energy: &mut f32,
+    agent_energy_reserve: &mut f64,
+    plants: &mut Plants,
+) -> f64 {
     if wanted <= 0.0 {
         return 0.0;
     }
@@ -55,7 +62,7 @@ pub fn ingest(at: Vec3, reach: f32, wanted: f32, plants: &mut Plants) -> f32 {
     let Some(index) = nearest(at, reach, plants) else {
         return 0.0;
     };
-    plants.take(index, wanted)
+    plants.transfer_to(index, agent_energy, agent_energy_reserve, wanted)
 }
 
 #[cfg(test)]
@@ -71,7 +78,7 @@ mod tests {
         let mut plants = Plants::new(&params, &mut Rng::from_seed(1));
         plants.place_for_test(positions);
         for _ in 0..1_000_000 {
-            if plants.total_energy() >= energy * positions.len() as f32 {
+            if plants.total_energy() >= energy as f64 * positions.len() as f64 {
                 break;
             }
             plants.grow(&params.plants, params.world.dt);
@@ -79,11 +86,28 @@ mod tests {
         plants
     }
 
+    fn ingest_once(at: Vec3, reach: f32, wanted: f32, plants: &mut Plants) -> f64 {
+        let mut agent_energy = 0.0;
+        let mut agent_reserve = 0.0;
+        let before = plants.total_energy();
+        ingest(
+            at,
+            reach,
+            wanted,
+            &mut agent_energy,
+            &mut agent_reserve,
+            plants,
+        );
+        let removed = before - plants.total_energy();
+        assert_eq!(removed, agent_energy as f64 + agent_reserve);
+        removed
+    }
+
     #[test]
     fn an_agent_eats_the_plant_it_is_touching() {
         let mut plants = plants_at(&[Vec3::new(500.0, 500.0, 0.0)], 60.0);
         let before = plants.total_energy();
-        let taken = ingest(Vec3::new(501.0, 500.0, 0.0), 5.0, 2.0, &mut plants);
+        let taken = ingest_once(Vec3::new(501.0, 500.0, 0.0), 5.0, 2.0, &mut plants);
         assert!((taken - 2.0).abs() < 1e-4, "took {taken}");
         assert!((plants.total_energy() - (before - taken)).abs() < 1e-3);
     }
@@ -93,7 +117,7 @@ mod tests {
         let mut plants = plants_at(&[Vec3::new(500.0, 500.0, 0.0)], 60.0);
         let before = plants.total_energy();
         assert_eq!(
-            ingest(Vec3::new(700.0, 500.0, 0.0), 5.0, 2.0, &mut plants),
+            ingest_once(Vec3::new(700.0, 500.0, 0.0), 5.0, 2.0, &mut plants),
             0.0
         );
         assert_eq!(plants.total_energy(), before);
@@ -108,7 +132,7 @@ mod tests {
             60.0,
         );
         let before: Vec<f32> = plants.energy().to_vec();
-        ingest(Vec3::new(500.0, 500.0, 0.0), 40.0, 3.0, &mut plants);
+        ingest_once(Vec3::new(500.0, 500.0, 0.0), 40.0, 3.0, &mut plants);
         assert_eq!(plants.energy()[0], before[0], "ate the far plant");
         assert!(plants.energy()[1] < before[1], "did not eat the near plant");
     }
@@ -122,7 +146,7 @@ mod tests {
             60.0,
         );
         plants.take(0, 1e9);
-        let taken = ingest(Vec3::new(500.0, 500.0, 0.0), 40.0, 3.0, &mut plants);
+        let taken = ingest_once(Vec3::new(500.0, 500.0, 0.0), 40.0, 3.0, &mut plants);
         assert!(
             (taken - 3.0).abs() < 1e-4,
             "took {taken} from the fuller plant"
@@ -136,8 +160,8 @@ mod tests {
         // tick would each draw a full portion and conjure the difference (spec §5.1).
         let mut plants = plants_at(&[Vec3::new(500.0, 500.0, 0.0)], 60.0);
         let held = plants.total_energy();
-        let first = ingest(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
-        let second = ingest(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
+        let first = ingest_once(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
+        let second = ingest_once(Vec3::new(500.0, 500.0, 0.0), 5.0, 1e9, &mut plants);
         assert!((first - held).abs() < 1e-3, "took {first} of {held}");
         assert_eq!(second, 0.0, "an emptied plant kept giving");
         assert!(plants.total_energy() < 1e-3);
@@ -157,7 +181,7 @@ mod tests {
         let mut taken = 0.0;
         for i in 0..500 {
             let at = Vec3::new(500.0 + (i % 9) as f32, 500.0, 0.0);
-            taken += ingest(at, 6.0, 0.7, &mut plants);
+            taken += ingest_once(at, 6.0, 0.7, &mut plants);
         }
         assert!(
             (plants.total_energy() + taken - before).abs() < 1e-2,
@@ -174,7 +198,7 @@ mod tests {
         let mut plants = plants_at(&[Vec3::new(500.0, 500.0, 0.0)], 60.0);
         let before = plants.total_energy();
         assert_eq!(
-            ingest(Vec3::new(500.0, 500.0, 0.0), 5.0, -10.0, &mut plants),
+            ingest_once(Vec3::new(500.0, 500.0, 0.0), 5.0, -10.0, &mut plants),
             0.0
         );
         assert_eq!(plants.total_energy(), before);

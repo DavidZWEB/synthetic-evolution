@@ -13,6 +13,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use glam::Vec3;
+use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
 use sim_core::params::SimParams;
 use sim_core::world::World;
@@ -169,6 +170,7 @@ fn a_whole_tick_of_systems_never_allocates() {
     for i in 0..2_000 {
         world.spawn_founder(at(i)).expect("pool sized for 2k");
     }
+
     // Something to smell and something to see, or the sensors take their cheapest path.
     world.deposit_chemo(0, Vec3::new(250.0, 250.0, 0.0), 500.0);
     world.rebuild_spatial_hash();
@@ -197,6 +199,43 @@ fn a_whole_tick_of_systems_never_allocates() {
     assert_eq!(
         observed, 0,
         "a tick allocated {observed} times after warmup"
+    );
+}
+
+#[test]
+fn random_control_births_never_allocate() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 4;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    let mut world =
+        World::new_with_brain_inheritance(23, params, BrainInheritance::RandomizedAtBirth)
+            .expect("valid params");
+    let parent = world.spawn_founder(at(0)).expect("pool has room");
+
+    let birth_and_remove = |world: &mut World| {
+        let rich = world.params().reproduction.threshold + 100.0;
+        world.agents_mut().energy[parent.index()] = rich;
+        world.intents_mut().reproduce[parent.index()] = 1.0;
+        assert_eq!(world.resolve_births(), 1);
+        let child = world
+            .pool()
+            .iter_live()
+            .find(|&id| id != parent)
+            .expect("child was born");
+        world.despawn(child);
+    };
+    birth_and_remove(&mut world);
+
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            birth_and_remove(&mut world);
+        }
+        std::hint::black_box(&world);
+    });
+    assert_eq!(
+        observed, 0,
+        "a random-control birth allocated {observed} times"
     );
 }
 

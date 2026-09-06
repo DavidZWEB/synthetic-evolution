@@ -176,6 +176,26 @@ npm install three --prefix web           # updates package.json + package-lock.j
 
 Commit the lockfile change in the same commit as the manifest change. A manifest change without its lockfile change is what breaks the next machine.
 
+## Headless metrics
+
+The native shell runs an evolving world beside a same-seed, same-params random-brain
+control and writes both metric vectors into one self-describing JSONL stream:
+
+```bash
+cargo run --release -p native -- \
+  --seed 42 --ticks 500000 --sample-every 1000 --metrics run.jsonl
+cargo run -p native -- diagnose run.jsonl
+```
+
+Use `--params params.json` for a partial or complete `SimParams` document; absent fields
+use shipped defaults. Omit `--metrics` for only a completion summary and final hashes;
+use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-readable
+report.
+
+The committed files under `shells/native/tests/fixtures/` deliberately induce extinction,
+exact-genome monoculture, or a cheap sustaining population. They test telemetry and
+diagnostics; they are not candidate simulation defaults.
+
 Before adding anything to `sim-core`, check it against the invariants in `AGENTS.md`: no I/O, no allocation in the hot loop, deterministic. A crate that internally uses `HashMap` iteration order or platform floating-point math will silently break replay. This is a real constraint — audit dependencies in the sim core rather than assuming.
 
 ## Interesting seeds

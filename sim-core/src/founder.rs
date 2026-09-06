@@ -213,7 +213,32 @@ impl FounderPlan {
     pub fn instantiate(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
         debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
         out.copy_from_slice(&self.genes);
+        self.randomize_scalars(rng, params, out, true);
+        debug_assert!(genome::validate(out).is_ok(), "founder is not coherent");
+    }
 
+    /// Redraws neural scalars while preserving every inherited non-neural gene.
+    ///
+    /// Used by the random-brain control at birth. It breaks neural heredity without
+    /// changing sensors, body traits, topology, parameters, or the world's economy.
+    pub(crate) fn randomize_brain(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
+        // Phase 1 has one fixed topology, so connection order matches `fan_in_scale`.
+        // Structural operators arriving in Phase 2 must replace this positional lookup.
+        debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
+        self.randomize_scalars(rng, params, out, false);
+        debug_assert!(
+            genome::validate(out).is_ok(),
+            "randomized brain is incoherent"
+        );
+    }
+
+    fn randomize_scalars(
+        &self,
+        rng: &mut Rng,
+        params: &SimParams,
+        out: &mut [Gene],
+        include_non_neural: bool,
+    ) {
         let brain = &params.brain;
         let mut connection = 0usize;
         for gene in out.iter_mut() {
@@ -235,6 +260,9 @@ impl FounderPlan {
                     c.weight = rng.range(-scale, scale);
                 }
                 Gene::Sensor(s) => {
+                    if !include_non_neural {
+                        continue;
+                    }
                     if s.modality == Modality::VisionRay {
                         // Azimuth spread around the facing direction; elevation stays
                         // clamped at 0 for all of V1 (spec §4.1, §9.1).
@@ -249,6 +277,9 @@ impl FounderPlan {
                     }
                 }
                 Gene::Body(b) => {
+                    if !include_non_neural {
+                        continue;
+                    }
                     b.value = match b.trait_ {
                         BodyTrait::Size => params.body.size,
                         // Founders differ in colour so lineages are distinguishable on
@@ -258,6 +289,9 @@ impl FounderPlan {
                     };
                 }
                 Gene::Meta(m) => {
+                    if !include_non_neural {
+                        continue;
+                    }
                     m.value = match m.trait_ {
                         MetaTrait::MutationRate => params.mutation.weight_perturb_rate,
                         MetaTrait::WeightSigma => params.mutation.weight_perturb_sigma,
@@ -272,7 +306,6 @@ impl FounderPlan {
             self.fan_in_scale.len(),
             "fan-in scales are out of step with the connection genes"
         );
-        debug_assert!(genome::validate(out).is_ok(), "founder is not coherent");
     }
 }
 
@@ -433,6 +466,26 @@ mod tests {
         let params = SimParams::default();
         let p = plan(&params);
         assert_eq!(instantiate(&p, &params, 42), instantiate(&p, &params, 42));
+    }
+
+    #[test]
+    fn random_brain_control_preserves_non_neural_genes() {
+        let params = SimParams::default();
+        let plan = plan(&params);
+        let mut genes = instantiate(&plan, &params, 42);
+        let before = genes.clone();
+        plan.randomize_brain(&mut Rng::from_seed(99), &params, &mut genes);
+
+        let mut neural_change = false;
+        for (before, after) in before.iter().zip(&genes) {
+            match (before, after) {
+                (Gene::Neuron(_), Gene::Neuron(_)) | (Gene::Connection(_), Gene::Connection(_)) => {
+                    neural_change |= before != after;
+                }
+                _ => assert_eq!(before, after, "random control changed a non-neural gene"),
+            }
+        }
+        assert!(neural_change, "random control left the brain unchanged");
     }
 
     #[test]

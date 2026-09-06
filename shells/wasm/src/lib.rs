@@ -133,7 +133,7 @@ struct Inspection<'a> {
     incarnation: u32,
     /// Decimal text because JSON numbers cannot represent every u64 exactly.
     tick: String,
-    energy: f32,
+    energy: f64,
     age: u32,
     size: f32,
     signature: [f32; 3],
@@ -304,7 +304,7 @@ impl Sim {
             index,
             incarnation,
             tick: self.world.tick_count().to_string(),
-            energy: agents.energy[i],
+            energy: agents.energy[i] as f64 + agents.energy_reserve[i],
             age: agents.age[i],
             size: agents.size[i],
             signature: agents.signature[i].to_array(),
