@@ -39,6 +39,20 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      - name: Resolve Playwright version
+        id: playwright
+        run: |
+          version=$(node -p "require('./web/package-lock.json').packages['node_modules/playwright'].version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
+      # Browser binaries are cached, but each fresh Linux runner still needs the
+      # system libraries installed by Playwright's --with-deps setup.
       - name: Install project toolchains and dependencies
         run: ./scripts/setup.sh --skip-tests --with-browser
 
