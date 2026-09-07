@@ -11,8 +11,8 @@ For tooling, documentation, or UI-only changes, read only the relevant documenta
 Don't load the whole spec every session.
 
 **Setup, toolchains, and dependency rules:** `docs/development.md`. A fresh checkout is `./scripts/setup.sh`; `README.md` is the entry point for a human arriving at the repo.
-**Roadmap and current status:** `docs/phase-2-implementation-plan.md` tracks the current
-planning work; `docs/phase-1-implementation-plan.md` retains Phase 1's milestones and
+**Roadmap and current status:** `docs/phase-2-implementation-plan.md` tracks current
+implementation and remaining design decisions; `docs/phase-1-implementation-plan.md` retains Phase 1's milestones and
 acceptance evidence. These plans are authoritative for milestone status; don't infer
 it from this file.
 

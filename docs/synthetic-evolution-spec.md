@@ -82,6 +82,26 @@ Two of these look like over-engineering for a 2D sim with spherical agents, and 
 
 Fixed-capacity pools with a free list. Never allocate in the loop. Brains and genomes are variable-size, so they live in separate arenas with per-agent offset/length indices.
 
+**DECIDED: Phase 2's variable-length allocator uses address-ordered first fit with
+adjacent-free-span coalescing.** Element storage and free-span metadata are reserved
+at construction, with an explicit maximum number of simultaneous nonempty blocks.
+There is no compaction, relocation, or backing-buffer growth in allocation/release.
+Element reset copies a cached default value rather than invoking element
+constructors in the hot loop.
+
+An empty allocation succeeds without consuming space or a block. Nonempty requests
+report block-limit exhaustion, insufficient total free space, or fragmentation
+separately, in that precedence order; a refusal changes neither live data nor
+allocator state. Freeing an empty block is a no-op. All other releases must return
+an exact live block owned by the arena. Construction checks portable element and
+metadata byte bounds and propagates host reservation failure.
+
+Fragmentation can refuse a request despite sufficient total free space; diagnostics
+must expose that outcome rather than silently growing or dropping genome data.
+The allocator foundation lands independently of `World` integration. Concrete
+world/arena budgets and their birth-pressure implications remain a separate decision
+before replacing Phase 1's fixed-stride world storage.
+
 `energy` remains the compact, hot-path value. Every agent and plant also owns an
 `energyResidual`: compensated storage for a quantity below the current `Float32`
 resolution. Energy operations act on the pair. This prevents long runs from creating,

@@ -5,11 +5,11 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: draft for human review. No Phase 2 implementation is authorized by this
-document yet.** The agreed scope includes add/remove sensors, basic manual
-checkpoints, and a structural-null comparison before acceptance. The implementation
-choices in M0 remain proposals, not additions to the normative spec until approved.
-This change records the plan only; it does not change simulation code or defaults.
+**Status: implementation started with the approved M1 allocator foundation.**
+`World` integration, concrete memory budgets, and the remaining M0 choices are still
+pending. The agreed scope includes add/remove sensors, basic manual checkpoints,
+and a structural-null comparison before acceptance. Unapproved implementation
+choices in M0 remain proposals, not additions to the normative spec.
 
 ## Scope and status
 
@@ -20,8 +20,8 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | This review | under review |
-| M1 Variable-length storage | Bounded arenas and transactional birth storage | M0 storage decision | not started |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | allocator approved; budgets and other contracts open |
+| M1 Variable-length storage | Bounded arenas and transactional birth storage | M0 allocator approval; budgets before world integration | in progress: allocator foundation; world integration pending |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; M0 mutation/control decisions | not started |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
@@ -94,11 +94,17 @@ the relevant spec sections in the same change.
 
 ### D1 - Storage budgets and failure semantics
 
-**Recommendation:** preallocated variable-length arenas with deterministic
+**Decided for the allocator foundation:** preallocated variable-length arenas with deterministic
 address-ordered first-fit allocation and adjacent-free-span coalescing. Keep handles
 stable, with no compaction, relocation, or backing-buffer growth in the tick. Size
 allocator metadata for the maximum simultaneous blocks; it must not allocate either.
 Keep fixed-size parts storage simple.
+
+The approved first M1 slice adds `arena::VariableArena` and its coverage without
+replacing `World`'s existing fixed-stride arenas or changing defaults. Its fallible
+constructor bounds both data and metadata buffers; allocation reports block-limit,
+total-space, and fragmentation failures explicitly. World integration is the next
+slice, after the budgets below are approved.
 
 Separate per-genome limits from aggregate arena capacity. Both are runtime config:
 maximum genes, neurons, connections, sensors/rays, and total storage budgets. Derive
@@ -108,6 +114,13 @@ shell snapshots/transports and paired evolving/control worlds when selecting a
 profile. A configured ceiling is not a guarantee that the host has that much free
 memory. Concrete web/native budgets need measured footprints before approval.
 
+The pre-integration native baseline at `00988c1`, using the existing `footprint`
+test's allocation tally, requested 77,869,988 bytes (74.3 MiB) while constructing the
+default 5,000-slot world, and 31,330,984 bytes (29.9 MiB) at 2,000 slots. These are
+cumulative construction requests, including temporary allocations, not retained
+heap, process RSS, or whole-browser memory. The existing 96 MiB test ceiling remains
+a regression alarm, not approval of a runtime budget.
+
 An operator that would exceed a per-genome limit should be declined atomically;
 it must not leave half a split connection or half a sensor. If the completed child
 cannot claim all its arena blocks, refuse the birth without charging its parent.
@@ -116,8 +129,9 @@ so identical failures replay identically.
 
 First-fit can fail from fragmentation even when total free space is sufficient.
 Expose declined operators, refused births, capacity use, and fragmentation through
-opt-in diagnostics. Approval must explicitly accept this resource pressure or choose
-a different allocator; never silently drop genes or mint energy to conceal it.
+opt-in diagnostics. This allocator outcome is approved; concrete world resource
+pressure remains part of budget/integration approval. Never silently drop genes or
+mint energy to conceal it.
 
 ### D2 - Structural mutation semantics
 
@@ -263,6 +277,12 @@ must not erase a speciation or extinction event. Observer attachment, drain timi
 and pruning must not change simulation RNG or trajectories.
 
 ## M1 - Variable-length storage and birth transactions
+
+**First slice:** `arena::VariableArena` supplies the approved first-fit/coalescing
+backend with the existing `Block` handle. Differential tests compare it with an
+elementwise occupancy model, and allocation-counting covers reuse, coalescing, all
+refusal kinds, and reset without invoking an allocating element default. The old
+`Arena` and all `World` callers remain unchanged. This does not complete M1.
 
 Implement D1 in `arena`, then integrate genome, neuron, synapse, and sensor arenas,
 scratch sizing, and the spawn/despawn lifecycle in `world`. Audit effectors even
@@ -495,4 +515,5 @@ phase complete.
 Every implementation PR lands on a branch and receives a post-opening diff review.
 Keep independent golden-hash causes in separate commits, each with its own reference
 update and explanation. Review fixes after opening a PR are new commits. Update the
-status table only for delivered work; this planning review completes none of M1-M9.
+status table only for delivered work; an allocator-only slice does not complete M1,
+and passing its mechanical checks does not complete the phase.
