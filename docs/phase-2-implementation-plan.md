@@ -6,8 +6,9 @@ acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
 **Status: draft for human review. No Phase 2 implementation is authorized by this
-document yet.** The agreed scope includes add/remove sensors. The implementation
-choices below are proposals, not additions to the normative spec until approved.
+document yet.** The agreed scope includes add/remove sensors and basic manual
+checkpoints. The implementation choices in M0 remain proposals, not additions to the
+normative spec until approved.
 This change records the plan only; it does not change simulation code or defaults.
 
 ## Scope and status
@@ -26,7 +27,8 @@ evidence that useful complexity evolved.
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
-| M7 Founder experiments | Multi-seed founder/complexity-cost experiments | M3-M6 | not started |
+| M6a Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
+| M7 Founder experiments | Multi-seed founder/complexity-cost experiments | M3-M6a | not started |
 | M8 Acceptance | Mechanical evidence and human judgment | M7 | not started |
 
 Each milestone can span several PRs. Keep allocation, mutation, classification,
@@ -41,13 +43,15 @@ milestones with stale telemetry headers, broken controls, or unshareable paramet
 **In scope:** variable-length genomes and compiled brains; add/remove neuron and
 connection; connection enable/disable; add/remove sensors using the existing
 modalities; genetic distance; species assignment; phylogeny; the telemetry and
-presentable 2D UI needed to observe these; simpler-founder experiments.
+presentable 2D UI needed to observe these; manual checkpoint save/load in native and
+browser shells; simpler-founder experiments.
 
 **Not in scope:** sex or reproductive isolation enforcement, new sensory modalities,
 new effector kinds or effector-structure mutation, predation, signaling, body
-mutation/morphology, gene duplication, evolvable meta-genes, Three.js, full-world
-checkpoints, automatic sweeps, or the Phase 7 performance rewrite. The mutation table
-in spec section 3.3 is not a requirement to enable every operator in this phase. Gene
+mutation/morphology, gene duplication, evolvable meta-genes, Three.js, periodic
+autosaves/retention scheduling, checkpoint migrations, timeline scrubbing/indexing,
+compression/storage optimization, automatic sweeps, or the Phase 7 performance
+rewrite. The mutation table in spec section 3.3 is not a requirement to enable every operator in this phase. Gene
 duplication remains Phase 6; meta-gene scheduling remains a later explicit decision.
 Existing serialized hedges stay intact.
 
@@ -72,8 +76,9 @@ reason to promise Phase 7 scale here.
 
 ## M0 - Decisions to approve before their implementation
 
-Only **including sensor addition/removal in Phase 2** is settled by this planning
-discussion. Recommendations in this section deliberately expose the choices that
+**Including sensor addition/removal and basic manual checkpoints in Phase 2** is
+settled by this planning discussion. The approved checkpoint contract is in spec
+section 7.10. Recommendations in this section deliberately expose the choices that
 would otherwise become accidental selection pressures or misleading measurements.
 Approve them before the dependent milestone, and record the resulting contracts in
 the relevant spec sections in the same change.
@@ -204,7 +209,8 @@ must tolerate two parents without enabling sexual reproduction.
 Keep active classification state separate from an opt-in bounded history/event
 buffer. Native and browser shells drain events between step batches and own archival
 I/O; browser history can persist in IndexedDB, native history in exported records.
-This is history persistence, not full-world checkpointing or resumption.
+This is history persistence, not full-world checkpointing or resumption. M6a owns
+that separate capability; exporting M5's ancestry graph cannot resume a world.
 
 Approve retention limits, pruning semantics, and overflow handling before M5.
 Recommended overflow behavior is an explicit gap/truncation marker, never altered
@@ -334,6 +340,55 @@ reseed, inspection, species views, and ancestry with no stale-world responses.
 The visual-check skill confirms usable desktop/narrow layouts and a responsive
 canvas. Seed URLs reconstruct the intended configuration without lossy IDs.
 
+## M6a - Manual portable checkpoints
+
+**Approved scope:** bring basic save/load forward from Phase 7, after variable-length
+storage, species, ancestry, and their browser surfaces settle, and before M7's longer
+experiments. Keep the existing milestone numbers: this is separate from M5's history
+export and M6's observation UI.
+
+Implement spec section 7.10's shared, versioned full-world checkpoint format. The
+native shell reads/writes files; the browser offers download/import through the
+worker/WASM boundary. Native and WASM builds with the same simulation-compatibility
+identity must exchange checkpoints within the receiving host's resource limits.
+Retain the originating seed/run provenance. Reject incompatible versions explicitly;
+no migration support is required.
+
+Capture a consistent between-ticks boundary. Core encoding/decoding operates on
+memory; all file/browser I/O and scheduling belong to the shells, never the tick.
+Preserve every future-relevant value, including parameters and heredity mode, RNG,
+tick, recurrent neural state, energy residuals and ledger, genomes, pool/arena
+allocation state, innovation/identity counters, species representatives and ancestry
+metadata, and queued commands with their application order/ticks. Rebuild derived
+caches, scratch, and render/transport buffers without reseeding or resetting
+authoritative state. Saving must not advance the world or consume RNG.
+
+Validate format/compatibility, lengths, resource limits, handles/free spans, genome
+references, and numeric invariants before accepting restored state. Stage loading so
+a rejected file leaves the current world intact. Browser imports open paused with a
+fresh snapshot and invalidated old selections, responses, and scheduling state; they
+must not execute a command twice or let the old worker publish into the new world.
+
+Keep external history archives separate. A resumed world starts a clearly identified
+history segment linked to its checkpoint origin, not silently appended after events
+from the old world's later future. Do not claim the checkpoint contains a complete
+historical archive. For resumed paired experiments, restore both evolving and control
+worlds at the same tick with their original protocol; never substitute a new control.
+
+**Done when:** uninterrupted and save/load/continue runs agree at the save boundary
+and after further ticks, for both heredity modes and in both native/WASM transfer
+directions. Cases must actually exercise structural mutation, slot reuse, fragmented
+arenas, species creation/extinction, nonzero recurrent state, compensated energy,
+and future queued commands. A successful deserialize or an immediate matching hash
+alone is insufficient. Reject truncated, malformed, incompatible, and oversized
+files without replacing the live world. Browser save/import works on both transports
+and remains usable on narrow layouts; a native-produced checkpoint can be inspected
+in the browser and continued without replaying from its seed.
+
+Periodic autosaves, retention scheduling, cross-version migration, timeline
+scrubbing/indexing, compression, and storage optimization remain deferred. This
+milestone provides manual exact continuation, not the Phase 7 overnight-run manager.
+
 ## M7 - Founder and complexity experiments
 
 Use the existing native paired-telemetry workflow. Compare a small, declared set of
@@ -341,6 +396,10 @@ founder compositions, including the accepted dense baseline and chemo-led sparse
 candidates. Report at least three seeds per configuration with ranges and variance.
 Measure viability, reproduction, neurons/connections/sensors, species persistence,
 capacity pressure, energy flow, and simulation throughput alongside the control.
+
+Use M6a to retain manually selected moments for human inspection without replaying
+the entire run. Record checkpoint provenance and retain matching control checkpoints
+when an experiment will be resumed or compared from that tick.
 
 Tune existing/new parameters rather than changing mechanisms in response to outcomes.
 Retain the current energy accounting and disabled-connection cost policy unless a
