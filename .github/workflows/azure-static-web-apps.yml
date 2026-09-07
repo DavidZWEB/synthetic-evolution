@@ -32,13 +32,6 @@ on:
   pull_request_target:
     types: [closed]
 
-# A newer event for the same production branch or PR makes the older deploy irrelevant.
-# A close event waits behind an active upload instead of cancelling it: Azure can
-# otherwise finish the server-side deployment after an early close finds nothing.
-concurrency:
-  group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'pull_request_target' }}
-
 # repo_token below comments the preview URL on the pull request. The repository's
 # default workflow permissions are read-only, so this permission must be explicit.
 permissions:
@@ -52,23 +45,53 @@ jobs:
     # be inspected. Never run untrusted fork or Dependabot code with the Azure token.
     if: >-
       (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success') ||
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch) ||
       (github.event_name == 'pull_request' &&
-       github.event.action != 'closed' &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.pull_request.user.login != 'dependabot[bot]')
+    # Newer updates supersede older ones. This lives on the eligible job rather than
+    # the workflow so an unrelated workflow_run cannot cancel a production deploy.
+    concurrency:
+      group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
+      # A queued or manually rerun PR workflow may outlive the PR event that started
+      # it. Re-read current state before running any PR code or calling Azure.
+      - name: Confirm preview still applies
+        id: preview
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const deploy =
+              pull.state === 'open' &&
+              pull.base.ref === context.payload.repository.default_branch &&
+              pull.head.repo?.full_name === repository &&
+              pull.user?.login !== 'dependabot[bot]';
+            core.setOutput('deploy', deploy ? 'true' : 'false');
+
       # A workflow_run event carries the default branch's ref, not the commit that
       # was tested, so the tested SHA has to be named explicitly. Deploying
       # github.ref there would ship whatever main happens to be at now. A PR preview
       # uses GitHub's merge commit so it shows the result against current main.
       - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -78,20 +101,24 @@ jobs:
       # restores $CARGO_HOME/bin, so setup.sh finds the pinned wasm-pack already
       # present and skips a from-source `cargo install` that costs minutes.
       - uses: Swatinem/rust-cache@v2
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
 
       # scripts/setup.sh is the single source of truth for what a working checkout
       # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
       # and npm ci. CI owns the test suite; this workflow only prepares the deployable
       # artifact, and browser automation is not needed for that.
       - name: Set up toolchains and install dependencies
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
         run: ./scripts/setup.sh --skip-tests
 
       # The build script generates the gitignored wasm bindings before invoking Vite,
       # matching the clean-checkout path developers use.
       - name: Build wasm and client
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
         run: npm run build --prefix web
 
       - name: Deploy
+        if: github.event_name == 'workflow_run' || steps.preview.outputs.deploy == 'true'
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
@@ -110,6 +137,16 @@ jobs:
           # missing Rust toolchain.
           skip_app_build: true
 
+      # If a stale run displaced teardown, finish that teardown instead of recreating
+      # the closed or retargeted PR's environment.
+      - name: Close stale preview
+        if: github.event_name == 'pull_request' && steps.preview.outputs.deploy != 'true'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: close
+          app_location: /dev/null
+
   close_pull_request:
     if: >-
       github.event_name == 'pull_request_target' &&
@@ -118,6 +155,11 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       contents: read
+    # Wait for an active upload. Azure can otherwise finish deploying after an early
+    # close action found no environment, leaving an orphaned public preview.
+    concurrency:
+      group: swa-${{ github.workflow }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
@@ -126,4 +168,4 @@ jobs:
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           action: close
-          app_location: web
+          app_location: /dev/null
