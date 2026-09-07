@@ -27,9 +27,9 @@ evidence that useful complexity evolved.
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
-| M6a Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
-| M7 Founder experiments | Multi-seed founder/complexity-cost experiments | M3-M6a | not started |
-| M8 Acceptance | Mechanical evidence and human judgment | M7 | not started |
+| M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
+| M8 Founder experiments | Multi-seed founder/complexity-cost experiments | M3-M7 | not started |
+| M9 Acceptance | Mechanical evidence and human judgment | M8 | not started |
 
 Each milestone can span several PRs. Keep allocation, mutation, classification,
 history, and presentation as separate concepts rather than expanding `World` into
@@ -209,7 +209,7 @@ must tolerate two parents without enabling sexual reproduction.
 Keep active classification state separate from an opt-in bounded history/event
 buffer. Native and browser shells drain events between step batches and own archival
 I/O; browser history can persist in IndexedDB, native history in exported records.
-This is history persistence, not full-world checkpointing or resumption. M6a owns
+This is history persistence, not full-world checkpointing or resumption. M7 owns
 that separate capability; exporting M5's ancestry graph cannot resume a world.
 
 Approve retention limits, pruning semantics, and overflow handling before M5.
@@ -272,7 +272,7 @@ runtime configuration. Reuse the current fan-in scaling and shared founder IDs.
 Retain thrust, turn, ingest, and brain-gated reproduce: "minimal" must not remove
 reproduction simply because section 3.3's illustrative list abbreviates the loop.
 Keep body/meta hedges. The current dense founder remains a reproducible baseline;
-switching the shipped founder is M7's measured decision, not this milestone's guess.
+switching the shipped founder is M8's measured decision, not this milestone's guess.
 
 **Done when:** removing a sensor leaves a valid runnable brain; adding every supported
 modality binds the correct number of channels and changes perception and metabolic
@@ -340,12 +340,11 @@ reseed, inspection, species views, and ancestry with no stale-world responses.
 The visual-check skill confirms usable desktop/narrow layouts and a responsive
 canvas. Seed URLs reconstruct the intended configuration without lossy IDs.
 
-## M6a - Manual portable checkpoints
+## M7 - Manual portable checkpoints
 
 **Approved scope:** bring basic save/load forward from Phase 7, after variable-length
-storage, species, ancestry, and their browser surfaces settle, and before M7's longer
-experiments. Keep the existing milestone numbers: this is separate from M5's history
-export and M6's observation UI.
+storage, species, ancestry, and their browser surfaces settle, and before M8's longer
+experiments. This is separate from M5's history export and M6's observation UI.
 
 Implement spec section 7.10's shared, versioned full-world checkpoint format. The
 native shell reads/writes files; the browser offers download/import through the
@@ -389,7 +388,7 @@ Periodic autosaves, retention scheduling, cross-version migration, timeline
 scrubbing/indexing, compression, and storage optimization remain deferred. This
 milestone provides manual exact continuation, not the Phase 7 overnight-run manager.
 
-## M7 - Founder and complexity experiments
+## M8 - Founder and complexity experiments
 
 Use the existing native paired-telemetry workflow. Compare a small, declared set of
 founder compositions, including the accepted dense baseline and chemo-led sparse
@@ -397,7 +396,7 @@ candidates. Report at least three seeds per configuration with ranges and varian
 Measure viability, reproduction, neurons/connections/sensors, species persistence,
 capacity pressure, energy flow, and simulation throughput alongside the control.
 
-Use M6a to retain manually selected moments for human inspection without replaying
+Use M7 to retain manually selected moments for human inspection without replaying
 the entire run. Record checkpoint provenance and retain matching control checkpoints
 when an experiment will be resumed or compared from that tick.
 
@@ -411,7 +410,7 @@ brain size. A simpler shipped founder requires observed viability and human appr
 Document any changed default's rationale on its `SimParams` field, retaining prior
 tuning notes, and update golden references with the deliberate behavior change.
 
-## M8 - Acceptance and landing
+## M9 - Acceptance and landing
 
 Run checks covering each changed surface from `AGENTS.md` and
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml). In particular, structural
@@ -428,4 +427,4 @@ mark this phase complete.
 Every implementation PR lands on a branch and receives a post-opening diff review.
 Keep independent golden-hash causes in separate commits, each with its own reference
 update and explanation. Review fixes after opening a PR are new commits. Update the
-status table only for delivered work; this planning review completes none of M1-M8.
+status table only for delivered work; this planning review completes none of M1-M9.
