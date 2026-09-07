@@ -8,8 +8,8 @@ Rust simulation core compiled to WASM, Svelte + WebGL client.
 
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
 across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
-has started with the variable-length allocator foundation; world integration and
-structural mutation are still pending. See
+now has pooled variable-length world storage and explicit memory budgets;
+structural mutation is still pending. See
 [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md).
 The complete loop runs in WASM with live
 instrumentation; the native shell produces paired evolving/control telemetry and

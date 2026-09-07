@@ -16,14 +16,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::founder::FounderPlan;
-use crate::genome::{self, Gene};
+use crate::genome;
+use crate::storage::StorageLayout;
 
 /// The complete parameter set for one world.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SimParams {
     pub world: WorldParams,
+    pub storage: StorageParams,
     pub body: BodyParams,
     pub metabolism: MetabolismParams,
     pub movement: MovementParams,
@@ -34,6 +35,56 @@ pub struct SimParams {
     pub feeding: FeedingParams,
     pub plants: PlantParams,
     pub chemo: ChemoParams,
+}
+
+/// Construction-time storage policy (spec §2.2a).
+///
+/// Per-slot allowances multiply `world.max_agents` to size shared arenas. They are
+/// pooled across organisms, not per-organism strides, and never depend on founder
+/// composition. Individual genomes may exceed an allowance while staying within
+/// their separate `max_*` limits and the available aggregate storage.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageParams {
+    pub genes_per_slot: u32,
+    pub neurons_per_slot: u32,
+    pub synapses_per_slot: u32,
+    pub sensors_per_slot: u32,
+    pub effectors_per_slot: u32,
+    /// Maximum genes in one organism, also sizing the reusable genome scratch.
+    pub max_genes: u32,
+    /// Maximum neurons in one organism, also sizing the reusable fan-in scratch.
+    pub max_neurons: u32,
+    /// Maximum connection genes, including disabled connections.
+    pub max_connections: u32,
+    pub max_sensors: u32,
+    pub max_vision_rays: u32,
+    pub max_effectors: u32,
+    /// Portable upper bound on cumulative requested heap bytes for one core construction.
+    ///
+    /// Includes eager buffers, metadata, templates and constructor temporaries.
+    /// Excludes shell snapshots/transports, a second control world, and allocator/OS
+    /// overhead; passing validation does not guarantee host RAM is available.
+    pub max_memory_bytes: u64,
+}
+
+impl Default for StorageParams {
+    fn default() -> Self {
+        Self {
+            genes_per_slot: 284,
+            neurons_per_slot: 28,
+            synapses_per_slot: 240,
+            sensors_per_slot: 5,
+            effectors_per_slot: 4,
+            max_genes: 1_024,
+            max_neurons: 128,
+            max_connections: 1_024,
+            max_sensors: 32,
+            max_vision_rays: 32,
+            max_effectors: 4,
+            max_memory_bytes: 100_663_296,
+        }
+    }
 }
 
 /// Extent, capacity, and the fixed timestep.
@@ -393,22 +444,6 @@ impl ChemoParams {
     }
 }
 
-/// Ceilings on the params that size an allocation or feed integer arithmetic.
-///
-/// These guard representation and allocation arithmetic, not host memory availability.
-/// Shells may impose tighter profile budgets. Params arrive from JS at runtime, so
-/// "nobody would set that" is not a guarantee (spec §7.6).
-const MAX_AGENTS: u32 = 1_000_000;
-const MAX_PLANTS: u32 = 1_000_000;
-/// Perception is 60–80% of tick cost, and each ray widens every brain. Far above any
-/// useful value, low enough that the brain-width arithmetic cannot overflow.
-const MAX_VISION_RAYS: u32 = 256;
-/// Total chemo cells across all axes and channels.
-const MAX_CHEMO_CELLS: u64 = 16_777_216;
-/// Spatial-hash cells per axis. The grid is `world.size / max_sense_radius` across, so
-/// a very short sense radius in a large world is what blows this up.
-const MAX_GRID_CELLS_PER_AXIS: f32 = 1_024.0;
-
 /// A parameter set that cannot produce a coherent world.
 ///
 /// Validation happens once, at the boundary where params arrive from JS or a CLI. Past
@@ -426,6 +461,18 @@ impl core::fmt::Display for ParamError {
 impl core::error::Error for ParamError {}
 
 impl SimParams {
+    /// Checked portable upper bound on cumulative core-construction heap requests.
+    ///
+    /// Includes constructor temporaries and the owned parameter channel buffer, not
+    /// just retained world buffers. Invalid configurations, including those exceeding
+    /// `storage.max_memory_bytes`, return an error before any world allocation.
+    /// Temporary pointer-sized indices are charged at 8 bytes on native and WASM.
+    /// Shell allocations and allocator/OS overhead are outside this estimate.
+    pub fn estimated_construction_bytes(&self) -> Result<u64, ParamError> {
+        self.validate()?;
+        Ok(StorageLayout::new(self)?.construction_bytes)
+    }
+
     /// Whether `next` may replace these params on a world already running, given the
     /// spatial grid's `grid_cell` extent.
     ///
@@ -442,11 +489,12 @@ impl SimParams {
     /// | Field | What it sized |
     /// |---|---|
     /// | `world.max_agents` | the slot pool, every SoA array, all six arenas, the snapshot |
+    /// | `storage` | aggregate arenas, per-genome scratch and construction budget |
     /// | `world.size` | the spatial grid's extent and the chemo field's |
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
-    /// | `sensing.vision_rays`, `brain.hidden_neurons`, `brain.oscillators` | the founding topology, and through it every arena's stride |
+    /// | `sensing.vision_rays`, `brain.hidden_neurons`, `brain.oscillators` | the founding template and its fan-in scales |
     ///
     /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
     /// read once when the larder is stocked. Refusing is the honest answer for all of
@@ -471,6 +519,10 @@ impl SimParams {
                 "world.max_agents is fixed for the life of a world",
             ),
             (
+                next.storage != self.storage,
+                "storage is fixed for the life of a world",
+            ),
+            (
                 next.world.size != self.world.size,
                 "world.size is fixed for the life of a world",
             ),
@@ -490,7 +542,7 @@ impl SimParams {
                 next.sensing.vision_rays != self.sensing.vision_rays
                     || next.brain.hidden_neurons != self.brain.hidden_neurons
                     || next.brain.oscillators != self.brain.oscillators,
-                "the founding topology is fixed for the life of a world; it sets every arena stride",
+                "the founding topology is fixed for the life of a world",
             ),
             (
                 next.plants.initial_fill != self.plants.initial_fill,
@@ -525,12 +577,6 @@ impl SimParams {
         if self.world.max_agents == 0 {
             return Err(ParamError("world.max_agents must be non-zero"));
         }
-        if self.world.max_agents > MAX_AGENTS {
-            return Err(ParamError("world.max_agents exceeds the pool ceiling"));
-        }
-        if self.plants.max_plants > MAX_PLANTS {
-            return Err(ParamError("plants.max_plants exceeds the pool ceiling"));
-        }
         if !(self.plants.energy_input_rate >= 0.0) || !self.plants.energy_input_rate.is_finite() {
             return Err(ParamError(
                 "plants.energy_input_rate must be finite and non-negative",
@@ -554,24 +600,6 @@ impl SimParams {
                 "plant radius and scent rate must be finite and non-negative",
             ));
         }
-        if self.sensing.vision_rays > MAX_VISION_RAYS {
-            return Err(ParamError(
-                "sensing.vision_rays exceeds the per-agent ceiling",
-            ));
-        }
-        let counts = FounderPlan::checked_counts(self).ok_or(ParamError(
-            "founding topology exceeds representable gene counts",
-        ))?;
-        let gene_bytes = u64::from(counts.genes)
-            .checked_mul(u64::from(self.world.max_agents))
-            .and_then(|count| count.checked_mul(size_of::<Gene>() as u64));
-        // The gene arena dominates every per-agent buffer. Use WASM32's Vec byte
-        // ceiling on both targets, so native cannot accept overflowing WASM layouts.
-        if gene_bytes.is_none_or(|bytes| bytes > i32::MAX as u64) {
-            return Err(ParamError(
-                "founding topology times max_agents exceeds the portable arena byte ceiling",
-            ));
-        }
         if [
             self.sensing.vision_range,
             self.sensing.vision_fov,
@@ -590,11 +618,6 @@ impl SimParams {
         if self.sensing.max_sense_radius() * 2.0 > self.world.size {
             return Err(ParamError(
                 "sense radius exceeds half the world; the hash cannot wrap",
-            ));
-        }
-        if self.world.size / self.sensing.max_sense_radius() > MAX_GRID_CELLS_PER_AXIS {
-            return Err(ParamError(
-                "sense radius is too small for the world; the spatial grid would explode",
             ));
         }
         if !genome::valid_tau(self.brain.tau_min)
@@ -693,18 +716,6 @@ impl SimParams {
         if self.chemo.decay.is_empty() {
             return Err(ParamError("chemo needs at least one channel"));
         }
-        let cells = self
-            .chemo
-            .cells
-            .iter()
-            .try_fold(self.chemo.channels() as u64, |total, &axis| {
-                total.checked_mul(axis as u64)
-            });
-        if cells.is_none_or(|cells| cells > MAX_CHEMO_CELLS) {
-            return Err(ParamError(
-                "chemo grid times channels exceeds the cell ceiling",
-            ));
-        }
         if self.chemo.decay.iter().any(|d| !(0.0..=1.0).contains(d)) {
             return Err(ParamError("chemo.decay must be in [0, 1] per channel"));
         }
@@ -741,6 +752,7 @@ impl SimParams {
                 "metabolism costs must be finite and non-negative",
             ));
         }
+        StorageLayout::new(self)?;
         Ok(())
     }
 }
@@ -919,6 +931,35 @@ mod tests {
         }
 
         #[test]
+        fn the_entire_storage_policy_is_frozen() {
+            let cases: [Case; 12] = [
+                ("genes_per_slot", |p| p.storage.genes_per_slot += 1),
+                ("neurons_per_slot", |p| p.storage.neurons_per_slot += 1),
+                ("synapses_per_slot", |p| p.storage.synapses_per_slot += 1),
+                ("sensors_per_slot", |p| p.storage.sensors_per_slot += 1),
+                ("effectors_per_slot", |p| p.storage.effectors_per_slot += 1),
+                ("max_genes", |p| p.storage.max_genes += 1),
+                ("max_neurons", |p| p.storage.max_neurons += 1),
+                ("max_connections", |p| p.storage.max_connections += 1),
+                ("max_sensors", |p| p.storage.max_sensors += 1),
+                ("max_vision_rays", |p| p.storage.max_vision_rays += 1),
+                ("max_effectors", |p| p.storage.max_effectors += 1),
+                ("max_memory_bytes", |p| p.storage.max_memory_bytes += 1),
+            ];
+            for (name, change) in cases {
+                let (current, mut next) = pair();
+                change(&mut next);
+                next.validate()
+                    .expect("retuning, not validation, must reject the change");
+                assert_eq!(
+                    current.check_retune(&next, GRID_CELL).unwrap_err(),
+                    ParamError("storage is fixed for the life of a world"),
+                    "{name} was not frozen",
+                );
+            }
+        }
+
+        #[test]
         fn removing_a_chemo_channel_is_also_rejected() {
             let (mut current, _) = pair();
             current.chemo.decay.push(0.5);
@@ -929,10 +970,8 @@ mod tests {
 
         #[test]
         fn the_founding_topology_is_frozen() {
-            // These three set the founder's neuron and connection counts, which fix every
-            // arena's stride at construction. Changing one at runtime does nothing at all
-            // today, and a value that silently does nothing is the thing `set_params`
-            // exists to refuse.
+            // These counts size the founding template and fan-in scales. Changing them
+            // without rebuilding the plan would silently keep the previous topology.
             let cases: [Case; 3] = [
                 ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
                 ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
@@ -1025,6 +1064,27 @@ mod tests {
     fn misspelled_fields_are_an_error_not_a_silent_default() {
         let json = r#"{"metabolism":{"bass":0.2}}"#;
         assert!(serde_json::from_str::<SimParams>(json).is_err());
+    }
+
+    #[test]
+    fn partial_storage_configuration_defaults_but_unknown_fields_fail() {
+        let parsed: SimParams = serde_json::from_str(
+            r#"{"storage":{"genes_per_slot":300,"max_memory_bytes":120000000}}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.storage.genes_per_slot, 300);
+        assert_eq!(parsed.storage.max_memory_bytes, 120_000_000);
+        assert_eq!(
+            parsed.storage.neurons_per_slot,
+            StorageParams::default().neurons_per_slot
+        );
+        assert_eq!(
+            parsed.storage.max_connections,
+            StorageParams::default().max_connections
+        );
+        assert!(
+            serde_json::from_str::<SimParams>(r#"{"storage":{"gene_per_slot":300}}"#,).is_err()
+        );
     }
 
     #[test]

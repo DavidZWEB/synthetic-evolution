@@ -45,6 +45,9 @@ pub(crate) struct FounderCounts {
     pub sensor_channels: u32,
     pub neurons: u32,
     pub genes: u32,
+    pub sensors: u32,
+    pub synapses: u32,
+    pub effectors: u32,
 }
 
 /// The fixed topology, with its innovation ids assigned once per world.
@@ -86,6 +89,9 @@ impl FounderPlan {
             sensor_channels: u32::try_from(sensor_channels).ok()?,
             neurons: u32::try_from(neurons).ok()?,
             genes: u32::try_from(genes).ok()?,
+            sensors: u32::try_from(rays + BASE_SENSORS.len() as u64).ok()?,
+            synapses: u32::try_from(connections).ok()?,
+            effectors: EFFECTORS.len() as u32,
         })
     }
 
@@ -254,7 +260,7 @@ impl FounderPlan {
     pub fn instantiate(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
         debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
         out.copy_from_slice(&self.genes);
-        self.randomize_scalars(rng, params, out, true);
+        self.randomize_scalars(rng, params, out, true, None);
         debug_assert!(genome::validate(out).is_ok(), "founder is not coherent");
     }
 
@@ -262,11 +268,25 @@ impl FounderPlan {
     ///
     /// Used by the random-brain control at birth. It breaks neural heredity without
     /// changing sensors, body traits, topology, parameters, or the world's economy.
-    pub(crate) fn randomize_brain(&self, rng: &mut Rng, params: &SimParams, out: &mut [Gene]) {
-        // Phase 1 has one fixed topology, so connection order matches `fan_in_scale`.
-        // Structural operators arriving in Phase 2 must replace this positional lookup.
-        debug_assert_eq!(out.len(), self.genes.len(), "destination is the wrong size");
-        self.randomize_scalars(rng, params, out, false);
+    pub(crate) fn randomize_brain(
+        &self,
+        rng: &mut Rng,
+        params: &SimParams,
+        out: &mut [Gene],
+        fan_in: &mut [u32],
+    ) {
+        let neurons = genome::neuron_count(out);
+        let fan_in = &mut fan_in[..neurons];
+        fan_in.fill(0);
+        for gene in out.iter() {
+            if let Gene::Connection(connection) = gene
+                && connection.enabled
+            {
+                let target = genome::neuron_index(out, connection.to).expect("validated endpoint");
+                fan_in[target] += 1;
+            }
+        }
+        self.randomize_scalars(rng, params, out, false, Some(fan_in));
         debug_assert!(
             genome::validate(out).is_ok(),
             "randomized brain is incoherent"
@@ -279,24 +299,36 @@ impl FounderPlan {
         params: &SimParams,
         out: &mut [Gene],
         include_non_neural: bool,
+        fan_in: Option<&[u32]>,
     ) {
         let brain = &params.brain;
-        let mut connection = 0usize;
-        for gene in out.iter_mut() {
-            match gene {
-                Gene::Neuron(n) => {
-                    n.bias = rng.range(-1.0, 1.0);
-                    n.tau = rng.range(brain.tau_min, brain.tau_max);
-                    if n.activation == Activation::Oscillator {
-                        n.period =
-                            rng.range(brain.oscillator_period_min, brain.oscillator_period_max);
-                    }
+        let count = genome::neuron_count(out);
+        let (neurons, rest) = out.split_at_mut(count);
+        for gene in neurons.iter_mut() {
+            if let Gene::Neuron(n) = gene {
+                n.bias = rng.range(-1.0, 1.0);
+                n.tau = rng.range(brain.tau_min, brain.tau_max);
+                if n.activation == Activation::Oscillator {
+                    n.period = rng.range(brain.oscillator_period_min, brain.oscillator_period_max);
                 }
+            }
+        }
+        let mut connection = 0usize;
+        for gene in rest.iter_mut() {
+            match gene {
+                Gene::Neuron(_) => unreachable!("neurons are the leading gene run"),
                 Gene::Connection(c) => {
                     // Scaled by fan-in, not drawn from `weight_limit`: at 24 inputs per
                     // neuron the full bound saturates every sigmoid on tick one and the
                     // brain never responds to a sensor again.
-                    let scale = brain.weight_init_scale * self.fan_in_scale[connection];
+                    let normalized = if let Some(fan_in) = fan_in {
+                        let target =
+                            genome::neuron_index(neurons, c.to).expect("validated endpoint");
+                        1.0 / math::sqrt(fan_in[target].max(1) as f32)
+                    } else {
+                        self.fan_in_scale[connection]
+                    };
+                    let scale = brain.weight_init_scale * normalized;
                     connection += 1;
                     c.weight = rng.range(-scale, scale);
                 }
@@ -342,11 +374,9 @@ impl FounderPlan {
                 Gene::Effector(_) => {}
             }
         }
-        debug_assert_eq!(
-            connection,
-            self.fan_in_scale.len(),
-            "fan-in scales are out of step with the connection genes"
-        );
+        if fan_in.is_none() {
+            debug_assert_eq!(connection, self.fan_in_scale.len());
+        }
     }
 }
 
@@ -405,6 +435,8 @@ mod tests {
     fn checked_counts_match_constructed_topologies() {
         for (rays, hidden, oscillators) in [(0, 0, 0), (1, 3, 0), (3, 6, 2), (12, 32, 4)] {
             let mut params = SimParams::default();
+            params.storage.max_genes = 4_096;
+            params.storage.max_connections = 4_096;
             params.sensing.vision_rays = rays;
             params.brain.hidden_neurons = hidden;
             params.brain.oscillators = oscillators;
@@ -587,7 +619,8 @@ mod tests {
         let plan = plan(&params);
         let mut genes = instantiate(&plan, &params, 42);
         let before = genes.clone();
-        plan.randomize_brain(&mut Rng::from_seed(99), &params, &mut genes);
+        let mut fan_in = vec![0; params.storage.max_neurons as usize];
+        plan.randomize_brain(&mut Rng::from_seed(99), &params, &mut genes, &mut fan_in);
 
         let mut neural_change = false;
         for (before, after) in before.iter().zip(&genes) {
@@ -612,6 +645,38 @@ mod tests {
                 && s.modality == Modality::VisionRay
             {
                 assert_eq!(s.params[1], 0.0, "elevation varied");
+            }
+        }
+    }
+
+    #[test]
+    fn dynamic_control_fan_in_preserves_fixed_topology_values_and_rng() {
+        let params = SimParams::default();
+        let plan = plan(&params);
+        let mut cached = instantiate(&plan, &params, 3);
+        let mut dynamic = cached.clone();
+        let mut a = Rng::from_seed(77);
+        let mut b = Rng::from_seed(77);
+        plan.randomize_scalars(&mut a, &params, &mut cached, false, None);
+        let mut fan_in = vec![0; params.storage.max_neurons as usize];
+        plan.randomize_brain(&mut b, &params, &mut dynamic, &mut fan_in);
+        assert_eq!(dynamic, cached);
+        assert_eq!(a.state_fingerprint(), b.state_fingerprint());
+    }
+
+    #[test]
+    fn control_randomizes_a_different_topology_without_changing_non_neural_genes() {
+        let params = SimParams::default();
+        let plan = plan(&params);
+        let mut genes = genome::fixtures::tiny();
+        let original = genes.clone();
+        let mut fan_in = vec![0; params.storage.max_neurons as usize];
+        plan.randomize_brain(&mut Rng::from_seed(11), &params, &mut genes, &mut fan_in);
+        assert!(genome::validate(&genes).is_ok());
+        assert_ne!(genes, original);
+        for (before, after) in original.iter().zip(&genes) {
+            if !matches!(before, Gene::Neuron(_) | Gene::Connection(_)) {
+                assert_eq!(before, after);
             }
         }
     }

@@ -11,10 +11,11 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 use sim_core::genome::Gene;
 use sim_core::params::SimParams;
+use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -83,6 +84,10 @@ pub struct WorldMetrics {
     /// Owned energy below the corresponding visible `f32` value's resolution.
     pub energy_rounding_reserve: f64,
     pub energy_drift: f64,
+    /// Current element usage, sampled outside the tick; not a memory/RSS estimate.
+    pub arena_usage: Vec<ArenaUsage>,
+    /// Cumulative shell observations, or unavailable when stepping was not observed.
+    pub spawn_failures: Option<SpawnFailureCounts>,
 }
 
 #[derive(Default)]
@@ -129,13 +134,20 @@ impl Accumulator {
 pub fn sample_pair(
     evolving: &World,
     random_control: &World,
+    spawn_failures: Option<[SpawnFailureCounts; 2]>,
     include_state_hashes: bool,
 ) -> Result<RunSample> {
     debug_assert_eq!(evolving.tick_count(), random_control.tick_count());
+    let mut evolving_metrics = sample_world(evolving)?;
+    let mut control_metrics = sample_world(random_control)?;
+    if let Some([evolving, control]) = spawn_failures {
+        evolving_metrics.spawn_failures = Some(evolving);
+        control_metrics.spawn_failures = Some(control);
+    }
     Ok(RunSample {
         tick: evolving.tick_count(),
-        evolving: sample_world(evolving)?,
-        random_control: sample_world(random_control)?,
+        evolving: evolving_metrics,
+        random_control: control_metrics,
         final_state_hashes: include_state_hashes.then(|| StateHashes {
             evolving: format!("{:016x}", evolving.state_hash()),
             random_control: format!("{:016x}", random_control.state_hash()),
@@ -206,6 +218,8 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         cumulative_dissipation,
         energy_rounding_reserve,
         energy_drift,
+        arena_usage: world.storage_usage().to_vec(),
+        spawn_failures: None,
     })
 }
 
@@ -241,6 +255,8 @@ mod tests {
         assert_eq!(metrics.speed, Summary::default());
         assert!(metrics.plant_energy > 0.0);
         assert_eq!(metrics.energy_rounding_reserve, 0.0);
+        assert_eq!(metrics.arena_usage, world.storage_usage());
+        assert_eq!(metrics.spawn_failures, None);
     }
 
     #[test]
@@ -273,13 +289,43 @@ mod tests {
         assert_eq!(evolving.seed_founders(4), 4);
         assert_eq!(control.seed_founders(4), 4);
 
-        let sample = sample_pair(&evolving, &control, true).expect("samples");
+        let sample = sample_pair(&evolving, &control, None, true).expect("samples");
         assert_eq!(sample.evolving, sample.random_control);
         assert_eq!(
             sample.final_state_hashes.as_ref().unwrap().evolving,
             sample.final_state_hashes.as_ref().unwrap().random_control,
             "same-seed founders should begin in the same state"
         );
+    }
+
+    #[test]
+    fn paired_observations_preserve_cohort_identity_and_unavailable_counts() {
+        let params: SimParams =
+            serde_json::from_str(r#"{"world":{"max_agents":2},"plants":{"max_plants":1}}"#)
+                .unwrap();
+        let evolving = World::new(1, params.clone()).unwrap();
+        let control = World::new(1, params).unwrap();
+        let counts = [
+            SpawnFailureCounts {
+                arena_capacity: 3,
+                ..Default::default()
+            },
+            SpawnFailureCounts {
+                arena_fragmentation: 7,
+                ..Default::default()
+            },
+        ];
+        let sample = sample_pair(&evolving, &control, Some(counts), false).unwrap();
+        assert_eq!(sample.evolving.spawn_failures, Some(counts[0]));
+        assert_eq!(sample.random_control.spawn_failures, Some(counts[1]));
+        let unobserved = sample_pair(&evolving, &control, None, false).unwrap();
+        let json = serde_json::to_value(unobserved).unwrap();
+        for cohort in ["evolving", "random_control"] {
+            assert_eq!(
+                json[cohort].get("spawn_failures"),
+                Some(&serde_json::Value::Null)
+            );
+        }
     }
 
     #[test]

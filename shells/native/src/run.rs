@@ -5,6 +5,7 @@ use std::io::{self, BufWriter, Write};
 
 use sim_core::control::BrainInheritance;
 use sim_core::params::SimParams;
+use sim_core::spawn::SpawnFailureCounts;
 use sim_core::world::World;
 
 use crate::Result;
@@ -41,26 +42,48 @@ pub fn run(args: RunArgs) -> Result<()> {
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
         World::new_with_brain_inheritance(args.seed, params, BrainInheritance::RandomizedAtBirth)?;
-    seed(&mut evolving, args.founders)?;
-    seed(&mut random_control, args.founders)?;
+    let mut spawn_failures = args
+        .metrics
+        .as_ref()
+        .map(|_| [SpawnFailureCounts::default(); 2]);
+    seed(
+        &mut evolving,
+        args.founders,
+        spawn_failures.as_mut().map(|counts| &mut counts[0]),
+    )?;
+    seed(
+        &mut random_control,
+        args.founders,
+        spawn_failures.as_mut().map(|counts| &mut counts[1]),
+    )?;
 
     let mut output = args.metrics.as_deref().map(metrics_writer).transpose()?;
     let mut final_sample = None;
     if let Some(output) = output.as_mut() {
         write_record(output, &MetricsRecord::Header(header))?;
-        let sample = sample_pair(&evolving, &random_control, args.ticks == 0)?;
+        let sample = sample_pair(&evolving, &random_control, spawn_failures, args.ticks == 0)?;
         write_record(output, &MetricsRecord::Sample(sample.clone()))?;
         final_sample = Some(sample);
     }
 
     for _ in 0..args.ticks {
-        evolving.step();
-        random_control.step();
+        if let Some([evolving_counts, control_counts]) = spawn_failures.as_mut() {
+            evolving.step_with_spawn_observer(|error| evolving_counts.record(error));
+            random_control.step_with_spawn_observer(|error| control_counts.record(error));
+        } else {
+            evolving.step();
+            random_control.step();
+        }
         let tick = evolving.tick_count();
         if (tick % args.sample_every == 0 || tick == args.ticks)
             && let Some(output) = output.as_mut()
         {
-            let sample = sample_pair(&evolving, &random_control, tick == args.ticks)?;
+            let sample = sample_pair(
+                &evolving,
+                &random_control,
+                spawn_failures,
+                tick == args.ticks,
+            )?;
             write_record(output, &MetricsRecord::Sample(sample.clone()))?;
             final_sample = Some(sample);
         }
@@ -69,8 +92,10 @@ pub fn run(args: RunArgs) -> Result<()> {
     if let Some(output) = output.as_mut() {
         output.flush()?;
     }
-    let final_sample =
-        final_sample.map_or_else(|| sample_pair(&evolving, &random_control, true), Ok)?;
+    let final_sample = final_sample.map_or_else(
+        || sample_pair(&evolving, &random_control, spawn_failures, true),
+        Ok,
+    )?;
     let hashes = final_sample
         .final_state_hashes
         .as_ref()
@@ -101,12 +126,23 @@ fn load_params(path: Option<&std::path::Path>) -> Result<SimParams> {
     }
 }
 
-fn seed(world: &mut World, founders: u32) -> Result<()> {
-    let placed = world.seed_founders(founders);
+fn seed(world: &mut World, founders: u32, counts: Option<&mut SpawnFailureCounts>) -> Result<()> {
+    let mut refusal = None;
+    let placed = if let Some(counts) = counts {
+        world.seed_founders_with_observer(founders, |error| {
+            counts.record(error);
+            refusal = Some(error);
+        })
+    } else {
+        world.seed_founders(founders)
+    };
     if placed != founders {
+        let detail = refusal.map_or_else(String::new, |error| format!(": {error}"));
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("requested {founders} founders but world capacity allowed only {placed}"),
+            format!(
+                "requested {founders} founders but world capacity allowed only {placed}{detail}"
+            ),
         )
         .into());
     }

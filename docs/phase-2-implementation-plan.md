@@ -5,8 +5,8 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: implementation started with the approved M1 allocator foundation.**
-`World` integration, concrete memory budgets, and the remaining M0 choices are still
+**Status: M1 world-storage integration is in progress under the approved budget policy.**
+The remaining M0 mutation, distance, control-protocol, and lineage choices are still
 pending. The agreed scope includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
 choices in M0 remain proposals, not additions to the normative spec.
@@ -20,8 +20,8 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | allocator approved; budgets and other contracts open |
-| M1 Variable-length storage | Bounded arenas and transactional birth storage | M0 allocator approval; budgets before world integration | in progress: allocator foundation; world integration pending |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 allocator/budget policy approved; other contracts open |
+| M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | in progress: pooled world storage and diagnostics |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; M0 mutation/control decisions | not started |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
@@ -100,11 +100,11 @@ stable, with no compaction, relocation, or backing-buffer growth in the tick. Si
 allocator metadata for the maximum simultaneous blocks; it must not allocate either.
 Keep fixed-size parts storage simple.
 
-The approved first M1 slice adds `arena::VariableArena` and its coverage without
+The first M1 slice added `arena::VariableArena` and its coverage without
 replacing `World`'s existing fixed-stride arenas or changing defaults. Its fallible
 constructor bounds both data and metadata buffers; allocation reports block-limit,
-total-space, and fragmentation failures explicitly. World integration is the next
-slice, after the budgets below are approved.
+total-space, and fragmentation failures explicitly. The next slice integrates it
+under the now-approved policy below.
 
 Separate per-genome limits from aggregate arena capacity. Both are runtime config:
 maximum genes, neurons, connections, sensors/rays, and total storage budgets. Derive
@@ -112,26 +112,38 @@ scratch and compiled-buffer requirements with checked arithmetic. Validate the
 whole eager core footprint, not only one gene array, and account separately for
 shell snapshots/transports and paired evolving/control worlds when selecting a
 profile. A configured ceiling is not a guarantee that the host has that much free
-memory. Concrete web/native budgets need measured footprints before approval.
+memory.
+
+**Approved starting values:** pooled allowances per agent-pool slot are 284 genes,
+28 neurons, 240 synapses, 5 sensors, and 4 effectors, independently of the founder
+template. Individual caps are 1,024 genes, 128 neurons, 1,024 connections including
+disabled ones, 32 sensors/rays, and 4 effectors. These caps do not reserve that much
+storage for every organism. `storage.max_memory_bytes` defaults to 96 MiB of
+core-construction requests per world; larger native configurations explicitly raise
+it. All storage fields are construction-time runtime config.
 
 The pre-integration native baseline at `00988c1`, using the existing `footprint`
 test's allocation tally, requested 77,869,988 bytes (74.3 MiB) while constructing the
 default 5,000-slot world, and 31,330,984 bytes (29.9 MiB) at 2,000 slots. These are
 cumulative construction requests, including temporary allocations, not retained
 heap, process RSS, or whole-browser memory. The existing 96 MiB test ceiling remains
-a regression alarm, not approval of a runtime budget.
+a regression alarm; the separate runtime budget above has now been explicitly
+approved using this baseline, not inferred from the test ceiling.
 
 An operator that would exceed a per-genome limit should be declined atomically;
 it must not leave half a split connection or half a sensor. If the completed child
 cannot claim all its arena blocks, refuse the birth without charging its parent.
-Release every partial claim. Specify RNG/innovation consumption on failed attempts
-so identical failures replay identically.
+Release every partial claim before claiming a slot identity. Failed claims preserve
+pool order and incarnations as well as live arena contents. Preparation draws for an
+attempted birth/founder remain consumed, matching the previous pipeline; a failed
+birth never transfers energy. Seeding stops at its first storage refusal and reports
+partial placement. This slice introduces no new innovation assignments; D2 still
+owns structural mutation's ID policy.
 
 First-fit can fail from fragmentation even when total free space is sufficient.
 Expose declined operators, refused births, capacity use, and fragmentation through
-opt-in diagnostics. This allocator outcome is approved; concrete world resource
-pressure remains part of budget/integration approval. Never silently drop genes or
-mint energy to conceal it.
+opt-in diagnostics. This allocator outcome and the conservative budget policy are
+approved. Never silently drop genes or mint energy to conceal pressure.
 
 ### D2 - Structural mutation semantics
 
@@ -199,8 +211,10 @@ without it, but they cannot establish useful structural adaptation or complete M
 evidence. A missing or inconclusive comparison is not a pass based on human
 impressions alone; human judgment remains necessary once the evidence is available.
 
-Replace founder-position-dependent randomization before enabling structural
-mutation. Version the control protocol in telemetry rather than silently changing
+The M1 integration replaces founder-position-dependent scalar randomization so
+variable-sized control offspring are already safe, without changing fixed-topology
+values or RNG draws. M2 still owns the structural mutation/control semantics.
+Version the control protocol in telemetry rather than silently changing
 the interpretation of Phase 1's `randomized_at_birth` records.
 
 ### D4 - Genetic distance over typed genes
@@ -282,7 +296,7 @@ and pruning must not change simulation RNG or trajectories.
 backend with the existing `Block` handle. Differential tests compare it with an
 elementwise occupancy model, and allocation-counting covers reuse, coalescing, all
 refusal kinds, and reset without invoking an allocating element default. The old
-`Arena` and all `World` callers remain unchanged. This does not complete M1.
+`Arena` and all `World` callers remained unchanged in that first slice.
 
 Implement D1 in `arena`, then integrate genome, neuron, synapse, and sensor arenas,
 scratch sizing, and the spawn/despawn lifecycle in `world`. Audit effectors even

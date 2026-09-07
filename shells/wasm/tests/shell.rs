@@ -24,6 +24,11 @@ fn layout(sim: &Sim) -> serde_json::Value {
     serde_json::from_str(&sim.snapshot_layout().expect("layout serializes")).expect("valid JSON")
 }
 
+fn storage(sim: &Sim) -> serde_json::Value {
+    serde_json::from_str(&sim.storage_diagnostics().expect("diagnostics serialize"))
+        .expect("valid JSON")
+}
+
 #[wasm_bindgen_test]
 fn a_new_sim_starts_empty_at_tick_zero() {
     let sim = Sim::new(7, None).expect("defaults are valid");
@@ -92,6 +97,96 @@ fn stepping_advances_the_tick_and_the_snapshot() {
 }
 
 #[wasm_bindgen_test]
+fn storage_diagnostics_are_on_demand_cumulative_and_per_world() {
+    let params = r#"{"world":{"max_agents":2}}"#.to_owned();
+    let mut sim = Sim::new(7, Some(params.clone())).expect("valid params");
+    let control = random_control(7, Some(params)).expect("valid params");
+    let empty = storage(&sim);
+    let arenas = empty["arena_usage"].as_array().expect("arena usage");
+    assert_eq!(arenas.len(), 5);
+    for (arena, name) in arenas
+        .iter()
+        .zip(["Genes", "Neurons", "Synapses", "Sensors", "Effectors"])
+    {
+        assert_eq!(arena["arena"], name);
+        assert_eq!(arena["free_elements"], arena["capacity"]);
+        assert_eq!(arena["largest_free_block"], arena["capacity"]);
+        assert_eq!(arena["live_blocks"], 0);
+    }
+    assert_eq!(sim.seed_founders(100), 2);
+    assert_eq!(
+        storage(&sim)["spawn_failures"]["pool_full"],
+        0,
+        "clamped requests are not attempted refusals"
+    );
+    for arena in storage(&sim)["arena_usage"].as_array().unwrap() {
+        assert_eq!(arena["live_blocks"], 2);
+    }
+    sim.push_command(
+        r#"{"apply_at_tick":0,"kind":{"SpawnFounder":{"position":[500.0,500.0,0.0]}}}"#,
+    )
+    .unwrap();
+    sim.step_many(1);
+    let observed = storage(&sim);
+    assert_eq!(observed["spawn_failures"]["pool_full"], 1);
+    assert_eq!(storage(&control)["spawn_failures"]["pool_full"], 0);
+    let hash = sim.state_hash();
+    sim.step_many(0);
+    assert_eq!(storage(&sim), observed);
+    assert_eq!(sim.state_hash(), hash, "sampling changed simulation state");
+}
+
+#[wasm_bindgen_test]
+fn construction_rejects_low_budgets_and_overflow_without_fallback() {
+    let canonical: serde_json::Value =
+        serde_json::from_str(&validate_params(None).unwrap()).unwrap();
+    assert_eq!(canonical["storage"]["max_memory_bytes"], 96 * 1024 * 1024);
+    for params in [
+        r#"{"storage":{"max_memory_bytes":1}}"#,
+        r#"{"world":{"max_agents":4294967295},"storage":{"max_memory_bytes":18446744073709551615}}"#,
+    ] {
+        let validation = validate_params(Some(params.into())).expect_err("unsafe layout accepted");
+        let message = format!("{:?}", wasm_bindgen::JsValue::from(validation));
+        assert!(!message.contains("unknown field"), "{message}");
+        assert!(message.contains("invalid"), "{message}");
+        assert!(Sim::new(7, Some(params.into())).is_err());
+        assert!(random_control(7, Some(params.into())).is_err());
+    }
+}
+
+#[wasm_bindgen_test]
+fn arena_refusals_observe_seeding_and_natural_births_without_hiding_undersupply() {
+    let params = r#"{
+        "world":{"size":100.0,"max_agents":2},
+        "storage":{"genes_per_slot":142},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0},
+        "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
+        "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
+        "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},
+        "metabolism":{"base":0.0,"k_size":0.0,"k_brain":0.0,"k_sensor":0.0,"k_move":0.0}
+    }"#;
+    let mut sim = Sim::new(7, Some(params.into())).expect("one founder fits");
+    assert_eq!(sim.seed_founders(2), 1, "undersupply must remain visible");
+    let seeded = storage(&sim);
+    assert_eq!(seeded["spawn_failures"]["arena_capacity"], 1);
+    assert_eq!(seeded["spawn_failures"]["pool_full"], 0);
+    assert_eq!(seeded["arena_usage"][0]["capacity"], 284);
+    assert_eq!(seeded["arena_usage"][0]["free_elements"], 0);
+    assert_eq!(seeded["arena_usage"][0]["live_blocks"], 1);
+    sim.step_many(2);
+    let stepped = storage(&sim);
+    assert!(
+        stepped["spawn_failures"]["arena_capacity"]
+            .as_u64()
+            .unwrap()
+            > 1
+    );
+    assert_eq!(sim.population(), 1);
+    assert_eq!(sim.descendants(), 0);
+    assert_eq!(layout(&sim)["population"], 1);
+}
+
+#[wasm_bindgen_test]
 fn the_snapshot_spans_describe_the_buffer_they_claim_to() {
     let sim = sim(8);
     let l = layout(&sim);
@@ -149,6 +244,11 @@ fn retuning_goes_through_but_resizing_does_not() {
     );
     resized["world"]["max_agents"] = serde_json::json!(99_999);
     assert!(sim.set_params(&resized.to_string()).is_err());
+
+    let mut storage_retune = params;
+    storage_retune["storage"]["max_memory_bytes"] = serde_json::json!(128 * 1024 * 1024);
+    validate_params(Some(storage_retune.to_string())).expect("valid construction budget");
+    assert!(sim.set_params(&storage_retune.to_string()).is_err());
 }
 
 #[wasm_bindgen_test]

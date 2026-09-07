@@ -38,6 +38,7 @@ use crate::movement;
 use crate::mutate;
 use crate::perceive::{self, SelfView, WorldView};
 use crate::reproduction;
+use crate::spawn::SpawnError;
 use crate::world::World;
 
 impl World {
@@ -51,8 +52,13 @@ impl World {
     /// enters the world (spec §5.1), and its scent deposit is the "deposit" half of
     /// step 8, so it has to land before the diffuse and decay that follow it.
     pub fn step(&mut self) {
+        self.step_with_spawn_observer(|_| {});
+    }
+
+    /// Opt-in observation; the ordinary step monomorphizes away the no-op callback.
+    pub fn step_with_spawn_observer(&mut self, mut on_refusal: impl FnMut(SpawnError)) {
         // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
-        self.apply_commands();
+        self.apply_commands_with_observer(&mut on_refusal);
         self.rebuild_spatial_hash(); // 1
         self.perceive_all(); // 2
         self.step_brains(); // 3
@@ -63,7 +69,7 @@ impl World {
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
         self.resolve_deaths(); // 10
-        self.resolve_births(); // 10
+        self.resolve_births_with_observer(&mut on_refusal); // 10
         self.advance_tick(); // 11
     }
 
@@ -321,6 +327,13 @@ impl World {
     /// Agent-index order. Births hand out pool slots, so any other order would put the
     /// same population in different slots and every later tick would diverge.
     pub fn resolve_births(&mut self) -> usize {
+        self.resolve_births_with_observer(|_| {})
+    }
+
+    pub fn resolve_births_with_observer(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+    ) -> usize {
         self.note_breeders();
         let breeding = core::mem::take(&mut self.breeding);
         let mut born = 0;
@@ -343,8 +356,12 @@ impl World {
                     mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
                 }
                 BrainInheritance::RandomizedAtBirth => {
-                    self.plan
-                        .randomize_brain(&mut self.rng, &self.params, &mut scratch);
+                    self.plan.randomize_brain(
+                        &mut self.rng,
+                        &self.params,
+                        &mut scratch,
+                        &mut self.brain_fan_in_scratch,
+                    );
                 }
             }
 
@@ -370,10 +387,10 @@ impl World {
                 ),
                 parent_a: parent,
             };
-            let spawned = self.spawn(&spec, &scratch);
+            let spawned = self.spawn_validated(&spec, &scratch);
             self.genome_scratch = scratch;
 
-            if let Some(child) = spawned {
+            if let Ok(child) = spawned {
                 // Only now. A refused birth leaves the parent whole. The shared
                 // rounding reserve keeps both f32 endpoints conservative (spec §5.1).
                 let mut parent_energy = self.agents.energy[p];
@@ -400,6 +417,8 @@ impl World {
                 self.agents.energy[c] = child_energy;
                 self.agents.energy_reserve[c] = child_reserve;
                 born += 1;
+            } else if let Err(error) = spawned {
+                on_refusal(error);
             }
         }
 

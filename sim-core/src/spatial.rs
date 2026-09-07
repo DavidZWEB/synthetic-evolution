@@ -129,9 +129,13 @@ impl SpatialHash {
         debug_assert!(world_size > 0.0, "world must have extent");
         debug_assert!(min_cell_size > 0.0, "cells must have extent");
         let per_axis = ((world_size / min_cell_size) as u32).max(1);
-        // `SimParams::validate` bounds this for any world built from params, but this
-        // constructor is public and the cell array is quadratic in the result.
-        debug_assert!(per_axis <= 4_096, "grid of {per_axis}² cells is a runaway");
+        // World construction budgets this separately; the standalone constructor
+        // still requires a representable cell-start buffer on WASM32 (spec section 2.2a).
+        debug_assert!(
+            (u64::from(per_axis) * u64::from(per_axis) + 1)
+                <= i32::MAX as u64 / size_of::<u32>() as u64,
+            "grid cell-start buffer exceeds the portable byte ceiling"
+        );
         let dims = [per_axis, per_axis, 1];
         let cell_xy = world_size / per_axis as f32;
         let cells = cell_count(dims);
@@ -324,6 +328,13 @@ mod tests {
     use proptest::prelude::*;
 
     const WORLD: f32 = 100.0;
+
+    #[test]
+    fn representable_grids_are_not_rejected_by_the_old_static_ceiling() {
+        let hash = SpatialHash::new(4_097.0, 1.0, 0);
+        assert_eq!(hash.dims, [4_097, 4_097, 1]);
+        assert_eq!(hash.cell_size(), 1.0);
+    }
 
     fn grid(min_cell: f32, capacity: u32) -> SpatialHash {
         SpatialHash::new(WORLD, min_cell, capacity)

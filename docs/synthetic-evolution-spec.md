@@ -98,9 +98,32 @@ metadata byte bounds and propagates host reservation failure.
 
 Fragmentation can refuse a request despite sufficient total free space; diagnostics
 must expose that outcome rather than silently growing or dropping genome data.
-The allocator foundation lands independently of `World` integration. Concrete
-world/arena budgets and their birth-pressure implications remain a separate decision
-before replacing Phase 1's fixed-stride world storage.
+**DECIDED: the initial world-storage policy is conservative and configurable.**
+`SimParams.storage` gives pooled allowances of 284 genes, 28 neurons, 240 synapses,
+5 sensors, and 4 effectors per agent-pool slot. These multiply `max_agents` to size
+shared arenas; they are not per-organism strides and do not depend on founder
+composition. The per-genome limits are 1,024 genes, 128 neurons, 1,024 connections
+(including disabled ones), 32 sensors, 32 vision rays, and 4 effectors.
+
+The default core-construction budget is 96 MiB per world. Checked layout accounting
+must bound construction requests for arenas, metadata, templates, scratch, pools,
+fields, and spatial indices before constructing the world. Larger configurations
+must explicitly raise the budget; never lower population or expand storage silently.
+This is not a host-RAM guarantee: shell snapshots/transports, allocator/OS overhead,
+and a second control world are additional. Storage configuration is fixed for a
+world's lifetime, because changing it would require rebuilding reserved buffers.
+
+A spawn claims every constituent arena before claiming a pool identity. Refusal
+unwinds prior claims without changing live data, free-span bookkeeping, pool order,
+or incarnations. A refused birth leaves parent energy untouched. Random draws used
+to prepare an attempted birth/founder remain consumed; no RNG rewind or retry is
+introduced. Seeding stops at the first storage refusal and reports the placed count.
+This storage work introduces no new structural mutations or innovation-ID policy.
+
+Refusals are explicit results at spawn boundaries and optional monomorphic callbacks
+for tick/command spawns. Shells can count them without allocating in a tick; ordinary
+headless stepping uses a no-op observer. Arena usage is sampled on demand. Observer
+counters do not affect simulation state or deterministic hashing.
 
 `energy` remains the compact, hot-path value. Every agent and plant also owns an
 `energyResidual`: compensated storage for a quantity below the current `Float32`
