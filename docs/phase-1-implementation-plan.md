@@ -1,9 +1,12 @@
 # Phase 1 — Implementation Plan
 
-Working breakdown of `phase-1-build-plan.md` into ordered milestones. The build plan lists
-*deliverables*; this lists *build order*. They differ because the golden hash — the highest-value
-test in the project (spec §7.8) — only becomes possible once the tick exists, so several earlier
-deliverables cannot be verified end-to-end until M8.
+**Phase 1 is complete.** This is the retained record of its build order, implementation
+decisions, and acceptance evidence. Current work is tracked in
+[`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
+
+The golden hash — the highest-value test in the project (spec §7.8) — only becomes
+possible once the tick exists, so several earlier deliverables could not be verified
+end-to-end until M8.
 
 Each milestone ends in a state that compiles and has a test proving it. Milestone numbers are
 referenced in commit messages.
@@ -28,7 +31,7 @@ referenced in commit messages.
 
 ## Cross-cutting rules for this phase
 
-- The forward-compatibility checklist in `phase-1-build-plan.md` is **not** a milestone. Each item
+- The [forward-compatibility checklist](#forward-compatibility-checklist) is **not** a milestone. Each item
   lands in the milestone that creates the struct it lives in, with a comment naming spec §9.1.
   The whole checklist is audited as one pass at M8.
 - The golden hash is not pinned until M8. M4–M8 all change behavior by construction. Every update
@@ -36,11 +39,30 @@ referenced in commit messages.
 - `sim-core` invariants (AGENTS.md) apply from M0. M0 ships a lint test for the two that fail
   silently: no I/O, no platform transcendentals, no `thread_rng`.
 
+## Forward-compatibility checklist
+
+These are the Phase 1 forms of the inexpensive hedges justified by spec §9.1 and
+§3.4. They were **audited at M8 and made executable**:
+[`sim-core/tests/forward_compat.rs`](../sim-core/tests/forward_compat.rs) holds the
+five that had nothing pinning them and names where the other six are tested.
+Later phases unlock their dormant capabilities; they are not to be removed as
+unused code.
+
+- [x] `positions`/`velocities` are `N*3`, z pinned to 0
+- [x] `orientation` is a quaternion `N*4`, constrained to yaw about Z — **not** a scalar heading
+- [x] `parentA` **and** `parentB` exist; `parentB` is `NULL_ID` always
+- [x] `partOffset`/`partCount` exist; every agent has exactly 1 part at the origin
+- [x] Sensor direction params are `(azimuth, elevation)` pairs; elevation clamped to 0, its mutation operator disabled
+- [x] Turn effector takes a rotation axis, pinned to Z
+- [x] Spatial hash is a triple-nested cell loop with Z range `[0,0]`
+- [x] Chemo field is a 3D grid with depth 1
+- [x] All world mutations go through a serde-serializable `Command` enum carrying `apply_at_tick`
+- [x] Innovation counter is a field on `World`, not a `static`
+- [x] Crossover function written and unit-tested, though nothing calls it
+
 ---
 
 ## M0 — Scaffold
-
-Build-plan task 1.
 
 - Cargo workspace: `sim-core`, `shells/native`, `shells/wasm`.
 - Dependencies pinned: `glam`, `rand` + `rand_pcg`, `serde` + `postcard`, `libm`. (`ts-rs`
@@ -66,8 +88,6 @@ Build-plan task 1.
 
 ## M2 — Pools and arenas
 
-Build-plan task 2.
-
 - SoA world arrays exactly per spec §2.2a, including the dead fields (`parentB`, `partOffset`,
   `partCount`).
 - Fixed capacity, free list.
@@ -82,8 +102,6 @@ Counting-allocator test harness lands here.
 **Done when:** spawn/despawn 10k agents in a loop with zero allocations after warmup.
 
 ## M3 — Spatial hash
-
-Build-plan task 3.
 
 - Uniform grid, cell size = max sensing radius, counting-sort rebuild.
 - Triple-nested neighbour loop with the Z range pinned to `[0,0]` (spec §2.3).
@@ -100,8 +118,6 @@ to tell apart from evolved anti-predator behaviour later. The choice is containe
 `spatial.rs` and the movement integrator, so it stays reversible.
 
 ## M4 — Genome, mutation, crossover
-
-Build-plan task 4, first half.
 
 - Typed-gene list per spec §3.1, serde. (`ts-rs` moved to M10: nothing consumes the
   generated TypeScript until the inspector exists, and derives with no consumer are
@@ -140,8 +156,6 @@ two coefficients apart so eyes can be made expensive without making brains expen
 counted by both. Their *values* are an M7 problem — see the budget note there.
 
 ## M5 — CTRNN
-
-Build-plan task 4, second half.
 
 - Euler integration, one step per tick, evaluated from previous activations.
 - Evolvable `tau`; always-present oscillator neurons with evolvable period.
@@ -198,8 +212,6 @@ baked-in timestep would silently ignore the new value. The reciprocals stored pe
 neuron — `inv_tau`, `inv_period` — are pure functions of the genome for the same reason.
 
 ## M6 — Sensors and effectors
-
-Build-plan task 5.
 
 - Perception (`perceive.rs`): `vision_ray` (spatial-hash raycast → distance + signature RGB),
   `chemo` (concentration + gradient), `interoception` (energy). Writes `sensorScratch`.
@@ -286,8 +298,6 @@ one makes a turn take effect immediately — otherwise a tick of sensing buys no
 steering always lags the thing it is steering at.
 
 ## M7 — World and economy
-
-Build-plan task 6.
 
 - Plants as simple non-brained entities.
 - Chemo field as a 3D grid of depth 1; per-channel deposit, diffuse, decay.
@@ -580,8 +590,6 @@ population starving to nothing, at carrying capacity, across both transfers, and
 
 ## M8 — The tick
 
-Build-plan task 7.
-
 - The 11 steps of spec §2.4, in that order. Intents buffered; births and deaths deferred to step 10
   and resolved in agent-index order.
 - `Command` enum, serde-serializable, carrying `apply_at_tick`, as the only route into the world.
@@ -600,7 +608,8 @@ wasm agree" cannot decay into each target agreeing with itself.
 visibility to write an `impl` across two files, so lifting the eleven steps out of
 `world.rs` meant opening its fields to sibling modules. Nothing outside `sim-core` gains
 anything — the shells and the integration tests still go through the accessors — and the
-alternative was leaving a 1194-line file that AGENTS.md calls a split at 500.
+alternative was leaving tick orchestration mixed with world construction and lifecycle
+in a 1194-line file.
 
 *The steps stay `pub` alongside `step()`.* `steering.rs` drives perception through
 movement without the economy on purpose, so that what it measures is the sensorimotor
@@ -651,8 +660,6 @@ install rather than a missing component. Now pinned in `rust-toolchain.toml`, wh
 `setup.sh` already reads.
 
 ## M9 — WASM shell and renderer
-
-Build-plan task 8.
 
 - WASM shell: `step_many`, snapshot pointer/length, `inspect_agent` → JSON, `set_params`,
   `push_command`. Agent pool pre-allocated at max capacity so WASM memory never grows and JS
@@ -773,8 +780,6 @@ anywhere, and nothing to grep for.
 
 ## M10 — Instrumentation
 
-Build-plan task 9.
-
 - Population and mean-energy time series, canvas or uPlot — never an SVG/DOM chart library.
 - Agent inspector: click an agent, see genome and live neuron activations, pulled on demand for the
   one selected agent (spec §2.2b).
@@ -807,8 +812,6 @@ yet. A target tick remains optional and unset until checkpoint/load support can 
 one practical.
 
 ## M11 — Headless telemetry
-
-Build-plan task 10.
 
 - `--metrics run.jsonl` on the native shell, one sample line per interval (spec §7.9).
 - `diagnose` subcommand mapping metric signatures to the spec §10 failure modes.

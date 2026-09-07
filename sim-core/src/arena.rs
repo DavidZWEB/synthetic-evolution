@@ -8,8 +8,8 @@
 //! Phase 1 has fixed brain topology, so every block is the same stride and allocation
 //! is a free-list pop. The handle carries `len` anyway, so Phase 2's variable-length
 //! genomes can change allocation without replacing each system's slice-based interface.
-//! [`VariableArena`] provides that allocator independently; `World` still uses the
-//! fixed-stride [`Arena`] until its storage budgets and integration are approved.
+//! `World` uses [`VariableArena`] for genomes and compiled brain/organ data, while
+//! the single-part-per-agent pool remains a fixed-stride [`Arena`].
 //!
 //! # This is where the simulation's memory is
 //!
@@ -26,7 +26,10 @@
 //! Arenas are allocated at `max_agents` and never grown, so the cost is committed at
 //! `World::new`: 73 MB at the default 5k agents, and ~730 MB at the Phase 7 target of
 //! 50k. Anything that changes gene count, gene size, or brain width moves that number
-//! by the whole pool, so it is worth knowing before adding a field. The chemo field is
+//! by the whole pool, so it is worth knowing before adding a field. Phase 2 sizes
+//! these pools by explicit storage allowances rather than current founder composition;
+//! changing a live genome's length consumes that reserved space, not another allocation.
+//! The chemo field is
 //! not in the table because it does not scale with the pool at all — it is 131 KB at
 //! the default grid however many agents there are, and neither do the plants, which are
 //! 68 KB at the default 4,000 sites.
@@ -37,8 +40,8 @@
 //! by gene class recovers about half of it and needs no new machinery. After that, a
 //! synapse could drop its `to` field by grouping the wiring by target neuron, which
 //! saves a further 0.9 KB per agent at the cost of a subtler compile step. Growth is
-//! otherwise cheap to add whenever it is wanted, because handles are indices: a `Vec`
-//! realloc leaves every existing handle valid. See spec §7.5.
+//! only available within the preallocated budgets; changing those budgets requires
+//! a new world rather than reallocating a live arena. See spec §2.2a and §7.5.
 //!
 //! Deliberately not here: what the elements mean. This module stores blocks.
 

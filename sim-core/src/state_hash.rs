@@ -16,10 +16,11 @@
 //! differently-placed plant, and the hash would call two different worlds equal — the
 //! one failure mode a golden test cannot survive.
 //!
-//! Deliberately not folded: arena handles. Where an agent's genome happens to sit is
-//! allocator bookkeeping, and folding it would make the hash report a difference for a
-//! world that behaves identically. What the handles point *at* is folded instead.
+//! Variable-arena placement is future-relevant: freeing a particular agent's block
+//! changes fragmentation and later birth success. Fold free spans and live handles,
+//! but not stale contents of free space or optional shell-owned observations.
 
+use crate::arena::VariableArena;
 use crate::command::Kind;
 use crate::genome::Gene;
 use crate::world::World;
@@ -141,6 +142,17 @@ fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
             h.byte(g.trait_ as u8);
             h.f32(g.value);
         }
+    }
+}
+
+fn fold_arena<T: Copy + Default>(h: &mut Fnv1a, arena: &VariableArena<T>) {
+    h.u32(arena.capacity());
+    h.u32(arena.live_blocks());
+    h.u32(arena.free_elements());
+    h.u32(arena.free_spans().len() as u32);
+    for block in arena.free_spans() {
+        h.u32(block.offset());
+        h.u32(block.len());
     }
 }
 
@@ -288,6 +300,27 @@ impl World {
             }
         }
 
+        // First-fit placement affects which later births fit, even when every live
+        // genome and every free-element count is identical (spec section 2.2a).
+        fold_arena(&mut h, &self.genes);
+        fold_arena(&mut h, &self.brains);
+        fold_arena(&mut h, &self.synapses);
+        fold_arena(&mut h, &self.sensors);
+        fold_arena(&mut h, &self.effectors);
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            for block in [
+                self.agents.genome[i],
+                self.agents.brain[i],
+                self.agents.synapses[i],
+                self.agents.sensors[i],
+                self.agents.effectors[i],
+            ] {
+                h.u32(block.offset());
+                h.u32(block.len());
+            }
+        }
+
         h.finish()
     }
 }
@@ -297,6 +330,67 @@ mod tests {
     use super::*;
     use crate::params::SimParams;
     use glam::Vec3;
+
+    #[test]
+    fn variable_capacity_is_future_relevant_even_in_an_empty_world() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        let a = World::new(42, params.clone()).unwrap();
+        params.storage.genes_per_slot += 1;
+        let b = World::new(42, params).unwrap();
+        assert_ne!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn live_genome_placement_is_hashed_even_when_contents_and_free_spans_match() {
+        let make = || {
+            let mut params = SimParams::default();
+            params.world.max_agents = 4;
+            let mut world = World::new(42, params).unwrap();
+            let spec = crate::SpawnSpec {
+                position: Vec3::ZERO,
+                yaw: 0.0,
+                energy: 0.0,
+                size: 1.0,
+                signature: Vec3::ONE,
+                parent_a: crate::AgentId::NULL,
+            };
+            for _ in 0..2 {
+                world
+                    .spawn(&spec, &crate::genome::fixtures::tiny())
+                    .unwrap();
+            }
+            world
+        };
+        let a = make();
+        let mut b = make();
+        assert_eq!(a.state_hash(), b.state_hash());
+        b.agents.genome.swap(0, 1);
+        assert_eq!(a.storage_usage(), b.storage_usage());
+        for id in a.pool.iter_live() {
+            assert_eq!(a.genome(id), b.genome(id));
+        }
+        assert_ne!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn free_space_payload_is_not_authoritative() {
+        let mut world = populated(42);
+        let before = world.state_hash();
+        let block = world.genes.alloc(1).unwrap();
+        assert_ne!(
+            world.state_hash(),
+            before,
+            "unreturned claims must be visible"
+        );
+        world.genes.get_mut(block)[0] = crate::genome::fixtures::tiny()[0];
+        world.genes.free(block);
+        assert_eq!(
+            world.state_hash(),
+            before,
+            "unused payload is reset before reuse"
+        );
+    }
 
     fn populated(seed: u64) -> World {
         let mut params = SimParams::default();

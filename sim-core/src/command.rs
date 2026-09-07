@@ -17,6 +17,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::spawn::SpawnError;
 use crate::world::World;
 
 /// One request, stamped with the tick it takes effect on.
@@ -37,9 +38,8 @@ pub struct Command {
 pub enum Kind {
     /// Place a founder at a position, as `World::spawn_founder` would.
     ///
-    /// Refused silently when the pool is full: at the population ceiling a spawn is a
-    /// normal failure rather than an error, and a command queue that could fail would
-    /// need a reply channel that nothing has asked for yet.
+    /// Refusals are reported to the step's optional spawn observer without changing
+    /// the command ordering or retrying it on a later tick.
     SpawnFounder { position: Vec3 },
 }
 
@@ -82,7 +82,12 @@ impl World {
     /// Extract the whole due set before applying any command, so it cannot enqueue
     /// another into its own tick. Extraction preserves both queues' order in one
     /// linear pass rather than shifting the pending tail after each removal.
+    #[cfg(test)]
     pub(crate) fn apply_commands(&mut self) {
+        self.apply_commands_with_observer(&mut |_| {});
+    }
+
+    pub(crate) fn apply_commands_with_observer(&mut self, on_refusal: &mut impl FnMut(SpawnError)) {
         if self.commands.is_empty() {
             return;
         }
@@ -96,7 +101,9 @@ impl World {
         for command in &due {
             match command.kind {
                 Kind::SpawnFounder { position } => {
-                    self.spawn_founder(position);
+                    if let Err(error) = self.spawn_founder(position) {
+                        on_refusal(error);
+                    }
                 }
             }
         }

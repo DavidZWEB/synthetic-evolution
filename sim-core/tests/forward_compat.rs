@@ -1,9 +1,8 @@
 //! The forward-compatibility checklist, made executable.
 //!
-//! `phase-1-build-plan.md` lists eleven hedges that cost almost nothing now and are
-//! expensive or impossible to retrofit, and ends with "do not remove any as unused
-//! code". That instruction is the whole problem: every one of them *is* unused code
-//! today. A `parentB` that is always `NULL`, a part count that is always 1, an elevation
+//! Spec §9.1 and §3.4 justify the hedges audited in the Phase 1 implementation plan's
+//! forward-compatibility checklist. Their Phase 1 forms can look like unused code:
+//! a `parentB` that is always `NULL`, a part count that is always 1, an elevation
 //! that is always 0 — each reads as something a careful person would tidy away, and the
 //! comment asking them not to is the only thing standing in the way.
 //!

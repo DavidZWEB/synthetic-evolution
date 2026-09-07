@@ -144,6 +144,70 @@ fn variable_arena_resets_by_copy_without_calling_default() {
 }
 
 #[test]
+fn variable_world_births_refusals_and_observers_never_allocate() {
+    use sim_core::genome::{Activation, Gene, NeuronGene};
+    use sim_core::spawn::SpawnFailureCounts;
+    use sim_core::{InnovationId, SpawnSpec};
+
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    let genes: Vec<_> = (0..96)
+        .map(|id| {
+            Gene::Neuron(NeuronGene {
+                id: InnovationId::new(id),
+                bias: 0.0,
+                tau: 1.0,
+                activation: Activation::Sigmoid,
+                period: 1.0,
+            })
+        })
+        .collect();
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+    ] {
+        let mut world = World::new_with_brain_inheritance(7, params.clone(), mode).unwrap();
+        let parent = world
+            .spawn(
+                &SpawnSpec {
+                    energy: 300.0,
+                    position: Vec3::ZERO,
+                    yaw: 0.0,
+                    size: 3.0,
+                    signature: Vec3::ONE,
+                    parent_a: AgentId::NULL,
+                },
+                &genes,
+            )
+            .unwrap();
+        let mut failures = SpawnFailureCounts::default();
+        let observed = count_allocations(|| {
+            for _ in 0..20 {
+                world.agents_mut().energy[parent.index()] = 300.0;
+                world.intents_mut().reproduce[parent.index()] = 1.0;
+                assert_eq!(
+                    world.resolve_births_with_observer(|error| failures.record(error)),
+                    1
+                );
+                world.agents_mut().energy[parent.index()] = 300.0;
+                assert_eq!(
+                    world.resolve_births_with_observer(|error| failures.record(error)),
+                    0
+                );
+                let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
+                world.despawn(child);
+                let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+                world.despawn(founder);
+            }
+        });
+        assert_eq!(observed, 0, "variable world lifecycle allocated");
+        assert!(failures.arena_capacity > 0);
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;
@@ -160,6 +224,7 @@ fn invalid_founder_params_do_not_allocate_a_plan() {
 fn spawn_and_despawn_never_allocate() {
     let mut params = SimParams::default();
     params.world.max_agents = 10_000;
+    params.storage.max_memory_bytes = 192 * 1_048_576;
     let mut world = World::new(42, params).expect("valid params");
 
     // Warmup: the first pass touches every free-list and arena path. Construction
@@ -351,7 +416,7 @@ fn a_full_pool_refuses_without_allocating() {
     }
     let observed = count_allocations(|| {
         for i in 0..10_000 {
-            assert!(world.spawn_founder(at(i)).is_none());
+            assert!(world.spawn_founder(at(i)).is_err());
         }
     });
     assert_eq!(observed, 0, "rejecting a birth allocated {observed} times");
