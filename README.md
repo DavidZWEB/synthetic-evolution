@@ -8,8 +8,10 @@ Rust simulation core compiled to WASM, Svelte + WebGL client.
 
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
 across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
-is next. The complete loop runs in WASM with live instrumentation; the native shell
-produces paired evolving/control telemetry and diagnoses known failure modes. The
+is being planned in [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md);
+implementation has not started. The complete loop runs in WASM with live
+instrumentation; the native shell produces paired evolving/control telemetry and
+diagnoses known failure modes. The
 remaining 5k-agent simulation-throughput limit is recorded separately from acceptance in
 [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
 
@@ -61,7 +63,8 @@ scripts/setup.sh one command to make a fresh machine work
 |---|---|
 | Understand the design | [docs/synthetic-evolution-spec.md](docs/synthetic-evolution-spec.md) §1–§2 |
 | Set up, add a dependency, or bump a toolchain | [docs/development.md](docs/development.md) |
-| Know what is being built right now | [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md) |
+| Review the next phase and its implementation status | [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md) |
+| Read Phase 1 milestones and acceptance evidence | [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md) |
 | Change code in `sim-core` | [AGENTS.md](AGENTS.md) — the five invariants, first |
 
 ## The short version of the rules

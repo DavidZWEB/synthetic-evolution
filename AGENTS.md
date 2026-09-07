@@ -11,8 +11,10 @@ For tooling, documentation, or UI-only changes, read only the relevant documenta
 Don't load the whole spec every session.
 
 **Setup, toolchains, and dependency rules:** `docs/development.md`. A fresh checkout is `./scripts/setup.sh`; `README.md` is the entry point for a human arriving at the repo.
-**Roadmap and current status:** `docs/phase-1-implementation-plan.md` is authoritative;
-don't infer milestone status from this file.
+**Roadmap and current status:** `docs/phase-2-implementation-plan.md` tracks the current
+planning work; `docs/phase-1-implementation-plan.md` retains Phase 1's milestones and
+acceptance evidence. These plans are authoritative for milestone status; don't infer
+it from this file.
 
 **Agent tooling:** MCP configuration discovery is client-specific. Copilot CLI reads
 `.github/mcp.json`; Claude Code uses `.mcp.json`; VS Code uses `.vscode/mcp.json`.

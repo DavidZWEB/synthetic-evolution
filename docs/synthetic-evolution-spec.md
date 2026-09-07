@@ -47,7 +47,7 @@ Non-negotiable properties:
 - **The sim never touches the DOM or rendering libraries.** It owns world state outright and publishes a narrow render snapshot into a leased triple-buffered `SharedArrayBuffer` (see §2.2), with a transferable-buffer fallback (§7.7). The renderer reads whatever the latest complete snapshot is.
 - **Sim rate is decoupled from frame rate.** Fixed timestep (e.g. 60 ticks/sec of sim time). The renderer samples the latest completed snapshot rather than requiring every tick to be displayed, even at 1×. Headless mode disables the renderer entirely and runs as fast as the CPU allows overnight.
 - **Fully deterministic given a seed.** Same seed + same params = byte-identical run. This is worth real effort: without it you cannot debug an emergent behavior you saw once, and you cannot share interesting worlds as a seed + param blob.
-- The Rust sim core is a black box behind a narrow stepping and snapshot interface. Native and WASM shells own I/O and scheduling; neither the renderer nor a shell reaches into the tick. Full-world serialization and checkpointing arrive in Phase 7 (§8), not in the current Phase 1 surface.
+- The Rust sim core is a black box behind a narrow stepping and snapshot interface. Native and WASM shells own I/O and scheduling; neither the renderer nor a shell reaches into the tick. Basic manual full-world checkpoint save/load arrives in late Phase 2 (§7.10); automatic checkpoint scheduling and the larger overnight-run workflow remain Phase 7 work (§8).
 
 ### 2.2 Data layout
 
@@ -232,7 +232,7 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 
 **Founders must get simpler once these operators exist — revisit founder construction when they land.** Phase 1 issues every founder the complete sensory suite: three eyes, a nose, an interoceptor, fully connected. That is forced rather than chosen. With no add-sensor and no add-connection operator, anything missing from the founder is unreachable for every descendant for the whole of the phase, so density is the only safe default when structure cannot change.
 
-That argument expires the moment the structural operators above are *implemented* — add/remove neuron, connection, and sensor. The table has specified all three since v0.1; what no phase of §8 yet schedules is the sensor pair, and that is the one this depends on. After that, a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
+That argument expires the moment the structural operators above are *implemented* — add/remove neuron, connection, and sensor. **DECIDED: the sensor addition/removal pair lands in Phase 2 alongside the neural structural operators.** After that, a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
 
 So when the structural operators arrive, invert the default: the founder should be the **simplest organism that can still close the loop** — plausibly one chemoreceptor, thrust, turn, ingest, and little else — with complexity earned rather than granted. Three consequences to plan for:
 
@@ -247,6 +247,15 @@ Genetic distance (NEAT compatibility):
 ```
 δ = c1 * (disjoint / N) + c2 * (excess / N) + c3 * meanWeightDiff
 ```
+
+This measures retained innovation history, not functional wiring equality. Physical
+deletion discards an ancestry marker: independently recreating the same connection
+with a fresh ID increases disjoint/excess distance against a retained-ID counterpart,
+even if the resulting wiring is equivalent. Surviving matching IDs still denote
+shared origin. Phase 2 must review deletion policy and distance interpretation
+together, measuring deletion/recreation against retention/toggling and the resulting
+cluster changes before approving nonzero shipped physical-removal rates. Extra
+species labels caused by marker turnover are not evidence of useful divergence.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
@@ -492,7 +501,7 @@ Close-up observation of individuals is wanted in both. That imposes three requir
 
 - **LOD rendering.** At 50k you cannot draw every agent as a full multi-part body. Distant agents render as a single instanced quad or sphere tinted by `signature`; near agents get the full part assembly plus sensor cones and brain overlay. Two viewing modes in practice — *world view*, where you're reading population-level pattern, and *close view*, a few dozen agents at full detail.
 - **Viewport culling in the snapshot.** The render snapshot (§2.2) should carry only agents in or near the camera frustum plus a coarse aggregate for everything else. Cheap in-tab, and it's the same mechanism §9.5 would need over a network.
-- **Checkpointing.** This is the one that makes overnight runs actually usable. Determinism means you *can* replay from seed to any tick, but replaying 4M ticks takes as long as generating them. Write a full serialized world state every N ticks. The workflow you want is: run overnight → wake up → a probe flagged something at tick 4.2M → load the nearest checkpoint → fast-forward deterministically → watch it happen at 1×.
+- **Checkpointing.** Determinism means you *can* replay from seed to any tick, but replaying 4M ticks takes as long as generating them. **DECIDED: manual full-world save/load lands in late Phase 2 (§7.10)** so interesting evolved worlds can be preserved and native runs opened in the browser without replay. Phase 7 adds periodic checkpoints and retention scheduling for the longer workflow: run overnight → wake up → a probe flagged something at tick 4.2M → load the nearest checkpoint → fast-forward deterministically → watch it happen at 1×.
 
 Everything else:
 
@@ -679,7 +688,7 @@ Two patterns carry most of the weight:
 
 #### Tier 2 — Whole-system invariants
 
-Cannot be unit tested; must hold across a real run. These exist from Phase 1, not added after something breaks.
+Cannot be unit tested; must hold across a real run. The baseline invariants exist from Phase 1, not added after something breaks; later features extend these guarantees.
 
 **Golden hash.** The highest-value test in the project.
 
@@ -703,11 +712,34 @@ remain experiment configuration recorded alongside the hash, not a substitute fo
 
 **No allocation in the hot loop.** Counting allocator, assert zero allocations across a `step()` after warmup.
 
+**Checkpoint continuation (Phase 2).** Saving/loading must preserve the state at the
+boundary and reproduce an uninterrupted run after further ticks, in both heredity
+modes and in both native/WASM transfer directions. Exercise structural births/deaths,
+allocator reuse/fragmentation, species changes, recurrent neural state, energy
+residuals, and future queued commands. Successful deserialization or an immediate
+hash match alone cannot prove exact continuation.
+
 #### Tier 3 — Not testable
 
 Every phase success criterion in §8 is a judgment about whether something *interesting* evolved. No assertion covers this, and no amount of Tier 1 and 2 passing implies it. Treat any claim that a phase is complete on the strength of green tests as unverified.
 
-The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them, breaking cumulative neural evolution without changing sensors, body, or ecology. If you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
+A tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them. In Phase 1's fixed topology this breaks cumulative neural-scalar inheritance without changing sensors, body, or ecology. Indistinguishable behavior does not establish a benefit from that inheritance. In automated reporting (§7.9), every behavioral metric should be printed alongside the relevant control's value for the same metric.
+
+**DECIDED: Phase 2 also requires an approved structural-null comparison before
+acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone
+establish that structural growth is adaptive. Decide the structural-null protocol at
+M0 and implement/report it with M8's experiments, rather than discovering the missing
+instrument at M9. Approval must name the structural contribution or inheritance
+disrupted, the preserved quantities, metabolic and sensory confounds, cohort/seed
+matching, measurements, and limits on interpretation. Resetting to founder topology
+or arbitrary rewiring is not assumed to control those confounds.
+
+Report the structural-null and scalar-heredity comparisons distinctly across
+multiple seeds. Early viability experiments need not wait for the structural-null
+implementation, but useful-structure claims and Phase 2 acceptance do. Missing or
+inconclusive structural evidence cannot be replaced by gene counts or human
+impressions alone. The evidence informs, rather than replaces, the human judgment
+required by §8.
 
 ### 7.9 The experiment loop
 
@@ -760,6 +792,51 @@ agent proposes a hypothesis about a parameter interaction
 ```
 
 Determinism is what makes this trustworthy: every result is a reproducible `(seed, params)` pair, so a claim about a run can always be checked rather than believed.
+
+### 7.10 Manual checkpoints (Phase 2)
+
+**DECIDED:** basic manual checkpoints arrive after Phase 2's storage, species, and
+ancestry work. They enable checkpoint-assisted inspection but are not a prerequisite
+for starting founder experiments; those can begin with configurable founders and
+existing telemetry, then acquire richer evidence as observability lands. Manual
+checkpoints remain required before Phase 2 is complete. A checkpoint preserves a
+complete running world at a between-ticks boundary; an exported phylogeny preserves
+history and is not a substitute for resumable state.
+
+Use one versioned format shared by the native and browser shells. Native file
+save/load and browser download/import must interoperate when their simulation
+compatibility identities match and the receiving host can accommodate the world.
+The identity describes format and simulation compatibility, not a target-specific
+binary hash. Reject incompatible versions explicitly; Phase 2 promises no
+cross-version migration. Retain the originating seed/run provenance in the
+checkpoint metadata.
+
+Preserve parameters, heredity protocol, RNG state, tick, authoritative physical and
+genetic state, recurrent neural values, compensated energy and its ledger, future
+allocation order/availability, innovation and ancestry counters, active species
+representatives, and queued commands in their original application order. Derived
+caches, scratch, and presentation/transport state may be rebuilt only without
+changing continuation; live recurrent neural values are not derivable from a genome.
+Saving must not advance simulation time or consume randomness. Continuation must
+satisfy §7.8.
+
+The core owns in-memory encoding/decoding, not I/O. Shells schedule capture/load
+outside a step and own files and browser interactions. Treat imported bytes as
+untrusted: enforce bounded decoding and resource limits, validate structural and
+numeric invariants, and reject malformed or incompatible state before replacing a
+live world. A rejected load leaves the existing world intact. Browser loads begin
+paused and invalidate old worker responses, selections, and render-buffer leases.
+
+External history archives remain separate from the checkpoint. A resumed run must
+identify its checkpoint origin and begin a distinct history segment rather than
+silently appending after the original run's later events. Resuming paired
+experiments requires both worlds at the same tick with the original control
+protocol; a freshly seeded control is not a continuation.
+
+Periodic autosaves and retention scheduling remain Phase 7 work. Cross-version
+migration, timeline scrubbing/indexing, compression, and storage optimization are
+also deferred, not requirements of the Phase 2 save/load milestone.
+
 ---
 
 ## 8. Roadmap
@@ -768,7 +845,7 @@ Determinism is what makes this trustworthy: every result is a reproducible `(see
 
 **Because the goal is to share early, the renderer needs to be presentable from Phase 2, not Phase 5.** A clean instanced 2D renderer plus seed URLs makes every phase from 3 onward shareable, which is where the feedback actually comes from. The Three.js pass at Phase 5 then upgrades a working presentation rather than creating one — don't defer *all* visual polish to Phase 5 on the strength of that line item.
 
-**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, genetic distance, species clustering, phylogenetic tree. **Revisit founder composition here (§3.3), and decide here whether the sensor operators land with the neuron ones** — this line currently lists add/remove neuron and connection only, but a sensor is its own gene kind, so simplifying the founder stays blocked until add/remove *sensor* exists too. *Success: brains grow in complexity, distinct species appear.*
+**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, connection enable/disable, add/remove sensor, genetic distance, species clustering, phylogenetic tree, and basic manual portable checkpoints (§7.10). **Revisit founder composition here (§3.3)** once the structural operators exist; the minimal viable founder remains a multi-seed measurement, not an assumed starting configuration. Build order and implementation decisions under review live in [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md). *Success: brains grow in complexity, distinct species appear.*
 
 **Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.*
 
@@ -786,7 +863,7 @@ duplication. *Success for the sex unlock specifically: a sexual lineage persists
 than being outcompeted by asexual cousins. If it doesn't, the Red Queen pressure from
 Phase 3 is too weak — that's a predation-tuning problem, not a reproduction bug.*
 
-**Phase 7 — performance and scale.** SIMD in the perception and CTRNN phases, `wasm-bindgen-rayon` if needed, checkpointed overnight runs on the native shell, batch parameter sweeps. Push to the 50k target. (The sim core is already Rust/WASM from Phase 1 — this phase is optimization, not a port.)
+**Phase 7 — performance and scale.** SIMD in the perception and CTRNN phases, `wasm-bindgen-rayon` if needed, automatic checkpoint scheduling and retention for overnight native runs, batch parameter sweeps. Build on Phase 2's manual save/load rather than introducing checkpoints here for the first time. Push to the 50k target. (The sim core is already Rust/WASM from Phase 1 — this phase is optimization, not a port.)
 
 The roadmap ends here deliberately. What follows is a **branch, not a Phase 8** — volumetric 3D and articulation are alternative directions with different costs and different payoffs, and articulation in particular trades away the 50k scale target rather than building on it. See §9.3.
 
