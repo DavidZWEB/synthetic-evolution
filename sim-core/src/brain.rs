@@ -116,9 +116,8 @@ pub fn synapse_count(genes: &[Gene]) -> usize {
 
 /// Writes the runnable form of `genes` into a freshly claimed pair of arena blocks.
 ///
-/// Called on every birth and never inside a tick — the endpoint resolution here is a
-/// binary search per connection, which is exactly the cost this compilation step
-/// exists to pay once instead of sixty times a second.
+/// Called at birth, including step 10 of a tick, but never by brain evaluation.
+/// Resolving endpoints once avoids a binary search per connection on every step.
 ///
 /// Neurons start silent: `state` and `output` are zero, so a newborn drives nothing
 /// until it has taken its first step.
@@ -143,8 +142,8 @@ pub fn compile(genes: &[Gene], neurons: &mut [Neuron], synapses: &mut [Synapse])
             output: 0.0,
             input: 0.0,
             bias: gene.bias,
-            // `validate` rejects a non-positive tau, and an oscillator's period with
-            // it, so neither reciprocal can be an infinity here.
+            // Validation ensures these reciprocals and the oscillator's phase
+            // increment remain finite (spec §3.2).
             inv_tau: 1.0 / gene.tau,
             inv_period: if gene.activation == Activation::Oscillator {
                 1.0 / gene.period

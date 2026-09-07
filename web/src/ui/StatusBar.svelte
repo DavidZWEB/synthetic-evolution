@@ -21,6 +21,7 @@
 <style>
   header {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 1rem;
     padding: 0.6rem 1rem;
@@ -37,7 +38,8 @@
 
   dl {
     display: flex;
-    gap: 1.25rem;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.25rem;
     margin: 0 0 0 auto;
   }
 

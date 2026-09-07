@@ -197,4 +197,8 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+
+  @media (max-width: 30rem) {
+    dl { grid-template-columns: minmax(0, 1fr); }
+  }
 </style>

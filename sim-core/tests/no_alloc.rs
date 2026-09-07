@@ -284,6 +284,30 @@ fn a_full_pool_refuses_without_allocating() {
 }
 
 #[test]
+fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
+    use sim_core::command::{Command, Kind};
+
+    let mut params = SimParams::default();
+    params.world.max_agents = 32;
+    params.plants.max_plants = 8;
+    params.chemo.cells = [8, 8, 1];
+    let mut world = World::new(21, params).expect("valid params");
+
+    for count in [1, 8, 64] {
+        for i in 0..count {
+            world.push_command(Command::now(Kind::SpawnFounder { position: at(i) }));
+        }
+        let observed = count_allocations(|| world.step());
+        assert_eq!(
+            observed, 0,
+            "draining a new batch of {count} commands allocated inside the tick"
+        );
+        assert_eq!(world.pending_commands(), 0);
+        assert!(world.population() > 0, "commands did not spawn agents");
+    }
+}
+
+#[test]
 fn draining_the_command_queue_never_allocates() {
     // The drain runs through two reusable buffers, and it is easy to write it so one of
     // them is freed and regrown every tick. `a_whole_tick_of_systems_never_allocates`

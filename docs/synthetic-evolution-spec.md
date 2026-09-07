@@ -33,9 +33,9 @@ Three specific things do most of the work:
 ┌────────────────────────────────┐   ┌─────────────────────────────┐
 │  Worker thread                  │   │  Main thread                 │
 │                                 │   │                              │
-│  Sim core (JS → WASM later)     │   │  Svelte UI shell             │
-│   · fixed timestep              │──▶│  Three.js renderer           │
-│   · seeded PRNG                 │SAB│   · InstancedMesh            │
+│  Sim core (Rust → WASM)         │   │  Svelte UI shell             │
+│   · fixed timestep              │──▶│  WebGL2 renderer             │
+│   · seeded PRNG                 │SAB│   · Instanced quads          │
 │   · spatial hash                │   │   · reads snapshot buffer    │
 │   · brain eval                  │   │  Charts / inspector          │
 │   · genetics                    │◀──│  Command queue               │
@@ -44,10 +44,10 @@ Three specific things do most of the work:
 
 Non-negotiable properties:
 
-- **The sim never touches the DOM or Three.js.** It owns world state outright and publishes a narrow render snapshot into a leased triple-buffered `SharedArrayBuffer` (see §2.2). The renderer reads whatever the latest complete snapshot is.
-- **Sim rate is decoupled from frame rate.** Fixed timestep (e.g. 60 ticks/sec of sim time). At 1× the renderer sees every tick; at 1000× it samples. Headless mode disables the renderer entirely and runs as fast as the CPU allows overnight.
+- **The sim never touches the DOM or rendering libraries.** It owns world state outright and publishes a narrow render snapshot into a leased triple-buffered `SharedArrayBuffer` (see §2.2), with a transferable-buffer fallback (§7.7). The renderer reads whatever the latest complete snapshot is.
+- **Sim rate is decoupled from frame rate.** Fixed timestep (e.g. 60 ticks/sec of sim time). The renderer samples the latest completed snapshot rather than requiring every tick to be displayed, even at 1×. Headless mode disables the renderer entirely and runs as fast as the CPU allows overnight.
 - **Fully deterministic given a seed.** Same seed + same params = byte-identical run. This is worth real effort: without it you cannot debug an emergent behavior you saw once, and you cannot share interesting worlds as a seed + param blob.
-- The sim core is a black box behind a narrow interface (`step()`, `snapshot()`, `serialize()`). This is what lets you rewrite it in Rust/WASM in month three without touching anything else.
+- The Rust sim core is a black box behind a narrow stepping and snapshot interface. Native and WASM shells own I/O and scheduling; neither the renderer nor a shell reaches into the tick. Full-world serialization and checkpointing arrive in Phase 7 (§8), not in the current Phase 1 surface.
 
 ### 2.2 Data layout
 
@@ -139,7 +139,7 @@ Practically, perception is also where your time goes. It's the only phase that t
 
 Uniform grid spatial hash, cell size = max sensing radius. Rebuilt each tick (cheap with a counting sort). Sensing is the O(n²) trap; everything else is nearly free by comparison.
 
-**DECIDED: 2D simulation plane, rendered in 3D with Three.js.** V1 simulates on a plane — you keep the visual payoff, instanced rendering, and camera flythrough, but the search space stays small enough that evolution converges on something in an afternoon rather than a week.
+**DECIDED: 2D simulation plane.** The current client renders instanced quads with WebGL2; the Three.js presentation upgrade arrives with Phase 5 (§8). V1 continues simulating on a plane, keeping the search space small enough that evolution can converge in an afternoon rather than a week.
 
 This is explicitly a staging decision, not a permanent one. Full volumetric 3D with non-spherical morphology is a stated long-term target (§9), and several choices elsewhere in this spec — 3-component position vectors, quaternion orientation, azimuth/elevation sensor params, the parts indirection in §2.2 — exist specifically so that transition is an unlock rather than a rewrite. The spatial hash should be written as a triple-nested cell loop with the Z range pinned to `[0,0]` in V1 for the same reason.
 
@@ -275,7 +275,7 @@ The crossover machinery is already specified in §3.4 — NEAT-style alignment b
 
 The phylogeny hedge is the one people miss: **with sex, lineage stops being a tree and becomes a DAG.** Storing a single `parentId` bakes a tree assumption into the world state, the serialization format, and the §6 tree viewer. Two fields now, one of them dead, saves reworking all three later.
 
-**Do not unlock sex before predation exists.** Sex carries a twofold cost — an asexual lineage reproduces at double the rate — so in a stable world asexuals win outright and you'll conclude the feature is broken. What pays for that cost is Red Queen dynamics: coevolving predators and parasites that make recombination worth its price. This is exactly why sexual reproduction sits at Phase 5 in the roadmap, after predation lands at Phase 3. Ordering matters here more than usual.
+**Do not unlock sex before predation exists.** Sex carries a twofold cost — an asexual lineage reproduces at double the rate — so in a stable world asexuals win outright and you'll conclude the feature is broken. What pays for that cost is Red Queen dynamics: coevolving predators and parasites that make recombination worth its price. This is exactly why sexual reproduction sits at Phase 6 in the roadmap, after predation lands at Phase 3. Ordering matters here more than usual.
 
 If it works, you get to watch the evolution of sex as an observed transition rather than an assumption. That's one of the more interesting things this simulator could produce.
 
@@ -509,7 +509,7 @@ Everything else:
 
 ## 7. Technology
 
-**DECIDED: Rust compiled to WASM for the sim core from day one; TypeScript, Svelte 5, and Three.js on the main thread.** No TypeScript sim-core stage — porting later is real work, and a JS implementation quietly bakes in assumptions you'd rather not carry.
+**DECIDED: Rust compiled to WASM for the sim core from day one; Svelte 5 with TypeScript/JavaScript and a WebGL2 renderer on the main thread.** Three.js arrives in Phase 5. No TypeScript sim-core stage — porting later is real work, and a JS implementation quietly bakes in assumptions you'd rather not carry.
 
 ### 7.1 Stack
 
@@ -517,7 +517,7 @@ Everything else:
 |---|---|---|
 | Sim core | Rust → WASM, in a Worker | Manual memory layout, no GC, no collector jitter |
 | UI | Svelte 5 (runes) | Low overhead, doesn't fight an external render loop. Svelte owns panels, never the frame loop. |
-| Render | Three.js, `InstancedMesh` | One draw call for all agents. Per-instance color/scale via instanced attributes. |
+| Render | WebGL2 instanced quads; Three.js at Phase 5 | One draw call for all agents. Per-instance color/scale via instanced attributes. |
 | Charts | uPlot or a canvas renderer | Do **not** use an SVG/DOM chart library for streaming time series |
 | Build | Vite + `wasm-pack` | |
 | Storage | IndexedDB, plus `postcard` binary export | |
@@ -537,15 +537,24 @@ sim-core/          ← pure Rust, no I/O, no wasm-bindgen
   └── native shell → CLI binary: headless runs, batch sweeps
 ```
 
-Costs almost nothing if the core is I/O-free from the start, and buys a lot: real debuggers, `perf`, flamegraphs, and `cargo test` on the native target. WASM debugging in browser devtools is genuinely unpleasant, and you will be doing a lot of it otherwise. The native shell is also the batch-sweep path for Phase 6 and, if it ever happens, the server binary in §9.5.
+Costs almost nothing if the core is I/O-free from the start, and buys a lot: real debuggers, `perf`, flamegraphs, and `cargo test` on the native target. WASM debugging in browser devtools is genuinely unpleasant, and you will be doing a lot of it otherwise. The native shell is also the batch-sweep path for Phase 7 and, if it ever happens, the server binary in §9.5.
 
 **No `static` mutable state in the sim core.** This is what keeps the native shell able to run many worlds in one process. It has one concrete implication for §3.1: the innovation-ID counter is a field on `World`, not a `static AtomicU32`.
 
 ### 7.3 The memory boundary
 
-WASM linear memory *is* the SharedArrayBuffer. Rust exposes a pointer and length; JS constructs `new Float32Array(memory.buffer, ptr, len)` and reads the render snapshot with **zero copying**.
+The current single-threaded WASM build owns ordinary linear memory inside the worker.
+Rust exposes snapshot pointers and lengths; the worker constructs typed-array views over
+that memory without copying, then copies the narrow snapshot into the selected transport.
+The shared path uses a separate leased triple-buffered `SharedArrayBuffer`; the fallback
+uses two pooled transferable `ArrayBuffer`s (§7.7). Both paths copy once in the worker.
 
-One footgun: **growing WASM memory detaches every existing JS TypedArray view.** Pre-allocate the agent pool at max capacity so memory never grows, or expose a generation counter and rebuild views when it bumps. Silent breakage otherwise.
+**Growing ordinary WASM memory detaches existing JS typed-array views.** Pools and the
+snapshot are pre-allocated at capacity, but boundary operations such as inspection can
+still allocate. The worker must rebuild its snapshot views whenever `memory.buffer`
+changes. Main-thread transport buffers do not alias WASM memory and are not detached by
+that growth. Direct shared-WASM-memory reads would require the threads-enabled build
+considered in Phase 7; cross-origin isolation alone does not make WASM memory shared.
 
 Keep the boundary narrow — per-tick calls, never per-agent. `inspect_agent()` can return a JSON string; it runs for one selected agent at human speed.
 
@@ -633,9 +642,9 @@ Two Azure-specific traps, both of which present as "cross-origin isolation is br
 
 Verify with `crossOriginIsolated === true` in the console rather than reading response headers; that's what `SharedArrayBuffer` actually gates on.
 
-**Build the non-SAB fallback anyway.** Put the snapshot handoff behind a `SnapshotTransport` interface with two implementations: zero-copy views over WASM memory when `crossOriginIsolated` is true, and transferable `ArrayBuffer`s ping-ponged between two pooled buffers when it isn't. Detect at runtime, pick the transport, never branch again.
+**Keep the non-SAB fallback.** The snapshot handoff has two implementations behind the same transport contract: leased frames in a separate triple-buffered `SharedArrayBuffer` when `crossOriginIsolated` is true, and transferable `ArrayBuffer`s ping-ponged between two pooled buffers when it isn't. Select the transport when creating a run, not inside renderer logic. Neither path exposes live world arenas to the main thread.
 
-This is no longer a hosting concern, since Azure sets the headers. It's insurance against the other ways isolation breaks: embedding the sim in an iframe on someone else's page, `require-corp` interfering with cross-origin resources you later want to load, or a misconfigured deploy. The fallback costs one copy per frame — at the web profile's 2–10k agents, a few hundred KB, immaterial — and it means "can my friend open the link" never depends on header configuration being correct. Roughly an afternoon, behind an interface worth having regardless.
+This is insurance against the ways isolation can break: embedding the sim in an iframe on someone else's page, `require-corp` interfering with cross-origin resources you later want to load, or a misconfigured deploy. Both current transports pay one snapshot copy per published frame (§7.3); the fallback additionally transfers ownership by message. It means "can my friend open the link" never depends on header configuration being correct.
 
 **Rejected, for the record.** GitHub Pages cannot set custom headers; GitHub has acknowledged this as a scenario they would support, with no ETA. The community workaround is a service worker shim such as `coi-serviceworker`, which works but forces a reload on first visit and conflicts with any service worker of your own. Cloudflare Pages, Netlify, and Vercel are all equally viable if Azure becomes inconvenient — the `SnapshotTransport` indirection means migrating costs nothing.
 
@@ -674,15 +683,19 @@ Cannot be unit tested; must hold across a real run. These exist from Phase 1, no
 
 **Golden hash.** The highest-value test in the project.
 
-```rust
-#[test] fn golden_hash_10k_ticks() {
-    let mut w = World::new(42, SimParams::default());
-    for _ in 0..10_000 { w.step(); }
-    assert_eq!(w.state_hash(), 0x9F3A_C21B_0E77_4D58);
-}
-```
+The native and WASM suites share
+[`sim-core/tests/common/golden_case.rs`](../sim-core/tests/common/golden_case.rs),
+including both scenarios and their reference hashes. Phase 1 pins a 300-tick shipped
+configuration and a 500-tick reproduction-heavy configuration, each with 200 founders.
+The former must remain populated; the latter must actually produce offspring, so an
+empty or non-reproducing run cannot satisfy the intended coverage.
 
-`state_hash` folds the whole world — positions, energies, genomes, RNG state, tick. Any refactor that changes behavior fails immediately, and an *intended* behavior change becomes a deliberate, reviewable constant update rather than an accident. Keep one per phase.
+`state_hash` folds world state, including positions, energies, genomes, recurrent neural
+state, future slot-allocation order, RNG state, and tick. A behavior-changing refactor
+must not silently move the reference; an intended behavior change requires a deliberate,
+reviewable update. Strengthening hash coverage can also change references without
+changing trajectories, and must be identified as such. Seed, params, and heredity mode
+remain experiment configuration recorded alongside the hash, not a substitute for it.
 
 **Energy conservation.** Sum everything — agents, plants, corpses, field — and assert the delta over N ticks equals `input − dissipation` within epsilon. Catches double-counted eating, corpses that resurrect energy, reproduction that mints it. Since §5.1's closed economy is what makes selection real, a leak doesn't crash anything; it quietly makes the simulation uninteresting.
 

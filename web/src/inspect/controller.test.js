@@ -5,13 +5,13 @@ import test from 'node:test';
 
 import { createInspectorController } from './controller.js';
 
-const payload = (index, incarnation) =>
+const payload = (index, incarnation, tick = 4) =>
   JSON.stringify({
     index,
     incarnation,
-    tick: '4',
+    tick: String(tick),
     energy: 50,
-    age: 4,
+    age: tick,
     size: 3,
     signature: [0.1, 0.2, 0.3],
     species_id: 0,
@@ -56,4 +56,55 @@ test('selection rejects stale responses and polls only its incarnation', () => {
     { index: 2, incarnation: 7 },
     { index: 4, incarnation: 9 },
   ]);
+});
+
+function pollingFixture() {
+  let clock = 0;
+  const requests = [];
+  const changes = [];
+  const controller = createInspectorController({
+    getSim: () => ({ inspect: (...request) => requests.push(request) }),
+    getRenderer: () => ({ select() {} }),
+    getFrame: () => null,
+    onChange: (change) => changes.push(change),
+    now: () => clock,
+  });
+  controller.select({ index: 2, incarnation: 7 });
+  return {
+    controller,
+    requests,
+    changes,
+    poll(timestamp, fresh) {
+      clock = timestamp;
+      controller.poll({ fresh }, timestamp);
+    },
+    accept(tick) {
+      const [index, incarnation, requestId] = requests.at(-1);
+      return controller.accept({ index, incarnation, requestId, agent: payload(index, incarnation, tick) });
+    },
+  };
+}
+
+test('a paused final frame survives the inspection cooldown', () => {
+  const fixture = pollingFixture();
+  assert.equal(fixture.accept(0), true);
+  fixture.poll(20, true);
+  assert.equal(fixture.requests.length, 1, 'polled inside the cooldown');
+  fixture.poll(251, false);
+  assert.equal(fixture.requests.length, 2, 'forgot the only fresh frame');
+  assert.equal(fixture.accept(1), true);
+  assert.equal(fixture.changes.at(-1).inspection.age, 1);
+  fixture.poll(1000, false);
+  assert.equal(fixture.requests.length, 2, 'unchanged paused frames triggered more requests');
+});
+
+test('slow replies remain usable while refresh demand is coalesced', () => {
+  const fixture = pollingFixture();
+  for (const timestamp of [300, 600, 900]) fixture.poll(timestamp, true);
+  assert.equal(fixture.requests.length, 1, 'overlapping requests invalidated the pending reply');
+  assert.equal(fixture.accept(0), true);
+  fixture.poll(901, false);
+  assert.equal(fixture.requests.length, 2, 'lost updates received while inspection was pending');
+  assert.equal(fixture.accept(4), true);
+  assert.equal(fixture.changes.at(-1).inspection.age, 4);
 });

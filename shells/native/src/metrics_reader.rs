@@ -286,7 +286,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("invalid SimParams: world.dt must be positive")
+                .contains("invalid SimParams: world.dt must be finite and positive")
         );
     }
 

@@ -170,6 +170,17 @@ impl World {
         h.u64(self.tick_count());
         h.u32(self.population());
 
+        // Slot reuse affects future births and observer identity (spec §2.2b, §2.4).
+        let pool = self.pool();
+        h.u32(pool.free_indices().len() as u32);
+        for &index in pool.free_indices() {
+            h.u32(index);
+        }
+        h.u32(pool.incarnations().len() as u32);
+        for &incarnation in pool.incarnations() {
+            h.u32(incarnation);
+        }
+
         // The stream's position, not just its output so far. Two runs agreeing on every
         // agent but sitting at different points in the RNG diverge on the very next
         // draw, and a hash that missed that would certify a run that was already wrong.
@@ -216,6 +227,22 @@ impl World {
             h.u32(genome.len() as u32);
             for gene in genome {
                 fold_gene(&mut h, gene);
+            }
+
+            // The genome cannot reconstruct recurrent memory or a newborn's silent
+            // outputs. Inputs survive between perception and integration (spec §3.2).
+            let brain = self.brain(id);
+            h.u32(brain.len() as u32);
+            for neuron in brain {
+                h.f32(neuron.state);
+                h.f32(neuron.output);
+                h.f32(neuron.input);
+            }
+
+            let parts = self.parts_of(id);
+            h.u32(parts.len() as u32);
+            for &offset in parts {
+                h.f32(offset);
             }
         }
 
@@ -344,6 +371,76 @@ mod tests {
         let before = world.state_hash();
         world.agents_mut().position[0].x += 0.5;
         assert_ne!(before, world.state_hash());
+    }
+
+    #[test]
+    fn advancing_only_recurrent_brain_state_moves_the_hash() {
+        let mut world = populated(2);
+        let before = world.state_hash();
+        world.step_brains();
+        assert_eq!(world.tick_count(), 0);
+        assert_ne!(
+            before,
+            world.state_hash(),
+            "neural memory changed without moving the world hash"
+        );
+    }
+
+    #[test]
+    fn every_recurrent_neuron_value_is_folded() {
+        type Change = fn(&mut crate::brain::Neuron);
+        let changes: [(&str, Change); 3] = [
+            ("state", |neuron| neuron.state += 0.25),
+            ("output", |neuron| neuron.output += 0.25),
+            ("input", |neuron| neuron.input += 0.25),
+        ];
+        for (name, change) in changes {
+            let mut world = populated(2);
+            let before = world.state_hash();
+            let block = world.agents.brain[0];
+            change(&mut world.brains.get_mut(block)[0]);
+            assert_ne!(before, world.state_hash(), "{name} was not folded");
+        }
+    }
+
+    #[test]
+    fn part_values_are_folded_without_their_arena_addresses() {
+        let mut world = populated(2);
+        let before = world.state_hash();
+        let block = world.agents.parts[0];
+        world.parts.get_mut(block)[0] += 0.25;
+        assert_ne!(before, world.state_hash());
+    }
+
+    #[test]
+    fn dead_slot_incarnations_are_folded() {
+        let mut world = populated(2);
+        let before = world.state_hash();
+        let id = world.pool.alloc().expect("a free slot");
+        assert!(world.pool.free(id));
+        assert_ne!(before, world.state_hash());
+    }
+
+    #[test]
+    fn free_slot_order_is_part_of_the_world_state() {
+        let (mut a, mut b) = (populated(2), populated(2));
+        let ids: Vec<_> = a.pool().iter_live().take(2).collect();
+        for &id in &ids {
+            assert!(a.despawn(id));
+        }
+        for &id in ids.iter().rev() {
+            assert!(b.despawn(id));
+        }
+        let hashes = (a.state_hash(), b.state_hash());
+        assert_ne!(
+            a.spawn_founder(Vec3::ZERO),
+            b.spawn_founder(Vec3::ZERO),
+            "the different free lists must change the next allocated agent index"
+        );
+        assert_ne!(
+            hashes.0, hashes.1,
+            "different future allocation order was invisible to the hash"
+        );
     }
 
     #[test]

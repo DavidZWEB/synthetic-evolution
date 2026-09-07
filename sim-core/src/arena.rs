@@ -7,7 +7,7 @@
 //!
 //! Phase 1 has fixed brain topology, so every block is the same stride and allocation
 //! is a free-list pop. The handle carries `len` anyway, so Phase 2's variable-length
-//! genomes change this allocator and nothing that calls it.
+//! genomes can change allocation without replacing each system's slice-based interface.
 //!
 //! # This is where the simulation's memory is
 //!

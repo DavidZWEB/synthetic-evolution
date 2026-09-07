@@ -1,8 +1,8 @@
 //! The Phase 1 founding genome: one fixed topology, instantiated with random weights.
 //!
 //! Phase 1 hardcodes the sensor and effector set and the neuron count. What is *not*
-//! hardcoded is the representation — a founder is an ordinary gene list, and Phase 2
-//! adds structural mutation operators without changing anything here.
+//! hardcoded is the representation — a founder is an ordinary gene list. Phase 2
+//! revisits founder composition alongside its structural mutation operators.
 //!
 //! Every founder in a world shares **one set of innovation ids**, drawn once into a
 //! [`FounderPlan`]. That is what makes shared ancestry real: two genomes that match on
@@ -22,6 +22,31 @@ use crate::math;
 use crate::params::SimParams;
 use crate::rng::Rng;
 
+const BASE_SENSORS: [Modality; 2] = [Modality::Chemo, Modality::Interoception];
+const EFFECTORS: [Action; 4] = [
+    Action::Thrust,
+    Action::Turn,
+    Action::Ingest,
+    Action::Reproduce,
+];
+const BODY_TRAITS: [BodyTrait; 4] = [
+    BodyTrait::Size,
+    BodyTrait::SignatureR,
+    BodyTrait::SignatureG,
+    BodyTrait::SignatureB,
+];
+const META_TRAITS: [MetaTrait; 3] = [
+    MetaTrait::MutationRate,
+    MetaTrait::WeightSigma,
+    MetaTrait::CrossoverRate,
+];
+
+pub(crate) struct FounderCounts {
+    pub sensor_channels: u32,
+    pub neurons: u32,
+    pub genes: u32,
+}
+
 /// The fixed topology, with its innovation ids assigned once per world.
 ///
 /// Holds the gene list as a template. Instantiating a founder copies it and randomises
@@ -40,26 +65,43 @@ pub struct FounderPlan {
 }
 
 impl FounderPlan {
+    /// Allocation-free sizing shared by boundary validation and construction.
+    pub(crate) fn checked_counts(params: &SimParams) -> Option<FounderCounts> {
+        let rays = u64::from(params.sensing.vision_rays);
+        let sensor_channels = rays * Modality::VisionRay.channels() as u64
+            + BASE_SENSORS
+                .iter()
+                .map(|m| m.channels() as u64)
+                .sum::<u64>();
+        let sources = sensor_channels
+            + u64::from(params.brain.hidden_neurons)
+            + u64::from(params.brain.oscillators);
+        let sinks = EFFECTORS.len() as u64 + u64::from(params.brain.hidden_neurons);
+        let neurons = sources + EFFECTORS.len() as u64;
+        let connections = sources.checked_mul(sinks)?;
+        let other_genes = rays
+            + (BASE_SENSORS.len() + EFFECTORS.len() + BODY_TRAITS.len() + META_TRAITS.len()) as u64;
+        let genes = neurons.checked_add(connections)?.checked_add(other_genes)?;
+        Some(FounderCounts {
+            sensor_channels: u32::try_from(sensor_channels).ok()?,
+            neurons: u32::try_from(neurons).ok()?,
+            genes: u32::try_from(genes).ok()?,
+        })
+    }
+
     /// Draws the ids for one world's founding topology.
     ///
     /// `next_id` is the world's innovation counter — a closure rather than a `&mut
     /// World`, so this is testable without one and cannot reach anything else.
+    /// `params` must have passed `SimParams::validate` before allocating a plan.
     pub fn new(params: &SimParams, mut next_id: impl FnMut() -> InnovationId) -> Self {
-        let sensors = Self::sensor_layout(params);
-        let sensor_channels: usize = sensors.iter().map(|m| m.channels()).sum();
-        let effectors = [
-            Action::Thrust,
-            Action::Turn,
-            Action::Ingest,
-            Action::Reproduce,
-        ];
-
+        let counts = Self::checked_counts(params).expect("validated founding topology");
+        let sensor_channels = counts.sensor_channels as usize;
+        let neurons = counts.neurons as usize;
         let hidden = params.brain.hidden_neurons as usize;
         let oscillators = params.brain.oscillators as usize;
-        // One input neuron per sensor channel, one output neuron per effector.
-        let neurons = sensor_channels + effectors.len() + hidden + oscillators;
 
-        let mut genes = Vec::with_capacity(neurons * 2);
+        let mut genes = Vec::with_capacity(counts.genes as usize);
         let neuron_ids: Vec<InnovationId> = (0..neurons).map(|_| next_id()).collect();
 
         // Neurons first, so a forward pass sees every neuron before any reference.
@@ -80,7 +122,7 @@ impl FounderPlan {
 
         // Sensors bind to the input neurons, one channel at a time.
         let mut channel = 0;
-        for &modality in &sensors {
+        for modality in Self::sensor_layout(params) {
             let mut targets = [InnovationId::NULL; SENSOR_CHANNELS];
             for target in targets.iter_mut().take(modality.channels()) {
                 *target = neuron_ids[channel];
@@ -95,20 +137,24 @@ impl FounderPlan {
         }
 
         // Effectors read the output neurons that follow the inputs.
-        for (i, &action) in effectors.iter().enumerate() {
+        for (i, &action) in EFFECTORS.iter().enumerate() {
             genes.push(Gene::Effector(EffectorGene {
                 id: next_id(),
                 action,
-                params: [0.0; 4],
+                // V1 uses yaw, but the gene must retain its turn axis (spec §9.1).
+                params: if action == Action::Turn {
+                    [0.0, 0.0, 1.0, 0.0]
+                } else {
+                    [0.0; 4]
+                },
                 source: neuron_ids[sensor_channels + i],
             }));
         }
 
-        // Fully connected inputs and oscillators to outputs and hidden, and hidden to
-        // outputs. Dense on purpose: Phase 1 has no add-connection operator, so any
-        // connection absent here can never appear.
+        // Every input, hidden neuron and oscillator connects to every output and
+        // hidden neuron. Phase 1 has no operator to add a missing connection (spec §3.3).
         let input_end = sensor_channels;
-        let output_end = input_end + effectors.len();
+        let output_end = input_end + EFFECTORS.len();
         let hidden_range = output_end..output_end + hidden;
         let oscillator_range = output_end + hidden..neurons;
 
@@ -130,20 +176,11 @@ impl FounderPlan {
             }
         }
 
-        for trait_ in [
-            BodyTrait::Size,
-            BodyTrait::SignatureR,
-            BodyTrait::SignatureG,
-            BodyTrait::SignatureB,
-        ] {
+        for trait_ in BODY_TRAITS {
             genes.push(Gene::Body(BodyGene { trait_, value: 0.0 }));
         }
 
-        for trait_ in [
-            MetaTrait::MutationRate,
-            MetaTrait::WeightSigma,
-            MetaTrait::CrossoverRate,
-        ] {
+        for trait_ in META_TRAITS {
             genes.push(Gene::Meta(MetaGene { trait_, value: 0.0 }));
         }
 
@@ -176,11 +213,9 @@ impl FounderPlan {
 
     /// Phase 1's hardcoded sensor set: `vision_rays` eyes, a nose, and one
     /// interoceptor for the agent's own energy (build plan task 5).
-    fn sensor_layout(params: &SimParams) -> Vec<Modality> {
-        let mut sensors = vec![Modality::VisionRay; params.sensing.vision_rays as usize];
-        sensors.push(Modality::Chemo);
-        sensors.push(Modality::Interoception);
-        sensors
+    fn sensor_layout(params: &SimParams) -> impl Iterator<Item = Modality> {
+        core::iter::repeat_n(Modality::VisionRay, params.sensing.vision_rays as usize)
+            .chain(BASE_SENSORS)
     }
 
     pub fn len(&self) -> usize {
@@ -333,6 +368,53 @@ mod tests {
         let params = SimParams::default();
         let genes = instantiate(&plan(&params), &params, 1);
         assert_eq!(validate(&genes), Ok(()));
+    }
+
+    #[test]
+    fn checked_counts_match_constructed_topologies() {
+        for (rays, hidden, oscillators) in [(0, 0, 0), (1, 3, 0), (3, 6, 2), (12, 32, 4)] {
+            let mut params = SimParams::default();
+            params.sensing.vision_rays = rays;
+            params.brain.hidden_neurons = hidden;
+            params.brain.oscillators = oscillators;
+            params.validate().expect("valid topology");
+            let counts = FounderPlan::checked_counts(&params).expect("counts fit");
+            let plan = plan(&params);
+            assert_eq!(counts.genes as usize, plan.len());
+            assert_eq!(counts.neurons as usize, plan.neuron_count());
+            let channels: usize = plan
+                .genes()
+                .iter()
+                .filter_map(|gene| match gene {
+                    Gene::Sensor(sensor) => Some(sensor.modality.channels()),
+                    _ => None,
+                })
+                .sum();
+            assert_eq!(counts.sensor_channels as usize, channels);
+        }
+    }
+
+    #[test]
+    fn a_real_founder_preserves_the_z_turn_axis_through_compilation() {
+        let params = SimParams::default();
+        let genes = instantiate(&plan(&params), &params, 1);
+        let turn = genes
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Effector(e) if e.action == Action::Turn => Some(e),
+                _ => None,
+            })
+            .expect("a turn effector");
+        assert_eq!(turn.params[..3], [0.0, 0.0, 1.0]);
+
+        let mut effectors =
+            vec![crate::effectors::Effector::default(); crate::effectors::effector_count(&genes)];
+        crate::effectors::compile(&genes, &mut effectors);
+        let turn = effectors
+            .iter()
+            .find(|e| e.action == Action::Turn)
+            .expect("compiled turn");
+        assert_eq!(turn.params[..3], [0.0, 0.0, 1.0]);
     }
 
     #[test]

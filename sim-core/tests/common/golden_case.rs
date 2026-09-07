@@ -5,15 +5,20 @@
 //! copies of a scenario decay into each target agreeing with itself — which is what the
 //! criterion exists to rule out. Included by path rather than imported because a test
 //! fixture is not part of `sim-core`'s public surface and should not become one.
+//!
+//! References were refreshed before Phase 2 because the hash now includes recurrent
+//! neural state, slot generations/free-list order, and part values, and founders now
+//! carry the specified Z turn axis. These are coverage/metadata corrections, not
+//! changes to the current tick dynamics or tuned defaults.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x9013_c17e_553a_16a7;
+pub const SHIPPED_GOLDEN: u64 = 0xaaf5_181d_9e0a_8ba6;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0xf39c_648e_0416_c2c0;
+pub const BREEDING_GOLDEN: u64 = 0x63f1_9115_2592_88aa;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;
@@ -79,12 +84,17 @@ pub fn check_golden_runs() {
         shipped_world.population() > 0,
         "pinned a world with nothing left in it"
     );
-    assert_eq!(shipped_world.state_hash(), SHIPPED_GOLDEN);
-
     let breeding_world = advanced(42, breeding(), FOUNDERS, BREEDING_TICKS);
     assert!(
         saw_a_birth(&breeding_world, BREEDING_TICKS),
         "nothing was born, so this pins a run that never reached resolve_births"
     );
-    assert_eq!(breeding_world.state_hash(), BREEDING_GOLDEN);
+    let hashes = (shipped_world.state_hash(), breeding_world.state_hash());
+    assert_eq!(
+        hashes,
+        (SHIPPED_GOLDEN, BREEDING_GOLDEN),
+        "shipped={:016x}, breeding={:016x}",
+        hashes.0,
+        hashes.1
+    );
 }

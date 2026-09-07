@@ -244,7 +244,12 @@ function sharedReader(handoff, layout) {
 
         const previous = held;
         held = newest.frame;
-        heldGeneration = newest.generation;
+        // The discovered slot may have been reclaimed and republished before the CAS.
+        // Its metadata becomes stable only after acquiring the lease.
+        heldGeneration = Atomics.load(
+          header,
+          frameHeader(held, HEADER.FRAME_GENERATION),
+        ) >>> 0;
         if (previous >= 0) Atomics.store(header, stateAt(previous), FRAME_STATE.FREE);
         return heldSnapshot(true);
       }

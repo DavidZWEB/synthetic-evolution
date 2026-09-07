@@ -13,7 +13,8 @@
 //!    neurons-first means a reader has seen every neuron before any gene that
 //!    references one.
 //! 2. **Every reference resolves.** A sensor's target, an effector's source, and a
-//!    connection's endpoints all name neurons that exist in the same genome.
+//!    connection's endpoints all name neurons that exist in the same genome. NULL
+//!    is an unset reference, never an innovation that a gene may own.
 //!
 //! Deliberately not here: mutation (`mutate`), recombination (`crossover`), the
 //! founding topology (`founder`), and evaluation (`brain`). This module is the
@@ -260,6 +261,8 @@ impl Gene {
 pub enum GenomeError {
     /// Genes are not in [`Gene::sort_key`] order, or two share a key.
     Unsorted,
+    /// NULL marks an unset identity; it cannot name a real gene.
+    NullInnovation,
     /// A sensor target, effector source, or connection endpoint names a neuron that
     /// is not in this genome. This is the failure mutation must never introduce.
     DanglingReference,
@@ -268,6 +271,15 @@ pub enum GenomeError {
     /// A weight or bias that is not finite. One NaN reaches every downstream neuron
     /// within a tick and the agent goes permanently inert.
     NonFinite,
+}
+
+pub(crate) fn valid_tau(tau: f32) -> bool {
+    tau > 0.0 && tau.is_finite() && (1.0 / tau).is_finite()
+}
+
+pub(crate) fn valid_oscillator_period(period: f32) -> bool {
+    // The compiled phase advance, not just the reciprocal, must fit (spec §3.2).
+    period > 0.0 && period.is_finite() && (core::f32::consts::TAU * (1.0 / period)).is_finite()
 }
 
 /// The neuron ids in a sorted genome, as the leading run of the slice.
@@ -299,11 +311,8 @@ fn has_neuron(genes: &[Gene], id: InnovationId) -> bool {
     neuron_index(genes, id).is_some()
 }
 
-/// Checks both genome invariants. Cheap enough for a `debug_assert!` after mutation
-/// and cheap enough to run on anything arriving from outside.
-/// `!(x > 0.0)` rather than `x <= 0.0`: the negated form also rejects NaN, which is
-/// exactly the value validation exists to catch here.
-#[allow(clippy::neg_cmp_op_on_partial_ord)]
+/// Checks structural invariants and scalar safety without allocating. Used after
+/// mutation in debug builds and at boundaries where a genome arrives from outside.
 pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
     for pair in genes.windows(2) {
         if pair[0].sort_key() >= pair[1].sort_key() {
@@ -312,15 +321,18 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
     }
 
     for gene in genes {
+        if gene.innovation().is_some_and(InnovationId::is_null) {
+            return Err(GenomeError::NullInnovation);
+        }
         match gene {
             Gene::Neuron(n) => {
-                if !(n.tau > 0.0) || !n.tau.is_finite() {
+                if !valid_tau(n.tau) {
                     return Err(GenomeError::BadNeuronParameter);
                 }
-                if n.activation == Activation::Oscillator && !(n.period > 0.0) {
+                if n.activation == Activation::Oscillator && !valid_oscillator_period(n.period) {
                     return Err(GenomeError::BadNeuronParameter);
                 }
-                if !n.bias.is_finite() {
+                if !n.bias.is_finite() || !n.period.is_finite() {
                     return Err(GenomeError::NonFinite);
                 }
             }
@@ -585,12 +597,22 @@ mod tests {
     }
 
     #[test]
+    fn null_cannot_become_a_real_innovation() {
+        let genes = [Gene::default(), Gene::Effector(EffectorGene::default())];
+        assert_eq!(validate(&genes), Err(GenomeError::NullInnovation));
+    }
+
+    #[test]
     fn degenerate_neuron_parameters_are_rejected() {
         for break_it in [
             (|n: &mut NeuronGene| n.tau = 0.0) as fn(&mut NeuronGene),
             |n| n.tau = -1.0,
             |n| n.tau = f32::NAN,
+            |n| n.tau = 1e-40,
             |n| n.period = 0.0,
+            |n| n.period = f32::INFINITY,
+            |n| n.period = 1e-40,
+            |n| n.period = 1e-38,
         ] {
             let mut genes = tiny();
             for gene in genes.iter_mut() {

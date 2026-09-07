@@ -46,9 +46,14 @@ export function createCamera(canvas, worldSize, onResize) {
     };
   }
 
-  function screenToWorld(cssX, cssY) {
+  function screenToWorldUnwrapped(cssX, cssY) {
     const { x, y } = toDevice(cssX, cssY);
-    return { x: wrap(state.x + x / state.ppu), y: wrap(state.y + y / state.ppu) };
+    return { x: state.x + x / state.ppu, y: state.y + y / state.ppu };
+  }
+
+  function screenToWorld(cssX, cssY) {
+    const point = screenToWorldUnwrapped(cssX, cssY);
+    return { x: wrap(point.x), y: wrap(point.y) };
   }
 
   return {
@@ -102,5 +107,6 @@ export function createCamera(canvas, worldSize, onResize) {
     },
 
     screenToWorld,
+    screenToWorldUnwrapped,
   };
 }

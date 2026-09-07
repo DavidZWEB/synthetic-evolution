@@ -31,3 +31,11 @@ test('screen y is inverted into upward-growing world y', () => {
   assert.equal(camera.screenToWorld(500, 125).y, 750);
   assert.equal(camera.screenToWorld(500, 375).y, 250);
 });
+
+test('unwrapped picking coordinates preserve blank fitted-world margins', () => {
+  const camera = createCamera(canvas(), 1000, () => {});
+  camera.fit();
+  assert.deepEqual(camera.screenToWorldUnwrapped(50, 250), { x: -400, y: 500 });
+  assert.deepEqual(camera.screenToWorld(50, 250), { x: 600, y: 500 });
+  assert.deepEqual(camera.screenToWorldUnwrapped(550, 250), { x: 600, y: 500 });
+});

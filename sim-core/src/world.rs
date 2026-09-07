@@ -5,9 +5,9 @@
 //! world beside the first. That is why nothing here is `static`, including the
 //! innovation counter, which is a plain field (spec §7.2, §3.1).
 //!
-//! Deliberately not here: the tick. Spec §2.4's eleven steps live in `tick`, which
-//! writes the other half of this `impl`. What stays here is state, lifecycle, and the
-//! accessors — how a world comes into being, how an agent enters and leaves it, and
+//! Deliberately not here: the tick or command dispatch. `tick` owns spec §2.4's eleven
+//! steps; `command` owns the boundary queue. What stays here is state, lifecycle, and
+//! accessors: how a world comes into being, how an agent enters and leaves it, and
 //! what can be read from outside the crate.
 
 use glam::Vec3;
@@ -16,7 +16,7 @@ use crate::agents::{Agents, Handles, SpawnSpec};
 use crate::arena::Arena;
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
-use crate::command::{Command, Kind};
+use crate::command::Command;
 use crate::control::BrainInheritance;
 use crate::effectors::{self, Effector, Intents};
 use crate::founder::FounderPlan;
@@ -454,65 +454,6 @@ impl World {
         self.params.check_retune(&params, self.hash.cell_size())?;
         self.params = params;
         Ok(())
-    }
-
-    /// Queues a request from outside the simulation (spec §2.2b).
-    ///
-    /// Nothing happens here beyond the push: the command applies at the top of the tick
-    /// it is stamped for. Applying on arrival would let a shell mutate the world
-    /// half-way through a tick, which is the same hazard the intent buffer exists to
-    /// prevent one layer down.
-    pub fn push_command(&mut self, command: Command) {
-        self.commands.push(command);
-    }
-
-    /// How many commands are still waiting.
-    #[inline]
-    pub fn pending_commands(&self) -> usize {
-        self.commands.len()
-    }
-
-    /// Applies every command due at the current tick, in submission order.
-    ///
-    /// Runs before step 1 so that an agent placed this tick perceives, thinks, and moves
-    /// like any other — arriving mid-tick would give it a partial one, and which part
-    /// would depend on where the queue was drained.
-    pub(crate) fn apply_commands(&mut self) {
-        if self.commands.is_empty() {
-            return;
-        }
-        let mut due = core::mem::take(&mut self.due_commands);
-        let mut pending = core::mem::take(&mut self.commands);
-        due.clear();
-
-        // Partition in place. Both halves keep submission order, and taking the whole
-        // due set out before applying any means a command cannot enqueue another into
-        // its own tick.
-        let tick = self.tick;
-        let mut i = 0;
-        while i < pending.len() {
-            if pending[i].apply_at_tick <= tick {
-                due.push(pending.remove(i));
-            } else {
-                i += 1;
-            }
-        }
-        self.commands = pending;
-
-        // Borrowed, not taken. `core::mem::take` here would drop the buffer at the end
-        // of the loop and hand `due_commands` back a zero-capacity `Vec`, so every tick
-        // carrying a command would reallocate — the same shape `dying` and `breeding`
-        // avoid by assigning theirs back.
-        for command in &due {
-            match command.kind {
-                // A refused spawn is the population ceiling, not an error (spec §2.2b).
-                Kind::SpawnFounder { position } => {
-                    self.spawn_founder(position);
-                }
-            }
-        }
-        due.clear();
-        self.due_commands = due;
     }
 
     /// Every joule the world currently holds, in plants, agents, and the transfer

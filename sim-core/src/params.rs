@@ -16,6 +16,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::founder::FounderPlan;
+use crate::genome::{self, Gene};
+
 /// The complete parameter set for one world.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -392,8 +395,8 @@ impl ChemoParams {
 
 /// Ceilings on the params that size an allocation or feed integer arithmetic.
 ///
-/// These are not tuning limits — they are the boundary that keeps a bad value from
-/// becoming a panic or an out-of-memory abort. Params arrive from JS at runtime, so
+/// These guard representation and allocation arithmetic, not host memory availability.
+/// Shells may impose tighter profile budgets. Params arrive from JS at runtime, so
 /// "nobody would set that" is not a guarantee (spec §7.6).
 const MAX_AGENTS: u32 = 1_000_000;
 const MAX_PLANTS: u32 = 1_000_000;
@@ -442,6 +445,7 @@ impl SimParams {
     /// | `world.size` | the spatial grid's extent and the chemo field's |
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
     /// | `chemo.cells` | the field's cell arrays |
+    /// | `chemo.decay.len()` | the number of allocated field channels |
     /// | `sensing.vision_rays`, `brain.hidden_neurons`, `brain.oscillators` | the founding topology, and through it every arena's stride |
     ///
     /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
@@ -479,6 +483,10 @@ impl SimParams {
                 "chemo.cells is fixed for the life of a world",
             ),
             (
+                next.chemo.channels() != self.chemo.channels(),
+                "chemo channel count is fixed for the life of a world",
+            ),
+            (
                 next.sensing.vision_rays != self.sensing.vision_rays
                     || next.brain.hidden_neurons != self.brain.hidden_neurons
                     || next.brain.oscillators != self.brain.oscillators,
@@ -505,11 +513,14 @@ impl SimParams {
     /// NaN, which is the shape a bad value arrives in from JSON.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     pub fn validate(&self) -> Result<(), ParamError> {
-        if !(self.world.size > 0.0) {
-            return Err(ParamError("world.size must be positive"));
+        if !(self.world.size > 0.0) || !self.world.size.is_finite() {
+            return Err(ParamError("world.size must be finite and positive"));
         }
-        if !(self.world.dt > 0.0) {
-            return Err(ParamError("world.dt must be positive"));
+        if !(self.world.dt > 0.0) || !self.world.dt.is_finite() {
+            return Err(ParamError("world.dt must be finite and positive"));
+        }
+        if !(self.body.size >= 0.0) || !self.body.size.is_finite() {
+            return Err(ParamError("body.size must be finite and non-negative"));
         }
         if self.world.max_agents == 0 {
             return Err(ParamError("world.max_agents must be non-zero"));
@@ -535,9 +546,42 @@ impl SimParams {
                 "plants.max_energy times max_plants exceeds the finite energy ledger",
             ));
         }
+        if [self.plants.radius, self.plants.scent_rate]
+            .iter()
+            .any(|&value| !(value >= 0.0) || !value.is_finite())
+        {
+            return Err(ParamError(
+                "plant radius and scent rate must be finite and non-negative",
+            ));
+        }
         if self.sensing.vision_rays > MAX_VISION_RAYS {
             return Err(ParamError(
                 "sensing.vision_rays exceeds the per-agent ceiling",
+            ));
+        }
+        let counts = FounderPlan::checked_counts(self).ok_or(ParamError(
+            "founding topology exceeds representable gene counts",
+        ))?;
+        let gene_bytes = u64::from(counts.genes)
+            .checked_mul(u64::from(self.world.max_agents))
+            .and_then(|count| count.checked_mul(size_of::<Gene>() as u64));
+        // The gene arena dominates every per-agent buffer. Use WASM32's Vec byte
+        // ceiling on both targets, so native cannot accept overflowing WASM layouts.
+        if gene_bytes.is_none_or(|bytes| bytes > i32::MAX as u64) {
+            return Err(ParamError(
+                "founding topology times max_agents exceeds the portable arena byte ceiling",
+            ));
+        }
+        if [
+            self.sensing.vision_range,
+            self.sensing.vision_fov,
+            self.sensing.chemo_radius,
+        ]
+        .iter()
+        .any(|&value| !(value >= 0.0) || !value.is_finite())
+        {
+            return Err(ParamError(
+                "sensing ranges and field of view must be finite and non-negative",
             ));
         }
         if !(self.sensing.max_sense_radius() > 0.0) {
@@ -553,38 +597,76 @@ impl SimParams {
                 "sense radius is too small for the world; the spatial grid would explode",
             ));
         }
-        if self.brain.tau_min <= 0.0 || self.brain.tau_max < self.brain.tau_min {
-            return Err(ParamError("brain.tau range must be positive and ordered"));
+        if !genome::valid_tau(self.brain.tau_min)
+            || !genome::valid_tau(self.brain.tau_max)
+            || self.brain.tau_max < self.brain.tau_min
+        {
+            return Err(ParamError(
+                "brain.tau range must be ordered and have finite positive reciprocals",
+            ));
         }
-        if self.brain.oscillator_period_min <= 0.0
+        if !genome::valid_oscillator_period(self.brain.oscillator_period_min)
+            || !genome::valid_oscillator_period(self.brain.oscillator_period_max)
             || self.brain.oscillator_period_max < self.brain.oscillator_period_min
         {
             return Err(ParamError(
-                "brain.oscillator_period range must be positive and ordered",
+                "brain.oscillator_period range must be ordered and produce finite positive phase increments",
             ));
         }
         if !(self.brain.weight_init_scale > 0.0) || !self.brain.weight_init_scale.is_finite() {
             return Err(ParamError("brain.weight_init_scale must be positive"));
         }
-        if !(self.reproduction.start_energy > 0.0) {
-            return Err(ParamError("reproduction.start_energy must be positive"));
-        }
-        if self.reproduction.threshold <= self.reproduction.start_energy {
+        if !(self.reproduction.start_energy > 0.0) || !self.reproduction.start_energy.is_finite() {
             return Err(ParamError(
-                "reproduction.threshold must exceed start_energy, or breeding needs no growth",
+                "reproduction.start_energy must be finite and positive",
             ));
+        }
+        if !self.reproduction.threshold.is_finite()
+            || self.reproduction.threshold <= self.reproduction.start_energy
+        {
+            return Err(ParamError(
+                "reproduction.threshold must be finite and exceed start_energy, or breeding needs no growth",
+            ));
+        }
+        if !self.reproduction.gate.is_finite() || !self.feeding.gate.is_finite() {
+            return Err(ParamError("reproduction and feeding gates must be finite"));
         }
         if !(0.0..=1.0).contains(&self.reproduction.energy_split) {
             return Err(ParamError("reproduction.energy_split must be in [0, 1]"));
         }
-        if self.reproduction.spawn_radius < 0.0 {
-            return Err(ParamError("reproduction.spawn_radius must be non-negative"));
+        if !(self.reproduction.spawn_radius >= 0.0) || !self.reproduction.spawn_radius.is_finite() {
+            return Err(ParamError(
+                "reproduction.spawn_radius must be finite and non-negative",
+            ));
         }
         if !(self.feeding.rate >= 0.0) || !self.feeding.rate.is_finite() {
             return Err(ParamError("feeding.rate must be non-negative"));
         }
-        if self.feeding.reach < 0.0 {
-            return Err(ParamError("feeding.reach must be non-negative"));
+        if !(self.feeding.reach >= 0.0) || !self.feeding.reach.is_finite() {
+            return Err(ParamError("feeding.reach must be finite and non-negative"));
+        }
+        if [
+            self.mutation.weight_perturb_rate,
+            self.mutation.weight_reset_rate,
+            self.mutation.neuron_perturb_rate,
+        ]
+        .iter()
+        .any(|value| !(0.0..=1.0).contains(value))
+        {
+            return Err(ParamError("mutation probabilities must be in [0, 1]"));
+        }
+        if [
+            self.mutation.weight_limit,
+            self.mutation.weight_perturb_sigma,
+            self.mutation.bias_perturb_sigma,
+            self.mutation.tau_perturb_factor,
+        ]
+        .iter()
+        .any(|&value| !(value >= 0.0) || !value.is_finite())
+        {
+            return Err(ParamError(
+                "mutation bounds and perturbation scales must be finite and non-negative",
+            ));
         }
         if self
             .plants
@@ -611,9 +693,14 @@ impl SimParams {
         if self.chemo.decay.is_empty() {
             return Err(ParamError("chemo needs at least one channel"));
         }
-        let cells = self.chemo.cells.iter().map(|&c| c as u64).product::<u64>()
-            * self.chemo.channels() as u64;
-        if cells > MAX_CHEMO_CELLS {
+        let cells = self
+            .chemo
+            .cells
+            .iter()
+            .try_fold(self.chemo.channels() as u64, |total, &axis| {
+                total.checked_mul(axis as u64)
+            });
+        if cells.is_none_or(|cells| cells > MAX_CHEMO_CELLS) {
             return Err(ParamError(
                 "chemo grid times channels exceeds the cell ceiling",
             ));
@@ -626,6 +713,14 @@ impl SimParams {
         }
         if !(0.0..=1.0).contains(&self.movement.drag) {
             return Err(ParamError("movement.drag must be in [0, 1]"));
+        }
+        if [self.movement.max_thrust, self.movement.max_turn_rate]
+            .iter()
+            .any(|&value| !(value >= 0.0) || !value.is_finite())
+        {
+            return Err(ParamError(
+                "movement thrust and turn limits must be finite and non-negative",
+            ));
         }
         if !(self.movement.max_speed >= 0.0) || !self.movement.max_speed.is_finite() {
             return Err(ParamError(
@@ -806,11 +901,12 @@ mod tests {
 
         #[test]
         fn anything_that_sized_an_allocation_is_frozen() {
-            let cases: [Case; 4] = [
+            let cases: [Case; 5] = [
                 ("world.max_agents", |p| p.world.max_agents += 1),
                 ("world.size", |p| p.world.size += 1.0),
                 ("plants.max_plants", |p| p.plants.max_plants += 1),
                 ("chemo.cells", |p| p.chemo.cells[0] += 1),
+                ("chemo channels", |p| p.chemo.decay.push(0.5)),
             ];
             for (name, mutate) in cases {
                 let (current, mut next) = pair();
@@ -820,6 +916,15 @@ mod tests {
                     "{name} was accepted"
                 );
             }
+        }
+
+        #[test]
+        fn removing_a_chemo_channel_is_also_rejected() {
+            let (mut current, _) = pair();
+            current.chemo.decay.push(0.5);
+            let mut next = current.clone();
+            next.chemo.decay.pop();
+            assert!(current.check_retune(&next, GRID_CELL).is_err());
         }
 
         #[test]
@@ -964,6 +1069,81 @@ mod tests {
             ("decay above 1", |p| p.chemo.decay = vec![1.4]),
             ("negative max speed", |p| p.movement.max_speed = -1.0),
             ("negative metabolic cost", |p| p.metabolism.base = -1.0),
+            ("infinite world size", |p| p.world.size = f32::INFINITY),
+            ("infinite timestep", |p| p.world.dt = f32::INFINITY),
+            ("negative body size", |p| p.body.size = -1.0),
+            ("non-finite body size", |p| p.body.size = f32::NAN),
+            ("negative thrust limit", |p| p.movement.max_thrust = -1.0),
+            ("non-finite turn limit", |p| {
+                p.movement.max_turn_rate = f32::NAN
+            }),
+            ("negative vision range", |p| p.sensing.vision_range = -1.0),
+            ("non-finite chemo radius", |p| {
+                p.sensing.chemo_radius = f32::NAN
+            }),
+            ("negative vision field of view", |p| {
+                p.sensing.vision_fov = -1.0
+            }),
+            ("non-finite tau minimum", |p| p.brain.tau_min = f32::NAN),
+            ("infinite tau maximum", |p| p.brain.tau_max = f32::INFINITY),
+            ("non-finite oscillator minimum", |p| {
+                p.brain.oscillator_period_min = f32::NAN
+            }),
+            ("infinite oscillator maximum", |p| {
+                p.brain.oscillator_period_max = f32::INFINITY
+            }),
+            ("oscillator phase increment overflows", |p| {
+                p.brain.oscillator_period_min = 1e-38
+            }),
+            ("tau reciprocal overflows", |p| p.brain.tau_min = 1e-40),
+            ("neuron count overflows", |p| {
+                p.brain.hidden_neurons = u32::MAX
+            }),
+            ("oscillator count overflows", |p| {
+                p.brain.oscillators = u32::MAX
+            }),
+            ("arena byte count overflows WASM32", |p| {
+                p.brain.hidden_neurons = 200
+            }),
+            ("non-finite starting energy", |p| {
+                p.reproduction.start_energy = f32::INFINITY
+            }),
+            ("non-finite breeding threshold", |p| {
+                p.reproduction.threshold = f32::NAN
+            }),
+            ("non-finite reproduction gate", |p| {
+                p.reproduction.gate = f32::NAN
+            }),
+            ("non-finite spawn radius", |p| {
+                p.reproduction.spawn_radius = f32::NAN
+            }),
+            ("non-finite feeding gate", |p| p.feeding.gate = f32::NAN),
+            ("non-finite feeding reach", |p| p.feeding.reach = f32::NAN),
+            ("negative plant radius", |p| p.plants.radius = -1.0),
+            ("negative scent rate", |p| p.plants.scent_rate = -1.0),
+            ("negative weight bound", |p| p.mutation.weight_limit = -1.0),
+            ("negative mutation sigma", |p| {
+                p.mutation.weight_perturb_sigma = -1.0
+            }),
+            ("non-finite bias sigma", |p| {
+                p.mutation.bias_perturb_sigma = f32::NAN
+            }),
+            ("negative tau perturbation", |p| {
+                p.mutation.tau_perturb_factor = -1.0
+            }),
+            ("weight perturbation probability above one", |p| {
+                p.mutation.weight_perturb_rate = 1.1
+            }),
+            ("negative weight reset probability", |p| {
+                p.mutation.weight_reset_rate = -0.1
+            }),
+            ("non-finite neuron perturbation probability", |p| {
+                p.mutation.neuron_perturb_rate = f32::NAN
+            }),
+            ("chemo sizing overflows u64", |p| {
+                p.chemo.cells = [u32::MAX, u32::MAX, 1];
+                p.chemo.decay.push(0.5);
+            }),
         ];
         for (name, break_it) in cases {
             let mut params = SimParams::default();

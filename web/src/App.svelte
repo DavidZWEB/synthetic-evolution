@@ -252,15 +252,15 @@
       if (message.fatal) {
         running = false;
         transport = null;
-        if (message.context === 'create') {
-          runValidation.cancel();
-          nextSim.destroy();
-          sim = null;
-          activeRun = null;
-          if (startingSource === 'url' && previousShareUrl) {
-            shareUrl = previousShareUrl;
-            globalThis.history.replaceState(null, '', previousShareUrl);
-          }
+        runValidation.cancel();
+        nextSim.destroy();
+        sim = null;
+        activeRun = null;
+        latestFrame = null;
+        inspector.select(null);
+        if (message.context === 'create' && startingSource === 'url' && previousShareUrl) {
+          shareUrl = previousShareUrl;
+          globalThis.history.replaceState(null, '', previousShareUrl);
         }
       }
     });
@@ -415,8 +415,10 @@
     font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #d8dee9;
     height: 100vh;
+    height: 100dvh;
     display: grid;
-    grid-template-rows: auto 1fr auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
   .stage { position: relative; min-height: 0; }

@@ -156,7 +156,7 @@ authoritative full list.
 | WASM boundary | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
-| Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
+| Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web`; `npm run test:browser --prefix web` |
 
 `npm run dev` and `npm run build` rebuild the WASM bindings before Vite starts.
 Native tests include the golden hash but cannot prove cross-target agreement; run the

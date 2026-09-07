@@ -694,9 +694,11 @@ predicting is not measuring, and nothing here has profiled it.
 
 Left as a measurement rather than an optimisation. Phase 7 is the performance milestone
 and owns SIMD and `rayon`; reaching for either now would be optimising `sim-core` against
-a number, which is the loop CLAUDE.md keeps separate from tuning for good reason. The
-population also cannot *stay* at 5000 under the shipped economy — it starves in ~400
-ticks — so 5k is a stress figure rather than a steady state anything currently reaches.
+a number without first profiling the bottleneck. Keep performance work separate from
+the ecology-tuning loop (spec §7.5, §7.9). Under M9's then-shipped economy the population
+also starved in roughly 400 ticks, so 5k was a stress figure rather than a steady state.
+M12's acceptance tuning supersedes that ecological baseline, not this throughput
+measurement.
 
 **Decisions taken here.**
 
