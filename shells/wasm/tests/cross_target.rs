@@ -21,6 +21,14 @@ use wasm_bindgen_test::wasm_bindgen_test;
 mod common;
 use common::*;
 
+#[path = "../../../sim-core/tests/common/storage_case.rs"]
+mod storage_case;
+
+#[wasm_bindgen_test]
+fn variable_storage_agrees_with_native_in_both_heredity_modes() {
+    storage_case::check_variable_storage_runs();
+}
+
 #[wasm_bindgen_test]
 fn wasm_agrees_with_native() {
     check_golden_runs();

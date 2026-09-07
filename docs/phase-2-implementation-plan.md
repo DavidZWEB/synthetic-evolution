@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M1 world-storage integration is in progress under the approved budget policy.**
+**Status: M1 world-storage integration is implemented under the approved budget policy.**
 The remaining M0 mutation, distance, control-protocol, and lineage choices are still
 pending. The agreed scope includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -21,7 +21,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
 | M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 allocator/budget policy approved; other contracts open |
-| M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | in progress: pooled world storage and diagnostics |
+| M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; M0 mutation/control decisions | not started |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
@@ -311,16 +311,30 @@ World-level tests force failure in each constituent arena and prove no leaked bl
 or lost parent energy. A world hosts genomes both larger and smaller than its founder
 and compiles/steps them correctly.
 
-Reassess state hashing: raw offsets may remain irrelevant, but free-span state that
-affects future birth success is not. If hash coverage changes, commit that separately
-from dynamics changes with its own references and explanation. Preserve trajectories
-for the Phase 1 configuration even if its strengthened hash changes.
+Variable-arena free spans and live handle placement are future-relevant: freeing a
+particular agent changes which later births fit. Hash them without including stale
+free-space payload. Keep coverage changes separate from dynamics changes, with their
+own references and explanation, and preserve Phase 1 trajectories.
+
+**Delivered in the integration slice:** pooled genome/neuron/synapse/sensor/effector
+arenas, checked construction accounting, per-genome boundary limits, transactional
+claims, variable-width scratch and scalar-control redraw, and opt-in spawn-refusal
+observations. Native metrics schema 3 and WASM `storage_diagnostics()` expose pressure
+without turning optional counters into simulation state. Native metrics schemas 1/2
+are explicitly rejected rather than reinterpreted.
+
+The integration retained both original Phase 1 golden references. A separate
+coverage commit then added arena capacity/free-span state and live handle placement
+to the hash, with updated references and a shared variable-storage scenario in both
+heredity modes. The hand-built scenarios establish storage, energy, and continuation
+contracts; they do not establish useful evolved complexity.
 
 ## M2 - Neural structural mutation and topology-safe control
 
-Implement D2's neuron/connection operators and D3's topology-safe scalar-heredity
-control together with integration into births. D3's separate structural-null
-experiment is implemented in M8 under its M0-approved protocol. Extract the mutation
+Implement D2's neuron/connection operators and the approved D3 structural-heredity
+semantics together with integration into births, reusing M1's topology-safe scalar
+redraw. D3's separate structural-null experiment is implemented in M8 under its
+M0-approved protocol. Extract the mutation
 pipeline as a slice/buffer-based system rather than adding each operator to
 `tick.rs`. Extend validation to generated IDs, endpoint uniqueness, sorting, capacity
 bounds, and finite compiled parameters.

@@ -742,8 +742,17 @@ configuration and a 500-tick reproduction-heavy configuration, each with 200 fou
 The former must remain populated; the latter must actually produce offspring, so an
 empty or non-reproducing run cannot satisfy the intended coverage.
 
+Phase 2 M1 additionally shares
+[`sim-core/tests/common/storage_case.rs`](../sim-core/tests/common/storage_case.rs):
+a hand-expanded genome feeds, reproduces, hits a pooled-neuron limit, and continues
+stepping in both heredity modes. This pins the variable-storage path across targets,
+not a claim that useful structure evolved.
+
 `state_hash` folds world state, including positions, energies, genomes, recurrent neural
-state, future slot-allocation order, RNG state, and tick. A behavior-changing refactor
+state, future slot-allocation order, variable-arena capacities/free spans and live
+handle placement, RNG state, and tick. Allocator layout matters because freeing an
+agent changes fragmentation and later birth success. Stale free-space payload and
+optional observer counters are not authoritative. A behavior-changing refactor
 must not silently move the reference; an intended behavior change requires a deliberate,
 reviewable update. Strengthening hash coverage can also change references without
 changing trajectories, and must be identified as such. Seed, params, and heredity mode

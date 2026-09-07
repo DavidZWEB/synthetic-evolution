@@ -6,19 +6,19 @@
 //! criterion exists to rule out. Included by path rather than imported because a test
 //! fixture is not part of `sim-core`'s public surface and should not become one.
 //!
-//! References were refreshed before Phase 2 because the hash now includes recurrent
-//! neural state, slot generations/free-list order, and part values, and founders now
-//! carry the specified Z turn axis. These are coverage/metadata corrections, not
-//! changes to the current tick dynamics or tuned defaults.
+//! Phase 2 M1 refreshes references solely to include variable-arena capacity/free-span
+//! state and live handle placement. The preceding storage-integration commit retains
+//! the old references, proving that shipped trajectories did not move. Earlier hashes
+//! already covered recurrent state, pool order/incarnations, parts, and turn metadata.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0xaaf5_181d_9e0a_8ba6;
+pub const SHIPPED_GOLDEN: u64 = 0x6664_43a1_234e_66f8;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0x63f1_9115_2592_88aa;
+pub const BREEDING_GOLDEN: u64 = 0x1121_6798_795d_01cd;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;
