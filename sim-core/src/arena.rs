@@ -8,6 +8,8 @@
 //! Phase 1 has fixed brain topology, so every block is the same stride and allocation
 //! is a free-list pop. The handle carries `len` anyway, so Phase 2's variable-length
 //! genomes can change allocation without replacing each system's slice-based interface.
+//! [`VariableArena`] provides that allocator independently; `World` still uses the
+//! fixed-stride [`Arena`] until its storage budgets and integration are approved.
 //!
 //! # This is where the simulation's memory is
 //!
@@ -41,6 +43,10 @@
 //! Deliberately not here: what the elements mean. This module stores blocks.
 
 use serde::{Deserialize, Serialize};
+
+mod variable;
+
+pub use variable::{AllocationFailure, ArenaBuildError, VariableArena};
 
 /// A block of `len` elements starting at `offset`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]

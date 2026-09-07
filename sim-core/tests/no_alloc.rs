@@ -13,6 +13,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
 use glam::Vec3;
+use sim_core::arena::{AllocationFailure, VariableArena};
 use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
 use sim_core::params::SimParams;
@@ -80,6 +81,66 @@ fn the_counter_actually_counts() {
         observed > 0,
         "the counting allocator is not observing allocations"
     );
+}
+
+#[test]
+fn variable_arena_churn_and_refusals_never_allocate() {
+    let mut arena = VariableArena::<u32>::try_with_capacity(96, 8).unwrap();
+    let mut limited = VariableArena::<u32>::try_with_capacity(8, 1).unwrap();
+
+    let observed = count_allocations(|| {
+        for _ in 0..1_000 {
+            let a = arena.alloc(8).unwrap();
+            let b = arena.alloc(16).unwrap();
+            let c = arena.alloc(24).unwrap();
+            let d = arena.alloc(32).unwrap();
+            arena.get_mut(b).fill(42);
+            arena.free(b);
+            arena.free(d);
+            assert_eq!(arena.alloc(56), Err(AllocationFailure::Fragmented));
+            assert_eq!(arena.alloc(65), Err(AllocationFailure::InsufficientSpace));
+            let replacement = arena.alloc(16).unwrap();
+            assert!(arena.get(replacement).iter().all(|&value| value == 0));
+            arena.free(a);
+            arena.free(c);
+            arena.free(replacement);
+            let whole = arena.alloc(96).unwrap();
+            arena.free(whole);
+
+            let block = limited.alloc(1).unwrap();
+            assert_eq!(limited.alloc(1), Err(AllocationFailure::BlockLimit));
+            let empty = limited.alloc(0).unwrap();
+            limited.free(empty);
+            limited.free(block);
+        }
+    });
+    assert_eq!(observed, 0, "variable arena allocated {observed} times");
+}
+
+#[test]
+fn variable_arena_resets_by_copy_without_calling_default() {
+    #[derive(Clone, Copy)]
+    struct AllocatingDefault(u32);
+
+    impl Default for AllocatingDefault {
+        fn default() -> Self {
+            let values = std::hint::black_box(vec![17u32; 4]);
+            Self(values[0])
+        }
+    }
+
+    let mut arena = VariableArena::<AllocatingDefault>::try_with_capacity(8, 1).unwrap();
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            let block = arena.alloc(8).unwrap();
+            assert!(arena.get(block).iter().all(|value| value.0 == 17));
+            for value in arena.get_mut(block) {
+                value.0 = 99;
+            }
+            arena.free(block);
+        }
+    });
+    assert_eq!(observed, 0, "reset invoked an allocating Default");
 }
 
 #[test]
