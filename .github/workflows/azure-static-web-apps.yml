@@ -23,14 +23,14 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
     branches: [main]
   # Unlike pull_request, pull_request_target still runs when a PR is conflicted.
   # This close-only path never checks out or executes PR code, but can use the
   # deployment secret to remove previews reliably. It is intentionally unfiltered
   # by base branch so a PR retargeted away from main still tears down its preview.
   pull_request_target:
-    types: [closed, edited]
+    types: [closed]
 
 # repo_token below comments the preview URL on the pull request. The repository's
 # default workflow permissions are read-only, so this permission must be explicit.
@@ -50,8 +50,6 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.head_branch == github.event.repository.default_branch) ||
       (github.event_name == 'pull_request' &&
-       (github.event.action != 'edited' ||
-        github.event.changes.base.ref.from != '') &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.pull_request.user.login != 'dependabot[bot]')
     # Serialize Azure operations for one destination. Each run rechecks live state,
@@ -81,7 +79,6 @@ jobs:
                 'deploy',
                 data.commit.sha === context.payload.workflow_run.head_sha ? 'true' : 'false',
               );
-              core.setOutput('close', 'false');
               return;
             }
 
@@ -100,7 +97,6 @@ jobs:
               pull.head.sha === context.payload.pull_request.head.sha &&
               pull.base.sha === context.payload.pull_request.base.sha;
             core.setOutput('deploy', eligible && current ? 'true' : 'false');
-            core.setOutput('close', eligible ? 'false' : 'true');
 
       # A workflow_run event carries the default branch's ref, not the commit that
       # was tested, so the tested SHA has to be named explicitly. Deploying
@@ -157,7 +153,6 @@ jobs:
                 'deploy',
                 data.commit.sha === context.payload.workflow_run.head_sha ? 'true' : 'false',
               );
-              core.setOutput('close', 'false');
               return;
             }
 
@@ -176,7 +171,6 @@ jobs:
               pull.head.sha === context.payload.pull_request.head.sha &&
               pull.base.sha === context.payload.pull_request.base.sha;
             core.setOutput('deploy', eligible && current ? 'true' : 'false');
-            core.setOutput('close', eligible ? 'false' : 'true');
 
       - name: Deploy
         if: steps.current.outputs.deploy == 'true'
@@ -198,25 +192,10 @@ jobs:
           # missing Rust toolchain.
           skip_app_build: true
 
-      # If a stale run displaced teardown, finish that teardown instead of recreating
-      # the closed or retargeted PR's environment.
-      - name: Close stale preview
-        if: >-
-          github.event_name == 'pull_request' &&
-          (steps.initial.outputs.close == 'true' ||
-           steps.current.outputs.close == 'true')
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          action: close
-          app_location: /dev/null
-
   close_pull_request:
     if: >-
       github.event_name == 'pull_request_target' &&
-      (github.event.action == 'closed' ||
-       (github.event.action == 'edited' &&
-        github.event.changes.base.ref.from == github.event.repository.default_branch)) &&
+      github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
