@@ -248,6 +248,15 @@ Genetic distance (NEAT compatibility):
 δ = c1 * (disjoint / N) + c2 * (excess / N) + c3 * meanWeightDiff
 ```
 
+This measures retained innovation history, not functional wiring equality. Physical
+deletion discards an ancestry marker: independently recreating the same connection
+with a fresh ID increases disjoint/excess distance against a retained-ID counterpart,
+even if the resulting wiring is equivalent. Surviving matching IDs still denote
+shared origin. Phase 2 must review deletion policy and distance interpretation
+together, measuring deletion/recreation against retention/toggling and the resulting
+cluster changes before approving nonzero shipped physical-removal rates. Extra
+species labels caused by marker turnover are not evidence of useful divergence.
+
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
 - **Reproductive isolation:** agents will only mate if δ < threshold. This means speciation is a real event in the sim, not just a coloring of the plot — and it means mate choice itself becomes an evolvable behavior.
@@ -714,7 +723,23 @@ hash match alone cannot prove exact continuation.
 
 Every phase success criterion in §8 is a judgment about whether something *interesting* evolved. No assertion covers this, and no amount of Tier 1 and 2 passing implies it. Treat any claim that a phase is complete on the strength of green tests as unverified.
 
-The one tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them, breaking cumulative neural evolution without changing sensors, body, or ecology. If you can't distinguish it from the evolved population, nothing has evolved. In automated reporting (§7.9), every behavioral metric should be printed alongside the control's value for the same metric.
+A tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them. In Phase 1's fixed topology this breaks cumulative neural-scalar inheritance without changing sensors, body, or ecology. Indistinguishable behavior does not establish a benefit from that inheritance. In automated reporting (§7.9), every behavioral metric should be printed alongside the relevant control's value for the same metric.
+
+**DECIDED: Phase 2 also requires an approved structural-null comparison before
+acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone
+establish that structural growth is adaptive. Decide the structural-null protocol at
+M0 and implement/report it with M8's experiments, rather than discovering the missing
+instrument at M9. Approval must name the structural contribution or inheritance
+disrupted, the preserved quantities, metabolic and sensory confounds, cohort/seed
+matching, measurements, and limits on interpretation. Resetting to founder topology
+or arbitrary rewiring is not assumed to control those confounds.
+
+Report the structural-null and scalar-heredity comparisons distinctly across
+multiple seeds. Early viability experiments need not wait for the structural-null
+implementation, but useful-structure claims and Phase 2 acceptance do. Missing or
+inconclusive structural evidence cannot be replaced by gene counts or human
+impressions alone. The evidence informs, rather than replaces, the human judgment
+required by §8.
 
 ### 7.9 The experiment loop
 
@@ -771,7 +796,10 @@ Determinism is what makes this trustworthy: every result is a reproducible `(see
 ### 7.10 Manual checkpoints (Phase 2)
 
 **DECIDED:** basic manual checkpoints arrive after Phase 2's storage, species, and
-ancestry work, before its longer founder experiments. A checkpoint preserves a
+ancestry work. They enable checkpoint-assisted inspection but are not a prerequisite
+for starting founder experiments; those can begin with configurable founders and
+existing telemetry, then acquire richer evidence as observability lands. Manual
+checkpoints remain required before Phase 2 is complete. A checkpoint preserves a
 complete running world at a between-ticks boundary; an exported phylogeny preserves
 history and is not a substitute for resumable state.
 

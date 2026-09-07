@@ -6,21 +6,21 @@ acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
 **Status: draft for human review. No Phase 2 implementation is authorized by this
-document yet.** The agreed scope includes add/remove sensors and basic manual
-checkpoints. The implementation choices in M0 remain proposals, not additions to the
-normative spec until approved.
+document yet.** The agreed scope includes add/remove sensors, basic manual
+checkpoints, and a structural-null comparison before acceptance. The implementation
+choices in M0 remain proposals, not additions to the normative spec until approved.
 This change records the plan only; it does not change simulation code or defaults.
 
 ## Scope and status
 
 The success criterion is **brains grow in complexity and distinct species appear**,
 judged by a human with reproducible, multi-seed evidence and a clearly described
-random-brain control alongside. More genes or more cluster labels alone are not
-evidence that useful complexity evolved.
+scalar-heredity control and an approved structural-null comparison alongside. More
+genes or more cluster labels alone are not evidence that useful complexity evolved.
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve the contracts below and update the spec | This review | under review |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | This review | under review |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | M0 storage decision | not started |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; M0 mutation/control decisions | not started |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
@@ -28,12 +28,18 @@ evidence that useful complexity evolved.
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
-| M8 Founder experiments | Multi-seed founder/complexity-cost experiments | M3-M7 | not started |
-| M9 Acceptance | Mechanical evidence and human judgment | M8 | not started |
+| M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
+| M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
 Each milestone can span several PRs. Keep allocation, mutation, classification,
 history, and presentation as separate concepts rather than expanding `World` into
 their implementation. Systems still take the slices they need.
+
+Milestone numbers identify deliverables, not a strictly serial schedule. M8's
+founder-viability work can start after M3 and overlap M4-M7. Species conclusions need
+M4-M6's measurements, and useful-structure claims need M0's approved structural-null
+protocol implemented in M8. M7 enables checkpoint-assisted inspection when available;
+it does not block experiments, but remains required for M9.
 
 Each core milestone wires its parameters, validation, control-protocol metadata, and
 changed contracts through the existing native/WASM/browser boundaries in the same
@@ -44,7 +50,8 @@ milestones with stale telemetry headers, broken controls, or unshareable paramet
 connection; connection enable/disable; add/remove sensors using the existing
 modalities; genetic distance; species assignment; phylogeny; the telemetry and
 presentable 2D UI needed to observe these; manual checkpoint save/load in native and
-browser shells; simpler-founder experiments.
+browser shells; simpler-founder experiments and the required structural-null
+comparison.
 
 **Not in scope:** sex or reproductive isolation enforcement, new sensory modalities,
 new effector kinds or effector-structure mutation, predation, signaling, body
@@ -76,9 +83,11 @@ reason to promise Phase 7 scale here.
 
 ## M0 - Decisions to approve before their implementation
 
-**Including sensor addition/removal and basic manual checkpoints in Phase 2** is
-settled by this planning discussion. The approved checkpoint contract is in spec
-section 7.10. Recommendations in this section deliberately expose the choices that
+**Including sensor addition/removal, basic manual checkpoints, and a structural-null
+comparison before acceptance in Phase 2** is settled by this planning discussion.
+The approved checkpoint and evidence requirements are in spec sections 7.10 and 7.8;
+the actual structural-null protocol still needs M0 approval. Recommendations in this
+section deliberately expose the choices that
 would otherwise become accidental selection pressures or misleading measurements.
 Approve them before the dependent milestone, and record the resulting contracts in
 the relevant spec sections in the same change.
@@ -127,6 +136,18 @@ must preserve the Phase 1 trajectory.
 | Add sensor | Add a supported modality plus one fresh target neuron per channel atomically. New channels become useful through the connection operator; they must be reachable from a sensor-poor founder. |
 | Remove sensor | Remove the sensor gene, leaving its target neurons coherent and available to the neural operators (spec section 2.2c). |
 
+**Physical deletion and D4 must be approved together.** Deleting an edge discards its
+innovation marker; re-adding the same endpoints gets a fresh ID, unlike re-enabling a
+retained edge. That can increase historical distance and create cluster labels
+without a corresponding change in functional wiring. Removing/rebuilding a neuron
+and its connections raises the same measurement question. This is not just a choice
+of removal rates.
+
+**Recommendation:** keep physical neuron/connection removal rates at zero in shipped
+defaults until M4's deletion/recreation comparisons inform joint D2/D4 approval.
+Implement and exercise deletion with explicit test/experiment parameters in M2; a
+zero shipped rate must not become an excuse to leave the operator unimplemented.
+
 Use fresh monotonic IDs for new structural origins, retain IDs for inherited genes,
 and do not add a NEAT-style global event-deduplication registry implicitly. Define
 ID exhaustion without wrapping into `NULL_ID`. Canonical ordering is by kind and ID,
@@ -146,10 +167,23 @@ match the evolving world's founders exactly for the same seed/params.
 
 This control can evolve topology and sensors. It tests cumulative **neural scalar**
 inheritance, not the absence of all evolution. It cannot alone establish that
-structural growth is adaptive. Label that limitation in reports and UI, and approve
-any additional structural-null experiment before claiming stronger evidence.
+structural growth is adaptive. Label that limitation in reports and UI.
 Do not reset every child to the founder topology: that changes both complexity
 costs and sensory opportunity, confounding the comparison.
+
+**Decided: a structural-null comparison is required before Phase 2 acceptance.**
+M0 must approve its protocol, not leave the presence of a null model to M9. Record
+which structural contribution or inheritance it disrupts, what quantities it
+preserves, how it controls or accounts for metabolic costs and sensory opportunity,
+the seed/cohort matching, the measured outcomes, and the claims it cannot support.
+An arbitrary rewiring or founder reset is not automatically a valid null.
+
+M8 implements and reports that experiment alongside the scalar-heredity comparison,
+with distinct protocol identities and results. No implementation algorithm is
+approved by this requirement alone. Early founder-viability runs may proceed
+without it, but they cannot establish useful structural adaptation or complete M8's
+evidence. A missing or inconclusive comparison is not a pass based on human
+impressions alone; human judgment remains necessary once the evidence is available.
 
 Replace founder-position-dependent randomization before enabling structural
 mutation. Version the control protocol in telemetry rather than silently changing
@@ -169,6 +203,15 @@ connection-only distance is another reasonable choice, but it under-reports orga
 gain/loss. This proposal does not add bias, tau, sensor-parameter, or enabled-state
 distance terms. Similarity by this formula is not full genome equality. Avoid an
 implicit small-genome normalization heuristic; any such policy must be explicit.
+
+**D2's physical deletion changes how this distance should be interpreted.** Matching
+surviving IDs still marks shared origin, but a deleted then independently recreated
+gene no longer matches its ancestral counterpart. Compare retention/toggling with
+deletion/recreation of otherwise equivalent wiring, including repeated churn and
+threshold crossings, before approving nonzero shipped removal rates. Record which
+new species labels reflect marker turnover rather than functional divergence. Do
+not silently recover old IDs by endpoint matching or add a registry to hide the
+effect; either would be another mutation/ancestry design choice.
 
 ### D5 - Stable species, not labels that change every frame
 
@@ -241,10 +284,12 @@ for the Phase 1 configuration even if its strengthened hash changes.
 
 ## M2 - Neural structural mutation and topology-safe control
 
-Implement D2's neuron/connection operators and D3's control together with integration
-into births. Extract the mutation pipeline as a slice/buffer-based system rather
-than adding each operator to `tick.rs`. Extend validation to generated IDs, endpoint
-uniqueness, sorting, capacity bounds, and finite compiled parameters.
+Implement D2's neuron/connection operators and D3's topology-safe scalar-heredity
+control together with integration into births. D3's separate structural-null
+experiment is implemented in M8 under its M0-approved protocol. Extract the mutation
+pipeline as a slice/buffer-based system rather than adding each operator to
+`tick.rs`. Extend validation to generated IDs, endpoint uniqueness, sorting, capacity
+bounds, and finite compiled parameters.
 
 **Done when:** property tests run long edit sequences over variable topologies and
 assert coherent references, inherited IDs, fresh IDs, bounded size, and deterministic
@@ -259,6 +304,8 @@ Pin a structural-mutation scenario shared by native and WASM, including actual
 births, removals, and capacity failures. Keep structural rates disabled in shipped
 defaults until the operator/control contract is approved and integration is ready;
 enable them deliberately, not as an incidental consequence of a new default field.
+Physical deletion also retains D2/D4's joint approval gate; its forced scenarios
+exist even while shipped deletion rates remain zero.
 
 ## M3 - Sensor mutation and configurable founders
 
@@ -297,6 +344,11 @@ account for unavailable classification under the approved capacity policy.
 Include repeated multi-world and native/WASM agreement with real species creation.
 Measure classification and representative-storage cost under high species churn;
 do not add an all-pairs population distance pass every tick.
+
+Include D2/D4's controlled deletion/recreation cases in distance and classification
+coverage. Report the distance and cluster changes against retained-ID counterparts
+so approving removal rates accounts for their measurement effect, not only whether
+the resulting genomes validate.
 
 ## M5 - Stable ancestry and retained history
 
@@ -343,8 +395,10 @@ canvas. Seed URLs reconstruct the intended configuration without lossy IDs.
 ## M7 - Manual portable checkpoints
 
 **Approved scope:** bring basic save/load forward from Phase 7, after variable-length
-storage, species, ancestry, and their browser surfaces settle, and before M8's longer
-experiments. This is separate from M5's history export and M6's observation UI.
+storage, species, ancestry, and their browser surfaces settle. This is separate from
+M5's history export and M6's observation UI, and can proceed alongside M8 experiments.
+Checkpoint-assisted inspection is an enabler, not a prerequisite for gathering
+evidence; completing M7 is still required before M9 declares Phase 2 complete.
 
 Implement spec section 7.10's shared, versioned full-world checkpoint format. The
 native shell reads/writes files; the browser offers download/import through the
@@ -390,15 +444,25 @@ milestone provides manual exact continuation, not the Phase 7 overnight-run mana
 
 ## M8 - Founder and complexity experiments
 
-Use the existing native paired-telemetry workflow. Compare a small, declared set of
-founder compositions, including the accepted dense baseline and chemo-led sparse
-candidates. Report at least three seeds per configuration with ranges and variance.
-Measure viability, reproduction, neurons/connections/sensors, species persistence,
-capacity pressure, energy flow, and simulation throughput alongside the control.
+Start founder-viability experiments after M3 using the existing native
+paired-telemetry workflow. Compare a small, declared set of founder compositions,
+including the accepted dense baseline and chemo-led sparse candidates. Report at
+least three seeds per configuration with ranges and variance. Measure viability,
+reproduction, neurons/connections/sensors, capacity pressure, energy flow, and
+simulation throughput alongside the scalar-heredity control. Before M4-M6 land,
+mark species-based evidence unavailable rather than infer it from genome variants.
 
-Use M7 to retain manually selected moments for human inspection without replaying
-the entire run. Record checkpoint provenance and retain matching control checkpoints
-when an experiment will be resumed or compared from that tick.
+Complete the evidence with species persistence and M0's approved structural-null
+experiment once the required measurements are available. Implement that protocol
+in this milestone, update affected reporting/UI contracts, and publish its
+multi-seed results separately from the scalar control's. State confounds and
+uncertainty; structural-null evidence must address useful inherited structure, not
+just total gene counts. M8 is not complete with founder viability alone.
+
+When M7 is available, use it to retain selected moments for inspection without
+replaying the entire run. Before then, use live observation and seed replay.
+Record checkpoint provenance and retain matching control checkpoints when an
+experiment will be resumed or compared from that tick.
 
 Tune existing/new parameters rather than changing mechanisms in response to outcomes.
 Retain the current energy accounting and disabled-connection cost policy unless a
@@ -419,10 +483,14 @@ hashing, and native/WASM agreement; founder-only scenarios are insufficient.
 Generated contracts and real-browser checks are required when their surfaces change.
 
 Human review must distinguish useful inherited complexity and persistent species
-from transient mutations, threshold-created labels, or a misleading scalar-only
-control comparison. Record seeds, complete params, source revision, control protocol,
-duration, metric variance, and what was observed. Mechanical success alone cannot
-mark this phase complete.
+from transient mutations, deletion-driven marker turnover, threshold-created labels,
+or a misleading scalar-only control comparison. Require M8's completed
+structural-null evidence under the M0-approved protocol, alongside its scalar
+control results; no structural comparison means acceptance is blocked, not waived.
+Record seeds, complete params, source revision, both control protocols, duration,
+metric variance, limitations, and what was observed. M7 must also be delivered even
+though experiments did not depend on it. Mechanical success alone cannot mark this
+phase complete.
 
 Every implementation PR lands on a branch and receives a post-opening diff review.
 Keep independent golden-hash causes in separate commits, each with its own reference
