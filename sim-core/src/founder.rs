@@ -224,7 +224,7 @@ impl FounderPlan {
     }
 
     /// Phase 1's hardcoded sensor set: `vision_rays` eyes, a nose, and one
-    /// interoceptor for the agent's own energy (build plan task 5).
+    /// interoceptor for the agent's own energy (spec §4.1).
     fn sensor_layout(params: &SimParams) -> impl Iterator<Item = Modality> {
         core::iter::repeat_n(Modality::VisionRay, params.sensing.vision_rays as usize)
             .chain(BASE_SENSORS)
