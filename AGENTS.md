@@ -219,4 +219,9 @@ still worth writing properly — but the prefill is editable and the title falls
 PR's, so read the squash message before merging rather than trusting it. The explanation
 for any golden-hash update must survive into the squash message.
 
+Keep independent causes of golden-hash changes in separate commits, each with its own
+reference update and explanation. Review, revert, and bisect must be able to distinguish
+a dynamics change from expanded hash coverage or corrected metadata, even when the PR
+will eventually squash.
+
 Fix what is plainly wrong; raise judgment calls as comments and let the human decide.
