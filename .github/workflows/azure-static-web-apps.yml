@@ -7,8 +7,10 @@
 #
 # It does not run the tests itself. Production deploys are triggered by ci.yml
 # finishing, and only when it succeeded, so main can only reach the live site on a
-# commit whose suite passed. Pull requests build in CI but do not deploy; the closed
-# event remains temporarily so previews created by older workflow revisions are removed.
+# commit whose suite passed. Same-repository pull requests deploy straight from their
+# PR events so Azure can create and update its native per-PR preview environment. CI
+# still reports independently; fork and Dependabot PRs cannot receive the deployment
+# secret and are deliberately skipped.
 #
 # One consequence of workflow_run worth knowing before editing this file: GitHub
 # always runs the copy of it that is on the default branch. Changes to the production
@@ -21,33 +23,42 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [closed]
+    types: [opened, synchronize, reopened, closed]
     branches: [main]
 
-# A second push to the same branch makes the first deploy irrelevant.
+# A newer event for the same production branch or PR makes the older deploy irrelevant.
 concurrency:
-  group: swa-${{ github.workflow }}-${{ github.ref }}
+  group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# repo_token below comments the preview URL on the pull request. The repository's
+# default workflow permissions are read-only, so this permission must be explicit.
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   build_and_deploy:
-    # A CI run that failed, was cancelled, or was skipped is not a green light.
+    # A CI run that failed, was cancelled, or was skipped is not a production green
+    # light. PR previews are intentionally independent so a failing change can still
+    # be inspected. Never run untrusted fork or Dependabot code with the Azure token.
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'pull_request' &&
+       github.event.action != 'closed' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
       # A workflow_run event carries the default branch's ref, not the commit that
       # was tested, so the tested SHA has to be named explicitly. Deploying
-      # github.ref here would ship whatever main happens to be at now, which is not
-      # necessarily what CI just passed.
+      # github.ref there would ship whatever main happens to be at now. A PR preview
+      # uses GitHub's merge commit so it shows the result against current main.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -62,8 +73,8 @@ jobs:
 
       # scripts/setup.sh is the single source of truth for what a working checkout
       # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
-      # and npm ci. ci.yml has already run the suite on this commit before this
-      # workflow is triggered; browser automation is opt-in and is not requested here.
+      # and npm ci. CI owns the test suite; this workflow only prepares the deployable
+      # artifact, and browser automation is not needed for that.
       - name: Set up toolchains and install dependencies
         run: ./scripts/setup.sh --skip-tests
 
@@ -76,6 +87,7 @@ jobs:
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           # When skip_app_build is true, this action zips and uploads app_location
           # verbatim — it does NOT combine it with output_location, despite
@@ -91,12 +103,15 @@ jobs:
           skip_app_build: true
 
   close_pull_request:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
-      # Tears down previews created before PR deployment was disabled. No checkout or
-      # build is needed, and this job can be removed once those previews are gone.
+      # Tears down the per-PR preview site. No checkout or build is needed.
       - uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
