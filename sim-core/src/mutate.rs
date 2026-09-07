@@ -94,7 +94,8 @@ mod tests {
             let id = crate::ids::InnovationId::new(next_id);
             next_id += 1;
             id
-        });
+        })
+        .expect("valid founder params");
         let mut genes = vec![Gene::default(); plan.genes().len()];
         plan.instantiate(&mut Rng::from_seed(2), &params, &mut genes);
         let before = weights(&genes);
@@ -187,7 +188,7 @@ mod tests {
                     let mut n = 0u32;
                     move || { n += 1; crate::ids::InnovationId::new(n - 1) }
                 },
-            ).genes().to_vec();
+            ).expect("valid founder params").genes().to_vec();
             let mut rng = Rng::from_seed(seed);
             let params = MutationParams { neuron_perturb_rate: 1.0, ..MutationParams::default() };
             // Founder templates leave scalars at zero; give tau a legal start first.

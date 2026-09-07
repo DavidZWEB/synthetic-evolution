@@ -122,7 +122,7 @@ impl World {
             let id = InnovationId::new(next_innovation);
             next_innovation += 1;
             id
-        });
+        })?;
         let brain_stride = plan.neuron_count() as u32;
         let synapse_stride = brain::synapse_count(plan.genes()) as u32;
         let sensor_stride = perceive::sensor_count(plan.genes()) as u32;

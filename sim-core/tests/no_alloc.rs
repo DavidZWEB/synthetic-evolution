@@ -83,6 +83,19 @@ fn the_counter_actually_counts() {
 }
 
 #[test]
+fn invalid_founder_params_do_not_allocate_a_plan() {
+    let mut params = SimParams::default();
+    params.brain.hidden_neurons = 200;
+    let observed = count_allocations(|| {
+        let result = sim_core::founder::FounderPlan::new(&params, || {
+            panic!("invalid params must not request innovation ids")
+        });
+        assert!(result.is_err());
+    });
+    assert_eq!(observed, 0, "invalid params allocated a founder plan");
+}
+
+#[test]
 fn spawn_and_despawn_never_allocate() {
     let mut params = SimParams::default();
     params.world.max_agents = 10_000;

@@ -478,7 +478,8 @@ mod tests {
         let plan = FounderPlan::new(params, || {
             next += 1;
             InnovationId::new(next - 1)
-        });
+        })
+        .expect("valid founder params");
         let mut genes = vec![Gene::default(); plan.len()];
         let (mut pinned, mut slope, mut counted) = (0u32, 0.0f32, 0u32);
 
@@ -551,7 +552,8 @@ mod tests {
         let plan = FounderPlan::new(&params, || {
             next += 1;
             InnovationId::new(next - 1)
-        });
+        })
+        .expect("valid founder params");
         let mut genes = vec![Gene::default(); plan.len()];
         plan.instantiate(&mut Rng::from_seed(4), &params, &mut genes);
         let (a_neurons, a_synapses) = build(&genes);

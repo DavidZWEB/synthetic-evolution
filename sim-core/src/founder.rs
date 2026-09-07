@@ -19,7 +19,7 @@ use crate::genome::{
 };
 use crate::ids::InnovationId;
 use crate::math;
-use crate::params::SimParams;
+use crate::params::{ParamError, SimParams};
 use crate::rng::Rng;
 
 const BASE_SENSORS: [Modality; 2] = [Modality::Chemo, Modality::Interoception];
@@ -93,9 +93,15 @@ impl FounderPlan {
     ///
     /// `next_id` is the world's innovation counter — a closure rather than a `&mut
     /// World`, so this is testable without one and cannot reach anything else.
-    /// `params` must have passed `SimParams::validate` before allocating a plan.
-    pub fn new(params: &SimParams, mut next_id: impl FnMut() -> InnovationId) -> Self {
-        let counts = Self::checked_counts(params).expect("validated founding topology");
+    /// Invalid params are rejected before allocating a plan or requesting any ids.
+    pub fn new(
+        params: &SimParams,
+        mut next_id: impl FnMut() -> InnovationId,
+    ) -> Result<Self, ParamError> {
+        params.validate()?;
+        let counts = Self::checked_counts(params).ok_or(ParamError(
+            "founding topology exceeds representable gene counts",
+        ))?;
         let sensor_channels = counts.sensor_channels as usize;
         let neurons = counts.neurons as usize;
         let hidden = params.brain.hidden_neurons as usize;
@@ -204,11 +210,11 @@ impl FounderPlan {
             .map(|&slot| 1.0 / math::sqrt(fan_in[slot] as f32))
             .collect();
 
-        Self {
+        Ok(Self {
             genes,
             neurons,
             fan_in_scale,
-        }
+        })
     }
 
     /// Phase 1's hardcoded sensor set: `vision_rays` eyes, a nose, and one
@@ -355,6 +361,7 @@ mod tests {
             next += 1;
             InnovationId::new(next - 1)
         })
+        .expect("valid founder params")
     }
 
     fn instantiate(p: &FounderPlan, params: &SimParams, seed: u64) -> Vec<Gene> {
@@ -368,6 +375,30 @@ mod tests {
         let params = SimParams::default();
         let genes = instantiate(&plan(&params), &params, 1);
         assert_eq!(validate(&genes), Ok(()));
+    }
+
+    #[test]
+    fn invalid_params_are_rejected_before_issuing_innovations() {
+        type InvalidParams = (&'static str, fn(&mut SimParams));
+        let cases: [InvalidParams; 3] = [
+            ("unrepresentable topology", |p| {
+                p.brain.hidden_neurons = u32::MAX
+            }),
+            ("oversized arena", |p| p.brain.hidden_neurons = 200),
+            ("invalid timestep", |p| p.world.dt = 0.0),
+        ];
+        for (name, invalidate) in cases {
+            let mut params = SimParams::default();
+            invalidate(&mut params);
+            let mut requested = 0;
+            let result = FounderPlan::new(&params, || {
+                let id = InnovationId::new(requested);
+                requested += 1;
+                id
+            });
+            assert!(result.is_err(), "{name} was accepted");
+            assert_eq!(requested, 0, "{name} consumed innovation ids");
+        }
     }
 
     #[test]
