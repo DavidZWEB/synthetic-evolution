@@ -12,6 +12,11 @@
 # still reports independently; fork and Dependabot PRs cannot receive the deployment
 # secret and are deliberately skipped.
 #
+# Preview environments are finite, non-rotating slots: Azure caps each app at 3 on
+# Free and 10 on Standard. An open PR keeps one slot keyed by its number, updates
+# reuse that slot, and only action: close releases it. Teardown is therefore capacity
+# management, not cosmetic cleanup.
+#
 # One consequence of workflow_run worth knowing before editing this file: GitHub
 # always runs the copy of it that is on the default branch. Changes to the production
 # path here do nothing until they are merged, and cannot be exercised from a branch.
@@ -23,20 +28,19 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
     branches: [main]
   # Unlike pull_request, pull_request_target still runs when a PR is conflicted.
   # This close-only path never checks out or executes PR code, but can use the
   # deployment secret to remove previews reliably. It is intentionally unfiltered
   # by base branch so a PR retargeted away from main still tears down its preview.
   pull_request_target:
-    types: [closed]
+    types: [closed, edited]
 
-# repo_token below comments the preview URL on the pull request. The repository's
-# default workflow permissions are read-only, so this permission must be explicit.
+# Keep the workflow read-only by default. The upload job grants pull-request write
+# access locally because the Azure action uses repo_token to comment the preview URL.
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   build_and_deploy:
@@ -50,10 +54,17 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.head_branch == github.event.repository.default_branch) ||
       (github.event_name == 'pull_request' &&
+       (github.event.action != 'edited' ||
+        github.event.changes.base != null) &&
        github.event.pull_request.head.repo.full_name == github.repository &&
        github.event.pull_request.user.login != 'dependabot[bot]')
+    permissions:
+      contents: read
+      pull-requests: write
     # Serialize Azure operations for one destination. Each run rechecks live state,
     # so an older run becomes a no-op rather than overwriting a newer deployment.
+    # queue: max preserves up to 100 pending lifecycle events instead of replacing
+    # an older pending close or retarget with the newest run.
     concurrency:
       group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
@@ -63,11 +74,13 @@ jobs:
     steps:
       # Queued and manually rerun workflows may outlive the event that started them.
       # Re-read current state before checking out or running a historical revision.
+      # The YAML anchor keeps this safety decision identical to the pre-upload check
+      # without checking repository code out before the initial decision.
       - name: Resolve current deployment
         id: initial
         uses: actions/github-script@v7
         with:
-          script: |
+          script: &resolve-current-deployment |
             if (context.eventName === 'workflow_run') {
               const branch = context.payload.repository.default_branch;
               const { data } = await github.rest.repos.getBranch({
@@ -101,7 +114,8 @@ jobs:
       # A workflow_run event carries the default branch's ref, not the commit that
       # was tested, so the tested SHA has to be named explicitly. Deploying
       # github.ref there would ship whatever main happens to be at now. A PR preview
-      # uses GitHub's merge commit so it shows the result against current main.
+      # uses the merge commit for the base revision captured by its event; the live
+      # checks skip the run if either side has moved since then.
       - uses: actions/checkout@v4
         if: steps.initial.outputs.deploy == 'true'
         with:
@@ -141,36 +155,7 @@ jobs:
         if: steps.initial.outputs.deploy == 'true'
         uses: actions/github-script@v7
         with:
-          script: |
-            if (context.eventName === 'workflow_run') {
-              const branch = context.payload.repository.default_branch;
-              const { data } = await github.rest.repos.getBranch({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                branch,
-              });
-              core.setOutput(
-                'deploy',
-                data.commit.sha === context.payload.workflow_run.head_sha ? 'true' : 'false',
-              );
-              return;
-            }
-
-            const { data: pull } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-            });
-            const repository = `${context.repo.owner}/${context.repo.repo}`;
-            const eligible =
-              pull.state === 'open' &&
-              pull.base.ref === context.payload.repository.default_branch &&
-              pull.head.repo?.full_name === repository &&
-              pull.user?.login !== 'dependabot[bot]';
-            const current =
-              pull.head.sha === context.payload.pull_request.head.sha &&
-              pull.base.sha === context.payload.pull_request.base.sha;
-            core.setOutput('deploy', eligible && current ? 'true' : 'false');
+          script: *resolve-current-deployment
 
       - name: Deploy
         if: steps.current.outputs.deploy == 'true'
@@ -195,7 +180,10 @@ jobs:
   close_pull_request:
     if: >-
       github.event_name == 'pull_request_target' &&
-      github.event.action == 'closed' &&
+      (github.event.action == 'closed' ||
+       (github.event.action == 'edited' &&
+        github.event.changes.base != null &&
+        github.event.pull_request.base.ref != github.event.repository.default_branch)) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
