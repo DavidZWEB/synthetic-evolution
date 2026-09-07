@@ -81,7 +81,7 @@ fn assert_estimate_covers_requests(world: &World, used: u64, estimate: u64) {
 }
 
 #[test]
-fn a_default_world_fits_in_a_browser_tab() {
+fn a_default_world_stays_inside_its_declared_core_budget() {
     let params = SimParams::default();
     let budget = params.storage.max_memory_bytes;
     let (world, used, estimate) = measure(params);

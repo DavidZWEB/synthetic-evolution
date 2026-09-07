@@ -126,9 +126,10 @@ The pre-integration native baseline at `00988c1`, using the existing `footprint`
 test's allocation tally, requested 77,869,988 bytes (74.3 MiB) while constructing the
 default 5,000-slot world, and 31,330,984 bytes (29.9 MiB) at 2,000 slots. These are
 cumulative construction requests, including temporary allocations, not retained
-heap, process RSS, or whole-browser memory. The existing 96 MiB test ceiling remains
-a regression alarm; the separate runtime budget above has now been explicitly
-approved using this baseline, not inferred from the test ceiling.
+heap, process RSS, or whole-browser memory. The pre-integration 96 MiB test ceiling
+was a regression alarm; the runtime budget above was explicitly approved using this
+baseline, not inferred from that ceiling. The current footprint test checks the
+declared core budget and estimator accuracy, not whether a browser tab will fit.
 
 An operator that would exceed a per-genome limit should be declined atomically;
 it must not leave half a split connection or half a sensor. If the completed child

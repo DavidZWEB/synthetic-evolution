@@ -387,6 +387,8 @@ impl World {
                 ),
                 parent_a: parent,
             };
+            // Scalar-only mutation/redraw preserves the parent's validated counts;
+            // structural operators must enforce bounds before this fast path (spec §3.3).
             let spawned = self.spawn_validated(&spec, &scratch);
             self.genome_scratch = scratch;
 

@@ -228,6 +228,12 @@ impl World {
         self.spawn_validated(spec, genes)
     }
 
+    /// Caller must establish genome coherence and every `StorageParams` limit.
+    ///
+    /// Public spawns validate explicitly; founders are covered by construction
+    /// validation. Births currently preserve their validated parent's counts through
+    /// scalar-only mutation/redraw. Structural operators must enforce coherence and
+    /// limits atomically before using this path (spec sections 2.2a and 3.3).
     pub(crate) fn spawn_validated(
         &mut self,
         spec: &SpawnSpec,

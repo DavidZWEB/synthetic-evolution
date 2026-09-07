@@ -469,7 +469,7 @@ impl SimParams {
     /// Temporary pointer-sized indices are charged at 8 bytes on native and WASM.
     /// Shell allocations and allocator/OS overhead are outside this estimate.
     pub fn estimated_construction_bytes(&self) -> Result<u64, ParamError> {
-        self.validate()?;
+        self.validate_values()?;
         Ok(StorageLayout::new(self)?.construction_bytes)
     }
 
