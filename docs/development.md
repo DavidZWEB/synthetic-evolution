@@ -239,6 +239,34 @@ use shipped defaults. Omit `--metrics` for only a completion summary and final h
 use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-readable
 report.
 
+Metrics schema **3** retains all Phase 1 signals and adds two fields to each cohort's
+sample: `arena_usage` contains current element counts for `Genes`, `Neurons`,
+`Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
+`largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
+`u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,
+`arena_fragmentation`, `arena_block_limit`, and `invalid_genome`. Counts belong to each
+shell/world, not deterministic simulation state. They count actual refused attempts,
+not founder requests clamped to pool capacity. The `--metrics` path observes seeding,
+command spawns, and natural births; plain runs use the unobserved stepping path.
+Samples created outside a collected run encode unavailable counts as `null`, not
+invented zeroes. `diagnose` reports that unavailability and distinguishes arena
+capacity from fragmentation; more energy does not resolve storage refusals.
+Schemas 1 and 2 are explicitly rejected rather than silently treated as complete
+storage telemetry. Exact `genome_variants` remain distinct from species: this storage
+milestone does not enable species clustering or structural mutation, and the
+`randomized_at_birth` control protocol and Phase 1 scalar heredity remain unchanged.
+
+`SimParams.storage` reserves shared arena allowances and sets a default
+`max_memory_bytes` of **100663296 (96 MiB) per world**. Larger native configurations
+must explicitly raise that budget in their params JSON; the shell does not silently
+resize storage or lower the requested founders. Construction failures and founder
+undersupply are errors. The budget covers core-construction requests, not process
+RSS: a paired run owns two separately budgeted worlds, with allocator/OS overhead,
+metrics, and any shell snapshots/transports additional. The WASM shell similarly
+exposes `Sim.storage_diagnostics()` JSON on demand with `arena_usage` and cumulative
+`spawn_failures`; its snapshot and browser transports are outside the core budget.
+This is not a browser resident-memory safety guarantee.
+
 The committed files under `shells/native/tests/fixtures/` deliberately induce extinction,
 exact-genome monoculture, or a cheap sustaining population. They test telemetry and
 diagnostics; they are not candidate simulation defaults.

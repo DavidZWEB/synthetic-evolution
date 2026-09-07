@@ -291,23 +291,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_the_pre_reserve_metrics_schema() {
-        let header = MetricsRecord::Header(RunHeader {
-            schema_version: 1,
-            sim_version: "test".to_owned(),
-            source_revision: "test".to_owned(),
-            phase: 1,
-            seed: "42".to_owned(),
-            ticks: 0,
-            founders: 1,
-            sample_every: 5,
-            params: SimParams::default(),
-            control: "randomized_at_birth".to_owned(),
-        });
-        let jsonl = serde_json::to_string(&header).unwrap();
-        let error = parse_metrics(Cursor::new(jsonl))
-            .err()
-            .expect("old metrics schema was accepted");
-        assert!(error.to_string().contains("unsupported metrics schema 1"));
+    fn rejects_metrics_schemas_without_current_storage_observations() {
+        for version in [1, 2] {
+            let header = MetricsRecord::Header(RunHeader {
+                schema_version: version,
+                sim_version: "test".to_owned(),
+                source_revision: "test".to_owned(),
+                phase: 1,
+                seed: "42".to_owned(),
+                ticks: 0,
+                founders: 1,
+                sample_every: 5,
+                params: SimParams::default(),
+                control: "randomized_at_birth".to_owned(),
+            });
+            let jsonl = serde_json::to_string(&header).unwrap();
+            let error = parse_metrics(Cursor::new(jsonl))
+                .err()
+                .expect("old metrics schema was accepted");
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("unsupported metrics schema {version}"))
+            );
+        }
     }
 }

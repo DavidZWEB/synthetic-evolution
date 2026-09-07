@@ -13,7 +13,7 @@
 use glam::Vec3;
 
 use crate::agents::{Agents, Handles, SpawnSpec};
-use crate::arena::Arena;
+use crate::arena::{AllocationFailure, Arena, ArenaBuildError, Block, VariableArena};
 use crate::brain::{self, Neuron, Synapse};
 use crate::chemo::ChemoField;
 use crate::command::Command;
@@ -30,9 +30,48 @@ use crate::plants::Plants;
 use crate::pool::SlotPool;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
+use crate::spawn::{self, ArenaKind, ArenaUsage, SpawnError};
+use crate::storage::StorageLayout;
 
 /// One part per agent, at the agent's own origin, for all of V1 (spec §9.1).
 const PARTS_PER_AGENT: u32 = 1;
+
+/// Invalid configuration or a host reservation failure while constructing a world.
+#[derive(Debug)]
+pub enum WorldBuildError {
+    Params(ParamError),
+    Arena(ArenaBuildError),
+}
+
+impl core::fmt::Display for WorldBuildError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Params(error) => error.fmt(f),
+            Self::Arena(error) => error.fmt(f),
+        }
+    }
+}
+
+impl core::error::Error for WorldBuildError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Params(error) => Some(error),
+            Self::Arena(error) => Some(error),
+        }
+    }
+}
+
+impl From<ParamError> for WorldBuildError {
+    fn from(error: ParamError) -> Self {
+        Self::Params(error)
+    }
+}
+
+impl From<ArenaBuildError> for WorldBuildError {
+    fn from(error: ArenaBuildError) -> Self {
+        Self::Arena(error)
+    }
+}
 
 /// A single simulation: its state, its parameters, and its random stream.
 ///
@@ -51,27 +90,28 @@ pub struct World {
     pub(crate) pool: SlotPool,
     pub(crate) agents: Agents,
     /// Compiled neurons, one block per agent.
-    pub(crate) brains: Arena<Neuron>,
+    pub(crate) brains: VariableArena<Neuron>,
     /// Compiled wiring, one block per agent. Separate from `brains` because a synapse
     /// and a neuron are different element types, not because they have different
     /// lifetimes — the two blocks are claimed and freed together.
-    pub(crate) synapses: Arena<Synapse>,
+    pub(crate) synapses: VariableArena<Synapse>,
     /// Compiled sensors, one block per agent: an organ's parameters and the brain slots
     /// it writes to, resolved at birth (spec §2.2c).
-    pub(crate) sensors: Arena<Sensor>,
+    pub(crate) sensors: VariableArena<Sensor>,
     /// Compiled effectors, one block per agent: the brain slot that drives each one.
-    pub(crate) effectors: Arena<Effector>,
+    pub(crate) effectors: VariableArena<Effector>,
     /// What every agent's effectors asked for this tick. Written at step 4, drained by
     /// the systems that follow it (spec §2.4).
     pub(crate) intents: Intents,
     /// Gene lists, one block per agent.
-    pub(crate) genes: Arena<Gene>,
+    pub(crate) genes: VariableArena<Gene>,
     /// The founding topology, whose innovation ids every founder in this world shares
     /// (spec §3.1).
     pub(crate) plan: FounderPlan,
     /// Reusable buffer for building a genome before it is copied into the arena.
     /// Owned by the world and sized once, so a birth allocates nothing.
     pub(crate) genome_scratch: Vec<Gene>,
+    pub(crate) brain_fan_in_scratch: Vec<u32>,
     /// Part offsets relative to the agent origin. One zeroed entry per agent in V1.
     pub(crate) parts: Arena<f32>,
     /// Neighbour lookup, rebuilt at the top of every tick (spec §2.4 step 1).
@@ -104,7 +144,7 @@ impl World {
     /// Params are validated here, at the boundary. Past this point the tick treats
     /// their invariants as established and uses `debug_assert!` rather than threading
     /// `Result` through the hot loop.
-    pub fn new(seed: u64, params: SimParams) -> Result<Self, ParamError> {
+    pub fn new(seed: u64, params: SimParams) -> Result<Self, WorldBuildError> {
         Self::new_with_brain_inheritance(seed, params, BrainInheritance::Evolving)
     }
 
@@ -113,8 +153,9 @@ impl World {
         seed: u64,
         params: SimParams,
         brain_inheritance: BrainInheritance,
-    ) -> Result<Self, ParamError> {
+    ) -> Result<Self, WorldBuildError> {
         params.validate()?;
+        let layout = StorageLayout::new(&params)?;
         let capacity = params.world.max_agents;
         let mut next_innovation = 0u32;
         // The plan draws the world's first innovation ids, before any agent exists.
@@ -123,11 +164,8 @@ impl World {
             next_innovation += 1;
             id
         })?;
-        let brain_stride = plan.neuron_count() as u32;
-        let synapse_stride = brain::synapse_count(plan.genes()) as u32;
-        let sensor_stride = perceive::sensor_count(plan.genes()) as u32;
-        let effector_stride = effectors::effector_count(plan.genes()) as u32;
-        let genome_stride = plan.len() as u32;
+        let mut genome_scratch = Vec::with_capacity(params.storage.max_genes as usize);
+        genome_scratch.resize(plan.len(), Gene::default());
 
         // One generator, drawn from in order: the plants are seeded first and agents
         // continue after them. A second `Rng::from_seed(seed)` would be the *same*
@@ -143,13 +181,14 @@ impl World {
             next_innovation,
             pool: SlotPool::with_capacity(capacity),
             agents: Agents::with_capacity(capacity),
-            brains: Arena::with_capacity(capacity, brain_stride),
-            synapses: Arena::with_capacity(capacity, synapse_stride),
-            sensors: Arena::with_capacity(capacity, sensor_stride),
-            effectors: Arena::with_capacity(capacity, effector_stride),
+            brains: VariableArena::try_with_capacity(layout.neurons, capacity)?,
+            synapses: VariableArena::try_with_capacity(layout.synapses, capacity)?,
+            sensors: VariableArena::try_with_capacity(layout.sensors, capacity)?,
+            effectors: VariableArena::try_with_capacity(layout.effectors, capacity)?,
             intents: Intents::with_capacity(capacity),
-            genes: Arena::with_capacity(capacity, genome_stride),
-            genome_scratch: vec![Gene::default(); plan.len()],
+            genes: VariableArena::try_with_capacity(layout.genes, capacity)?,
+            genome_scratch,
+            brain_fan_in_scratch: vec![0; params.storage.max_neurons as usize],
             plan,
             parts: Arena::with_capacity(capacity, PARTS_PER_AGENT),
             hash: SpatialHash::new(
@@ -175,8 +214,7 @@ impl World {
     }
 
     /// Claims a slot and its arena blocks, and compiles the genome into a runnable
-    /// brain. `None` when any pool is full — a normal condition at the population
-    /// ceiling, not an error.
+    /// brain. Refusals identify invalid genomes, per-genome limits, or storage pressure.
     ///
     /// **The caller owns the energy accounting.** This hands the new agent
     /// `spec.energy` and tells the ledger nothing, because the two ways an agent comes
@@ -185,15 +223,31 @@ impl World {
     /// offspring's is taken from its parent and is a transfer that must *not* be
     /// recorded at all. Getting this wrong is invisible until the conservation test
     /// runs, which is exactly why that test exists (spec §5.1).
-    pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Option<AgentId> {
-        debug_assert!(
-            genome::validate(genes).is_ok(),
-            "spawning an incoherent genome"
-        );
-        let id = self.pool.alloc()?;
-        let Some(handles) = self.claim_blocks(genes) else {
-            self.pool.free(id);
-            return None;
+    pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Result<AgentId, SpawnError> {
+        spawn::validate_limits(genes, &self.params.storage)?;
+        self.spawn_validated(spec, genes)
+    }
+
+    /// Caller must establish genome coherence and every `StorageParams` limit.
+    ///
+    /// Public spawns validate explicitly; founders are covered by construction
+    /// validation. Births currently preserve their validated parent's counts through
+    /// scalar-only mutation/redraw. Structural operators must enforce coherence and
+    /// limits atomically before using this path (spec sections 2.2a and 3.3).
+    pub(crate) fn spawn_validated(
+        &mut self,
+        spec: &SpawnSpec,
+        genes: &[Gene],
+    ) -> Result<AgentId, SpawnError> {
+        if self.pool.live_count() == self.pool.capacity() {
+            return Err(SpawnError::PoolFull);
+        }
+        let handles = self.claim_blocks(genes)?;
+        // Reserve every arena before claiming an identity: a failed birth must not
+        // advance a slot incarnation or alter future allocation order (spec section 2.2a).
+        let Some(id) = self.pool.alloc() else {
+            self.release_blocks(handles);
+            return Err(SpawnError::PoolFull);
         };
         self.genes.get_mut(handles.genome).copy_from_slice(genes);
         // Compiled once, here, and never read from the genome again during a tick
@@ -216,63 +270,66 @@ impl World {
         // charges for them every tick and they cannot change while the agent lives.
         self.agents.brain_units[id.index()] = genome::brain_complexity(genes);
         self.agents.sensor_load[id.index()] = genome::sensor_load(genes);
-        Some(id)
+        Ok(id)
     }
 
     /// Claims one block from every per-agent arena, or none of them.
     ///
-    /// Each arena holds `max_agents` blocks and they are claimed and freed in lockstep
-    /// with the pool, so a partial failure is unreachable. It is unwound rather than
-    /// asserted because a leaked block does not fail loudly — it shows up as a world
-    /// that quietly stops accepting births some hours into a run.
-    fn claim_blocks(&mut self, genes: &[Gene]) -> Option<Handles> {
-        let brain = self.brains.alloc(genome::neuron_count(genes) as u32);
-        let synapses = self.synapses.alloc(brain::synapse_count(genes) as u32);
-        let sensors = self.sensors.alloc(perceive::sensor_count(genes) as u32);
-        let effectors = self
-            .effectors
-            .alloc(effectors::effector_count(genes) as u32);
-        let genome = self.genes.alloc(genes.len() as u32);
-        let parts = self.parts.alloc(PARTS_PER_AGENT);
-
-        match (brain, synapses, sensors, effectors, genome, parts) {
-            (
-                Some(brain),
-                Some(synapses),
-                Some(sensors),
-                Some(effectors),
-                Some(genome),
-                Some(parts),
-            ) => Some(Handles {
-                brain,
-                synapses,
-                sensors,
-                effectors,
-                genome,
-                parts,
-            }),
-            _ => {
-                if let Some(block) = brain {
-                    self.brains.free(block);
-                }
-                if let Some(block) = synapses {
-                    self.synapses.free(block);
-                }
-                if let Some(block) = sensors {
-                    self.sensors.free(block);
-                }
-                if let Some(block) = effectors {
-                    self.effectors.free(block);
-                }
-                if let Some(block) = genome {
-                    self.genes.free(block);
-                }
-                if let Some(block) = parts {
-                    self.parts.free(block);
-                }
-                None
-            }
+    /// Capacity or fragmentation can fail any claim, so unwind every preceding claim.
+    fn claim_blocks(&mut self, genes: &[Gene]) -> Result<Handles, SpawnError> {
+        fn claim<T: Copy + Default>(
+            arena: &mut VariableArena<T>,
+            count: u32,
+            kind: ArenaKind,
+        ) -> Result<Block, SpawnError> {
+            arena.alloc(count).map_err(|reason| SpawnError::Arena {
+                arena: kind,
+                reason,
+            })
         }
+        let mut handles = Handles::default();
+        let claimed = (|| {
+            handles.brain = claim(
+                &mut self.brains,
+                genome::neuron_count(genes) as u32,
+                ArenaKind::Neurons,
+            )?;
+            handles.synapses = claim(
+                &mut self.synapses,
+                brain::synapse_count(genes) as u32,
+                ArenaKind::Synapses,
+            )?;
+            handles.sensors = claim(
+                &mut self.sensors,
+                perceive::sensor_count(genes) as u32,
+                ArenaKind::Sensors,
+            )?;
+            handles.effectors = claim(
+                &mut self.effectors,
+                effectors::effector_count(genes) as u32,
+                ArenaKind::Effectors,
+            )?;
+            handles.genome = claim(&mut self.genes, genes.len() as u32, ArenaKind::Genes)?;
+            handles.parts = self.parts.alloc(PARTS_PER_AGENT).ok_or(SpawnError::Arena {
+                arena: ArenaKind::Parts,
+                reason: AllocationFailure::BlockLimit,
+            })?;
+            Ok(())
+        })();
+        if let Err(error) = claimed {
+            self.release_blocks(handles);
+            return Err(error);
+        }
+        Ok(handles)
+    }
+
+    fn release_blocks(&mut self, handles: Handles) {
+        self.brains.free(handles.brain);
+        self.synapses.free(handles.synapses);
+        self.sensors.free(handles.sensors);
+        self.effectors.free(handles.effectors);
+        self.genes.free(handles.genome);
+        self.parts.free(handles.parts);
     }
 
     /// Spawns a founder: the world's fixed topology with fresh random scalars.
@@ -280,11 +337,11 @@ impl World {
     /// Body traits come out of the genome rather than the caller, because that is the
     /// point of carrying them genetically — an offspring inherits its parent's size
     /// and colour without anything else having to remember to copy them.
-    pub fn spawn_founder(&mut self, position: Vec3) -> Option<AgentId> {
+    pub fn spawn_founder(&mut self, position: Vec3) -> Result<AgentId, SpawnError> {
         // Taken out of `self` so the borrow checker sees the buffer and the world as
         // separate; put back before returning.
         let mut scratch = core::mem::take(&mut self.genome_scratch);
-        debug_assert_eq!(scratch.len(), self.plan.len());
+        scratch.resize(self.plan.len(), Gene::default());
         self.plan
             .instantiate(&mut self.rng, &self.params, &mut scratch);
 
@@ -303,9 +360,9 @@ impl World {
             ),
             parent_a: AgentId::NULL,
         };
-        let spawned = self.spawn(&spec, &scratch);
+        let spawned = self.spawn_validated(&spec, &scratch);
         self.genome_scratch = scratch;
-        if spawned.is_some() {
+        if spawned.is_ok() {
             // A founder's tank is the one energy source that is not a plant. It is a
             // boundary condition — the experimenter seeding a world — not an ongoing
             // leak, and recording it as input is what keeps §5.1's books balanced
@@ -417,6 +474,14 @@ impl World {
     /// central niche that nothing in the ecology created. Offspring still inherit only
     /// their local neighbourhood through spatial viscosity (spec §5.4).
     pub fn seed_founders(&mut self, count: u32) -> u32 {
+        self.seed_founders_with_observer(count, |_| {})
+    }
+
+    pub fn seed_founders_with_observer(
+        &mut self,
+        count: u32,
+        mut on_refusal: impl FnMut(SpawnError),
+    ) -> u32 {
         /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
         /// sunflower seeds pack without lining up.
         const GOLDEN_ANGLE: f32 = 2.399_963_2;
@@ -438,11 +503,34 @@ impl World {
                 size * 0.5 + r * math::sin(angle),
                 0.0,
             );
-            if self.spawn_founder(position).is_some() {
-                placed += 1;
+            match self.spawn_founder(position) {
+                Ok(_) => placed += 1,
+                Err(error) => {
+                    on_refusal(error);
+                    break;
+                }
             }
         }
         placed
+    }
+
+    pub fn storage_usage(&self) -> [ArenaUsage; 5] {
+        fn usage<T: Copy + Default>(arena: &VariableArena<T>, kind: ArenaKind) -> ArenaUsage {
+            ArenaUsage {
+                arena: kind,
+                capacity: arena.capacity(),
+                free_elements: arena.free_elements(),
+                largest_free_block: arena.largest_free_block(),
+                live_blocks: arena.live_blocks(),
+            }
+        }
+        [
+            usage(&self.genes, ArenaKind::Genes),
+            usage(&self.brains, ArenaKind::Neurons),
+            usage(&self.synapses, ArenaKind::Synapses),
+            usage(&self.sensors, ArenaKind::Sensors),
+            usage(&self.effectors, ArenaKind::Effectors),
+        ]
     }
 
     /// Replaces the tunables.
@@ -781,7 +869,7 @@ mod tests {
         offsets.dedup();
         assert_eq!(offsets.len(), 32, "two agents are sharing a brain");
         assert!(
-            w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_none(),
+            w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_err(),
             "full pool must refuse"
         );
     }
@@ -792,7 +880,7 @@ mod tests {
         let ids: Vec<_> = (0..32)
             .map(|i| w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).unwrap())
             .collect();
-        assert!(w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_none());
+        assert!(w.spawn_founder(Vec3::new(0.0, 0.0, 0.0)).is_err());
         for id in &ids {
             w.despawn(*id);
         }
@@ -800,7 +888,7 @@ mod tests {
         // If blocks leaked, the pool would have slots but the arena would not.
         for i in 0..32 {
             assert!(
-                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_some(),
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_ok(),
                 "arena leaked a block"
             );
         }
@@ -850,7 +938,7 @@ mod tests {
         assert_eq!(w.population(), 0);
         for i in 0..32 {
             assert!(
-                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_some(),
+                w.spawn_founder(Vec3::new(i as f32, 0.0, 0.0)).is_ok(),
                 "the world leaked its arena blocks"
             );
         }
@@ -1081,10 +1169,48 @@ mod tests {
     }
 
     #[test]
-    fn brain_width_matches_the_founding_topology() {
+    fn arena_capacity_uses_pooled_allowances_not_founder_stride() {
         let w = small_world();
-        assert_eq!(w.brains.stride() as usize, w.founder_plan().neuron_count());
-        assert_eq!(w.genes.stride() as usize, w.founder_plan().len());
+        assert_eq!(
+            w.brains.capacity(),
+            w.params.world.max_agents * w.params.storage.neurons_per_slot
+        );
+        assert_eq!(
+            w.genes.capacity(),
+            w.params.world.max_agents * w.params.storage.genes_per_slot
+        );
+    }
+
+    #[test]
+    fn a_failed_fixed_part_claim_unwinds_all_variable_claims() {
+        let mut world = small_world();
+        let mut genes = vec![Gene::default(); world.plan.len()];
+        world
+            .plan
+            .instantiate(&mut Rng::from_seed(9), &world.params, &mut genes);
+        // Inject failure in the last constituent: normally the part pool and agent
+        // pool share a ceiling, so this branch cannot be reached by valid seeding.
+        world.parts = Arena::with_capacity(0, 1);
+        let before = world.storage_usage();
+        let incarnations = world.pool.incarnations().to_vec();
+        let spec = SpawnSpec {
+            position: Vec3::ZERO,
+            yaw: 0.0,
+            energy: 0.0,
+            size: 1.0,
+            signature: Vec3::ONE,
+            parent_a: AgentId::NULL,
+        };
+        assert_eq!(
+            world.spawn(&spec, &genes),
+            Err(SpawnError::Arena {
+                arena: ArenaKind::Parts,
+                reason: AllocationFailure::BlockLimit,
+            })
+        );
+        assert_eq!(world.storage_usage(), before);
+        assert_eq!(world.population(), 0);
+        assert_eq!(world.pool.incarnations(), incarnations);
     }
 
     #[test]

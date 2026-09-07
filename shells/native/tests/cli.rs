@@ -84,6 +84,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
     assert_eq!(header["data"]["phase"], 1);
+    assert_eq!(header["data"]["schema_version"], 3);
     assert!(
         header["data"]["source_revision"]
             .as_str()
@@ -97,6 +98,23 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
             .is_some_and(|hash| hash.len() == 16)
     );
     assert_eq!(report["samples"], 3);
+    for line in &lines[1..] {
+        let sample: serde_json::Value = serde_json::from_str(line).expect("sample JSON");
+        for cohort in ["evolving", "random_control"] {
+            assert_eq!(
+                sample["data"][cohort]["arena_usage"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                5
+            );
+            let failures = sample["data"][cohort]["spawn_failures"]
+                .as_object()
+                .unwrap();
+            assert_eq!(failures.len(), 6);
+            assert!(failures.values().all(|count| count.as_u64().is_some()));
+        }
+    }
     assert!(
         !report["evolving"]
             .as_array()
@@ -137,6 +155,83 @@ fn diagnose_finds_a_deliberately_collapsed_genome_population() {
 }
 
 #[test]
+fn collected_runs_report_arena_pressure_without_changing_the_control_protocol() {
+    let params = r#"{
+        "world":{"size":100.0,"max_agents":2},
+        "storage":{"genes_per_slot":142},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0},
+        "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
+        "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
+        "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},
+        "metabolism":{"base":0.0,"k_size":0.0,"k_brain":0.0,"k_sensor":0.0,"k_move":0.0}
+    }"#;
+    let (lines, report) = run_and_diagnose(params, 7, 2, 1, 1);
+    let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(header["data"]["control"], "randomized_at_birth");
+    for cohort in ["evolving", "random_control"] {
+        let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(
+            initial["data"][cohort]["spawn_failures"]["arena_capacity"],
+            0
+        );
+        let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert!(
+            final_sample["data"][cohort]["spawn_failures"]["arena_capacity"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(
+            final_sample["data"][cohort]["spawn_failures"]["pool_full"],
+            0
+        );
+        assert_eq!(
+            final_sample["data"][cohort]["arena_usage"][0]["free_elements"],
+            0
+        );
+        assert!(
+            report[cohort]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["code"] == "storage_capacity")
+        );
+    }
+}
+
+#[test]
+fn founder_storage_undersupply_is_an_error_with_or_without_metrics() {
+    let params = temporary("undersupplied-params.json");
+    fs::write(
+        &params,
+        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142}}"#,
+    )
+    .unwrap();
+    for metrics in [false, true] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_native"));
+        command
+            .args(["--ticks", "0", "--founders", "2", "--params"])
+            .arg(&params);
+        if metrics {
+            command.args(["--metrics", "-"]);
+        }
+        let output = command.output().expect("run native shell");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            error.contains("requested 2 founders but world capacity allowed only 1"),
+            "{error}"
+        );
+        assert!(!error.contains("completed"), "{error}");
+        if metrics {
+            assert!(error.contains("Genes storage"), "{error}");
+        }
+    }
+    fs::remove_file(params).unwrap();
+}
+
+#[test]
 fn plain_run_prints_a_summary_without_streaming_metrics() {
     let output = Command::new(env!("CARGO_BIN_EXE_native"))
         .args([
@@ -161,6 +256,44 @@ fn plain_run_prints_a_summary_without_streaming_metrics() {
     let summary = String::from_utf8(output.stderr).expect("summary UTF-8");
     assert!(summary.contains("completed 0 ticks: evolving=1"));
     assert!(summary.contains("control=1"));
+}
+
+#[test]
+fn optional_collection_preserves_the_run_and_its_final_hashes() {
+    let run = |collect| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_native"));
+        command.args([
+            "--seed",
+            "7",
+            "--ticks",
+            "100",
+            "--founders",
+            "8",
+            "--params",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/sustaining.json"
+            ),
+        ]);
+        if collect {
+            command.args(["--metrics", "-"]);
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    };
+    let plain = run(false);
+    let observed = run(true);
+    assert!(plain.stdout.is_empty());
+    assert!(!observed.stdout.is_empty());
+    assert_eq!(
+        plain.stderr, observed.stderr,
+        "collection changed final population or hashes"
+    );
 }
 
 #[test]
@@ -207,6 +340,10 @@ fn unsafe_params_are_reported_before_a_run_starts() {
         (
             r#"{"chemo":{"cells":[4294967295,4294967295,1],"decay":[0.98,0.5]}}"#,
             "chemo grid times channels",
+        ),
+        (
+            r#"{"storage":{"max_memory_bytes":1}}"#,
+            "storage.max_memory_bytes",
         ),
     ] {
         let params = temporary("invalid-params.json");

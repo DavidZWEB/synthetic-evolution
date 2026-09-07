@@ -7,8 +7,9 @@ objective. Fitness is survival and reproduction.
 Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
-across three seeds against randomized-at-birth controls. Phase 2 genetic architecture
-implementation is underway; the
+across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
+now has pooled variable-length world storage and explicit memory budgets; structural
+mutation is still pending. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

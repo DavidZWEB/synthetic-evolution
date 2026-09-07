@@ -28,6 +28,7 @@ use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
+use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
 use sim_core::world::World;
 
 /// Crate version, so the worker can assert it matches the JS bundle it shipped with.
@@ -47,7 +48,7 @@ fn parse_params(params_json: Option<&str>) -> Result<SimParams, JsError> {
     };
     params
         .validate()
-        .map_err(|e| js_error("invalid params", e.0))?;
+        .map_err(|e| js_error("invalid params", e))?;
     Ok(params)
 }
 
@@ -166,6 +167,13 @@ struct Inspection<'a> {
 pub struct Sim {
     world: World,
     snapshot: Snapshot,
+    spawn_failures: SpawnFailureCounts,
+}
+
+#[derive(Serialize)]
+struct StorageDiagnostics {
+    arena_usage: [ArenaUsage; 5],
+    spawn_failures: SpawnFailureCounts,
 }
 
 impl Sim {
@@ -176,9 +184,13 @@ impl Sim {
     ) -> Result<Self, JsError> {
         let params = parse_params(params_json)?;
         let world = World::new_with_brain_inheritance(seed, params, brain_inheritance)
-            .map_err(|e| js_error("invalid params", e.0))?;
+            .map_err(|e| js_error("world construction", e))?;
         let snapshot = Snapshot::for_world(&world);
-        Ok(Self { world, snapshot })
+        Ok(Self {
+            world,
+            snapshot,
+            spawn_failures: SpawnFailureCounts::default(),
+        })
     }
 }
 
@@ -195,22 +207,27 @@ impl Sim {
         Self::with_brain_inheritance(seed, params_json.as_deref(), BrainInheritance::Evolving)
     }
 
-    /// Seeds generation 0, and reports how many the pool had room for.
+    /// Seeds generation 0, reporting how many fit the pool and shared arenas.
     ///
     /// The layout belongs to `sim-core` — it is folded into every seeded run, so a
     /// browser and a headless sweep that arranged founders differently would not be
     /// running the same experiment. This is a direct call rather than a command because
     /// seeding is a boundary condition: there is no tick to stamp it for yet.
     pub fn seed_founders(&mut self, count: u32) -> u32 {
-        let placed = self.world.seed_founders(count);
+        let counts = &mut self.spawn_failures;
+        let placed = self
+            .world
+            .seed_founders_with_observer(count, |error| counts.record(error));
         self.refresh();
         placed
     }
 
     /// Advances `ticks` ticks and refreshes the snapshot once, at the end.
     pub fn step_many(&mut self, ticks: u32) {
+        let counts = &mut self.spawn_failures;
         for _ in 0..ticks {
-            self.world.step();
+            self.world
+                .step_with_spawn_observer(|error| counts.record(error));
         }
         self.refresh();
     }
@@ -288,6 +305,20 @@ impl Sim {
         serde_json::to_string(self.world.params()).map_err(|e| js_error("params", e))
     }
 
+    /// On-demand arena element usage and cumulative spawn refusals since construction.
+    ///
+    /// Counts allocate nothing during seeding or stepping. This JSON request can grow
+    /// WASM memory, so consumers must refresh detached snapshot views (spec §7.3).
+    /// The core budget excludes this shell's snapshot, transports, and paired worlds;
+    /// these diagnostics are not a browser resident-memory safety guarantee.
+    pub fn storage_diagnostics(&self) -> Result<String, JsError> {
+        let diagnostics = StorageDiagnostics {
+            arena_usage: self.world.storage_usage(),
+            spawn_failures: self.spawn_failures,
+        };
+        serde_json::to_string(&diagnostics).map_err(|e| js_error("storage diagnostics", e))
+    }
+
     /// Retunes the world. Errors on anything that would resize what is already
     /// allocated — see `World::set_params` for which fields those are and why.
     pub fn set_params(&mut self, params_json: &str) -> Result<(), JsError> {
@@ -295,7 +326,7 @@ impl Sim {
             serde_json::from_str(params_json).map_err(|e| js_error("bad params", e))?;
         self.world
             .set_params(params)
-            .map_err(|e| js_error("rejected params", e.0))
+            .map_err(|e| js_error("rejected params", e))
     }
 
     /// Queues a request, to apply on the tick it is stamped for (spec §2.2b).

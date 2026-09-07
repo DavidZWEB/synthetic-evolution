@@ -22,6 +22,14 @@
 mod common;
 use common::*;
 
+#[path = "common/storage_case.rs"]
+mod storage_case;
+
+#[test]
+fn variable_storage_matches_its_reference_in_both_heredity_modes() {
+    storage_case::check_variable_storage_runs();
+}
+
 #[test]
 fn the_pinned_runs_still_hash_to_their_golden_values() {
     check_golden_runs();

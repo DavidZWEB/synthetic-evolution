@@ -97,6 +97,18 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     if let Some(reason) = control_idle_unavailable {
         unavailable.push(reason);
     }
+    for cohort in [Cohort::Evolving, Cohort::Control] {
+        if samples.is_empty()
+            || samples
+                .iter()
+                .any(|sample| select(sample, cohort).spawn_failures.is_none())
+        {
+            unavailable.push(format!(
+                "complete spawn-refusal counts for {} are unavailable: stepping was not observed for every sample",
+                cohort.name()
+            ));
+        }
+    }
     DiagnosisReport {
         samples: samples.len(),
         evolving,
@@ -116,6 +128,14 @@ fn diagnose_cohort(
         .iter()
         .map(|sample| (sample.tick, select(sample, cohort)))
         .collect();
+
+    if let Some((tick, sample)) = metrics
+        .iter()
+        .rev()
+        .find(|(_, sample)| sample.spawn_failures.is_some())
+    {
+        diagnose_storage(*tick, sample, &mut findings);
+    }
 
     if let Some((index, (tick, _))) = metrics
         .iter()
@@ -307,6 +327,52 @@ fn diagnose_cohort(
     }
 
     (findings, None)
+}
+
+fn diagnose_storage(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding>) {
+    let Some(counts) = sample.spawn_failures else {
+        return;
+    };
+    for (code, count, cause) in [
+        (
+            "agent_pool_full",
+            counts.pool_full,
+            "agent slots are exhausted; review max_agents and the explicit per-world memory budget",
+        ),
+        (
+            "storage_capacity",
+            counts.arena_capacity,
+            "shared arenas lack total free elements; inspect arena_usage and review pooled storage allowances within the explicit memory budget",
+        ),
+        (
+            "storage_fragmentation",
+            counts.arena_fragmentation,
+            "an arena has enough free elements but no sufficiently large contiguous span; compare free_elements with largest_free_block",
+        ),
+        (
+            "storage_block_limit",
+            counts.arena_block_limit,
+            "the arena's simultaneous live-block limit was reached; free elements alone cannot satisfy another allocation",
+        ),
+        (
+            "genome_limit",
+            counts.genome_limit,
+            "attempted genomes exceed configured per-genome limits; larger aggregate arena allowances alone will not admit them",
+        ),
+        (
+            "invalid_genome",
+            counts.invalid_genome,
+            "attempted genomes failed validation; inspect the spawning input rather than tuning the energy economy",
+        ),
+    ] {
+        if count > 0 {
+            findings.push(Finding {
+                code,
+                signal: format!("{count} cumulative spawn refusals through tick {tick}"),
+                likely_causes: vec![cause],
+            });
+        }
+    }
 }
 
 struct IdleRequirements {
@@ -508,6 +574,8 @@ mod tests {
             cumulative_dissipation: 0.0,
             energy_rounding_reserve: 0.0,
             energy_drift: 0.0,
+            arena_usage: Vec::new(),
+            spawn_failures: None,
         }
     }
 
@@ -518,6 +586,80 @@ mod tests {
             random_control: world(population, variants, 1.0),
             final_state_hashes: None,
         }
+    }
+
+    #[test]
+    fn storage_pressure_is_reported_per_cohort_even_after_extinction() {
+        use sim_core::spawn::SpawnFailureCounts;
+
+        let mut samples = vec![sample(0, 1, 1), sample(1_000, 0, 0)];
+        for sample in &mut samples {
+            sample.evolving.spawn_failures = Some(SpawnFailureCounts::default());
+            sample.random_control.spawn_failures = Some(SpawnFailureCounts::default());
+        }
+        samples[1]
+            .evolving
+            .spawn_failures
+            .as_mut()
+            .unwrap()
+            .arena_capacity = 2;
+        samples[1]
+            .random_control
+            .spawn_failures
+            .as_mut()
+            .unwrap()
+            .arena_fragmentation = 3;
+        let report = diagnose(&header(1_000), &samples);
+        let capacity = report
+            .evolving
+            .iter()
+            .find(|f| f.code == "storage_capacity")
+            .unwrap();
+        assert!(capacity.signal.contains("2 cumulative"));
+        assert!(capacity.likely_causes[0].contains("total free elements"));
+        assert!(
+            !report
+                .evolving
+                .iter()
+                .any(|f| f.code == "storage_fragmentation")
+        );
+        let fragmentation = report
+            .random_control
+            .iter()
+            .find(|f| f.code == "storage_fragmentation")
+            .unwrap();
+        assert!(fragmentation.signal.contains("3 cumulative"));
+        assert!(fragmentation.likely_causes[0].contains("contiguous"));
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("spawn-refusal"))
+        );
+    }
+
+    #[test]
+    fn absent_spawn_observations_are_unavailable_not_zero() {
+        let samples = [sample(0, 1, 1)];
+        let report = diagnose(&header(0), &samples);
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| { reason.contains("spawn-refusal counts for evolving") })
+        );
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| { reason.contains("spawn-refusal counts for random control") })
+        );
+        assert!(
+            !report
+                .evolving
+                .iter()
+                .any(|finding| finding.code.starts_with("storage_"))
+        );
     }
 
     #[test]
