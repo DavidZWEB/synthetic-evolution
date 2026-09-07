@@ -59,6 +59,7 @@ jobs:
     concurrency:
       group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
@@ -226,6 +227,7 @@ jobs:
     concurrency:
       group: swa-${{ github.workflow }}-${{ github.event.pull_request.number }}
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
