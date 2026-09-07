@@ -196,3 +196,43 @@ fn metrics_stdout_remains_machine_readable() {
             .contains("completed 0 ticks")
     );
 }
+
+#[test]
+fn unsafe_params_are_reported_before_a_run_starts() {
+    for (json, message) in [
+        (
+            r#"{"mutation":{"weight_limit":-1}}"#,
+            "mutation bounds and perturbation scales",
+        ),
+        (
+            r#"{"chemo":{"cells":[4294967295,4294967295,1],"decay":[0.98,0.5]}}"#,
+            "chemo grid times channels",
+        ),
+    ] {
+        let params = temporary("invalid-params.json");
+        fs::write(&params, json).expect("write params");
+        let output = Command::new(env!("CARGO_BIN_EXE_native"))
+            .args([
+                "--ticks",
+                "0",
+                "--founders",
+                "1",
+                "--metrics",
+                "-",
+                "--params",
+            ])
+            .arg(&params)
+            .output()
+            .expect("run native shell");
+        fs::remove_file(params).expect("remove params");
+
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "invalid input must not panic"
+        );
+        assert!(output.stdout.is_empty(), "invalid run emitted metrics");
+        let error = String::from_utf8(output.stderr).expect("error UTF-8");
+        assert!(error.contains(message), "unexpected error: {error}");
+    }
+}

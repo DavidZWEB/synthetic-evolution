@@ -26,9 +26,9 @@ out vec3 v_color;
 flat out float v_selected;
 
 vec2 toward(vec2 point, vec2 from, float extent) {
-  // Match the simulation's minimum-image torus rule (spec §2.3).
+  // Explicit half-world ties keep CPU picking and GPU image placement identical.
   vec2 d = point - from;
-  return d - extent * round(d / extent);
+  return d - extent * floor(d / extent + 0.5);
 }
 
 void main() {
@@ -84,7 +84,7 @@ void main() {
   v_fullness = clamp(a_energy / u_max_energy, 0.0, 1.0);
 
   vec2 d = a_position.xy - u_center;
-  d -= u_world * round(d / u_world);
+  d -= u_world * floor(d / u_world + 0.5);
 
   float radius = max(u_radius * u_ppu, u_min_radius);
   vec2 pixels = d * u_ppu + a_corner * radius;

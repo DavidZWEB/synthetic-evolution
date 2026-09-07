@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { frameLayout, frameViews } from './snapshot-layout.js';
+import { FRAME_STATE, frameLayout, frameViews } from './snapshot-layout.js';
 import { SHARED, TRANSFERABLE, createReader, createWriter } from './transport.js';
 
 function source(capacity, plantCapacity, marker) {
@@ -49,6 +49,43 @@ test('a leased shared frame stays immutable while newer frames publish', () => {
   const repeated = reader.latest();
   assert.equal(repeated.fresh, false);
   assert.equal(repeated.tick, 13n);
+  reader.release();
+});
+
+test('shared acquisition records the generation actually leased after an ABA race', (t) => {
+  const writer = createWriter(SHARED, 1, 0);
+  const reader = createReader(writer.handoff);
+  writer.publish(source(1, 0, 1), 1n, 1);
+  assert.equal(reader.latest().tick, 1n);
+  writer.publish(source(1, 0, 2), 2n, 1);
+
+  const compareExchange = Atomics.compareExchange;
+  let interleaved = false;
+  let pauseReclamation = false;
+  t.mock.method(Atomics, 'compareExchange', (array, index, expected, replacement) => {
+    if (array.buffer === writer.handoff.buffer) {
+      if (!interleaved && expected === FRAME_STATE.PUBLISHED && replacement === FRAME_STATE.READING) {
+        interleaved = true;
+        assert.equal(writer.publish(source(1, 0, 3), 3n, 1), true);
+        // Reuse the discovered slot, then pause before reclaiming publication 3.
+        // Its PUBLISHED -> FREE -> PUBLISHED cycle occurs before the reader's CAS.
+        pauseReclamation = true;
+        assert.equal(writer.publish(source(1, 0, 4), 4n, 1), true);
+        pauseReclamation = false;
+      } else if (pauseReclamation && expected === FRAME_STATE.PUBLISHED && replacement === FRAME_STATE.FREE) {
+        return Atomics.load(array, index);
+      }
+    }
+    return compareExchange(array, index, expected, replacement);
+  });
+
+  const acquired = reader.latest();
+  assert.equal(interleaved, true, 'did not exercise the acquisition race');
+  assert.equal(acquired.tick, 4n);
+  assert.equal(acquired.views.position[0], 4);
+  const repeated = reader.latest();
+  assert.equal(repeated.tick, 4n, 'regressed to the older publication still awaiting reclamation');
+  assert.equal(repeated.fresh, false);
   reader.release();
 });
 

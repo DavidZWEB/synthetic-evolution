@@ -118,6 +118,11 @@ impl SlotPool {
         &self.incarnation
     }
 
+    /// Allocation order is observable simulation state, unlike arena placement.
+    pub(crate) fn free_indices(&self) -> &[u32] {
+        &self.free
+    }
+
     /// Live slots in ascending index order.
     ///
     /// Ascending on purpose: every system that touches shared state must resolve in

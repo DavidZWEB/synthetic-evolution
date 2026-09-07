@@ -6,9 +6,11 @@ objective. Fitness is survival and reproduction.
 
 Rust simulation core compiled to WASM, Svelte + WebGL client.
 
-**Status:** Phase 1, milestone M11 of 12. The complete loop runs in WASM with live
-instrumentation, while the native shell produces paired evolving/control telemetry and
-diagnoses known failure modes. See
+**Status:** Phase 1 complete through M12, including human acceptance of food-seeking
+across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
+is next. The complete loop runs in WASM with live instrumentation; the native shell
+produces paired evolving/control telemetry and diagnoses known failure modes. The
+remaining 5k-agent simulation-throughput limit is recorded separately from acceptance in
 [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
 
 ## Quick start

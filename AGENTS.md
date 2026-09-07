@@ -156,7 +156,7 @@ authoritative full list.
 | WASM boundary | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Tick arithmetic or determinism | `sim-core` checks plus `wasm-pack test --node shells/wasm` |
 | Rust/TypeScript contract | Rust checks plus `npm run types --prefix web`; `git diff --exit-code -- web/src/generated` |
-| Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web` |
+| Web | `npm test --prefix web`; `npm run check --prefix web`; `npm run build --prefix web`; `npm run test:browser --prefix web` |
 
 `npm run dev` and `npm run build` rebuild the WASM bindings before Vite starts.
 Native tests include the golden hash but cannot prove cross-target agreement; run the
@@ -218,5 +218,10 @@ prefills that commit's body by concatenating the branch's messages, which is why
 still worth writing properly — but the prefill is editable and the title falls back to the
 PR's, so read the squash message before merging rather than trusting it. The explanation
 for any golden-hash update must survive into the squash message.
+
+Keep independent causes of golden-hash changes in separate commits, each with its own
+reference update and explanation. Review, revert, and bisect must be able to distinguish
+a dynamics change from expanded hash coverage or corrected metadata, even when the PR
+will eventually squash.
 
 Fix what is plainly wrong; raise judgment calls as comments and let the human decide.

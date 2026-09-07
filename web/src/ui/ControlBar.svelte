@@ -95,7 +95,7 @@
   button:disabled { opacity: 0.4; cursor: default; }
   button.active { background: #3b4252; border-color: #4c566a; }
 
-  .speeds { display: flex; gap: 0.25rem; }
+  .speeds { display: flex; flex-wrap: wrap; min-width: 0; gap: 0.25rem; }
 
   label {
     color: #6b7280;
@@ -115,4 +115,9 @@
   }
 
   input { width: 5rem; }
+
+  @media (max-width: 40rem) {
+    footer { gap: 0.5rem; padding: 0.6rem 0.75rem; }
+    input { width: 4rem; }
+  }
 </style>

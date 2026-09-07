@@ -333,8 +333,9 @@ function buildRenderer(
       return pickAgent(
         views,
         capacity,
-        camera.screenToWorld(cssX, cssY),
+        camera.screenToWorldUnwrapped(cssX, cssY),
         worldSize,
+        camera.state,
         MIN_RADIUS_PX / camera.state.ppu,
       );
     },

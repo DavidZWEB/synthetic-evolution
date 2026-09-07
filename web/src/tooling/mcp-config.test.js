@@ -26,3 +26,13 @@ test('Playwright MCP config uses the package version recorded by npm', async () 
     ['--browser', 'chromium'],
   );
 });
+
+test('browser tests and MCP share the installed Chromium version', async () => {
+  const [packageJson, lockfile] = await Promise.all([
+    readJson('../../package.json'),
+    readJson('../../package-lock.json'),
+  ]);
+  const runtime = lockfile.packages['node_modules/@playwright/mcp'].dependencies.playwright;
+  assert.equal(packageJson.devDependencies.playwright, runtime);
+  assert.equal(lockfile.packages['node_modules/playwright'].version, runtime);
+});

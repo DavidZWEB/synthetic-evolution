@@ -73,6 +73,9 @@ tooling without the user's approval, and never report a skipped visual check as 
    shared-buffer transport. Stop it, start the package script dedicated to the
    transferable fallback, and repeat the core load, step, and agent-selection
    checks. Confirm the transport readout identifies the path being exercised.
+   Use a fresh browser context or an uncached URL when switching server modes:
+   cached isolation headers can survive a 304 response and silently keep the
+   shared path active. Check `crossOriginIsolated` as well as the readout.
    If the change is unrelated to transport, a short fallback smoke check is
    enough; transport, snapshot, renderer, or picking changes need the full
    relevant interaction on both paths.

@@ -20,6 +20,8 @@ export function createInspectorController({
   let message = null;
   let requestId = 0;
   let lastRequestAt = Number.NEGATIVE_INFINITY;
+  let inFlight = false;
+  let refreshNeeded = false;
 
   const notify = () =>
     onChange({
@@ -28,15 +30,20 @@ export function createInspectorController({
       message,
     });
 
-  function request() {
-    if (!selected) return;
+  function request(timestamp = now()) {
+    const sim = getSim();
+    if (!selected || !sim || inFlight) return;
     requestId += 1;
-    lastRequestAt = now();
-    getSim()?.inspect(selected.index, selected.incarnation, requestId);
+    lastRequestAt = timestamp;
+    inFlight = true;
+    refreshNeeded = false;
+    sim.inspect(selected.index, selected.incarnation, requestId);
   }
 
   function select(next) {
     requestId += 1;
+    inFlight = false;
+    refreshNeeded = false;
     selected = next;
     inspection = null;
     message = null;
@@ -56,12 +63,14 @@ export function createInspectorController({
     accept(response) {
       if (
         !selected ||
+        !inFlight ||
         response.index !== selected.index ||
         response.incarnation !== selected.incarnation ||
         response.requestId !== requestId
       ) {
         return false;
       }
+      inFlight = false;
       if (!response.agent) {
         inspection = null;
         message = response.message ?? 'agent is no longer alive';
@@ -81,8 +90,12 @@ export function createInspectorController({
     },
 
     poll(frame, timestamp) {
-      if (frame?.fresh && selected && !message && timestamp - lastRequestAt >= intervalMs) {
-        request();
+      if (!selected || message) return;
+      // A paused step may be fresh for just one animation frame inside the cooldown.
+      // Keep its demand, and let a slow same-selection reply finish before polling again.
+      if (frame?.fresh) refreshNeeded = true;
+      if (refreshNeeded && !inFlight && timestamp - lastRequestAt >= intervalMs) {
+        request(timestamp);
       }
     },
   };

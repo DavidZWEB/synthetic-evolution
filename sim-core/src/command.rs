@@ -17,6 +17,8 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::world::World;
+
 /// One request, stamped with the tick it takes effect on.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Command {
@@ -59,11 +61,54 @@ impl Command {
     }
 }
 
+impl World {
+    /// Queues a request from outside the simulation (spec §2.2b).
+    ///
+    /// Queue growth belongs at submission, not inside the tick. Reserve the due
+    /// buffer for every pending command, including a first or larger batch.
+    pub fn push_command(&mut self, command: Command) {
+        self.due_commands.reserve(self.commands.len() + 1);
+        self.commands.push(command);
+    }
+
+    /// How many commands are still waiting.
+    #[inline]
+    pub fn pending_commands(&self) -> usize {
+        self.commands.len()
+    }
+
+    /// Applies every due command before step 1, in submission order (spec §2.2b).
+    ///
+    /// Extract the whole due set before applying any command, so it cannot enqueue
+    /// another into its own tick. Extraction preserves both queues' order in one
+    /// linear pass rather than shifting the pending tail after each removal.
+    pub(crate) fn apply_commands(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
+        let mut due = core::mem::take(&mut self.due_commands);
+        let tick = self.tick;
+        due.extend(
+            self.commands
+                .extract_if(.., |command| command.apply_at_tick <= tick),
+        );
+
+        for command in &due {
+            match command.kind {
+                Kind::SpawnFounder { position } => {
+                    self.spawn_founder(position);
+                }
+            }
+        }
+        due.clear();
+        self.due_commands = due;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::params::SimParams;
-    use crate::world::World;
 
     fn world() -> World {
         let mut params = SimParams::default();
@@ -128,6 +173,34 @@ mod tests {
         };
         assert_eq!(order(100.0, 200.0), (100.0, 200.0));
         assert_eq!(order(200.0, 100.0), (200.0, 100.0));
+    }
+
+    #[test]
+    fn interleaved_commands_preserve_both_due_and_pending_order() {
+        let mut world = world();
+        for (tick, x) in [
+            (3, 300.0),
+            (1, 100.0),
+            (3, 350.0),
+            (0, 0.0),
+            (0, 50.0),
+            (1, 150.0),
+        ] {
+            world.push_command(spawn_at(tick, x));
+        }
+
+        for (tick, expected_pending) in [(0, 4), (1, 2), (2, 2), (3, 0)] {
+            assert_eq!(world.tick_count(), tick);
+            world.apply_commands();
+            assert_eq!(world.pending_commands(), expected_pending);
+            world.advance_tick();
+        }
+        let positions: Vec<_> = world
+            .pool()
+            .iter_live()
+            .map(|id| world.agents().position[id.index()].x)
+            .collect();
+        assert_eq!(positions, [0.0, 50.0, 100.0, 150.0, 300.0, 350.0]);
     }
 
     #[test]

@@ -83,6 +83,19 @@ fn the_counter_actually_counts() {
 }
 
 #[test]
+fn invalid_founder_params_do_not_allocate_a_plan() {
+    let mut params = SimParams::default();
+    params.brain.hidden_neurons = 200;
+    let observed = count_allocations(|| {
+        let result = sim_core::founder::FounderPlan::new(&params, || {
+            panic!("invalid params must not request innovation ids")
+        });
+        assert!(result.is_err());
+    });
+    assert_eq!(observed, 0, "invalid params allocated a founder plan");
+}
+
+#[test]
 fn spawn_and_despawn_never_allocate() {
     let mut params = SimParams::default();
     params.world.max_agents = 10_000;
@@ -281,6 +294,30 @@ fn a_full_pool_refuses_without_allocating() {
         }
     });
     assert_eq!(observed, 0, "rejecting a birth allocated {observed} times");
+}
+
+#[test]
+fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
+    use sim_core::command::{Command, Kind};
+
+    let mut params = SimParams::default();
+    params.world.max_agents = 32;
+    params.plants.max_plants = 8;
+    params.chemo.cells = [8, 8, 1];
+    let mut world = World::new(21, params).expect("valid params");
+
+    for count in [1, 8, 64] {
+        for i in 0..count {
+            world.push_command(Command::now(Kind::SpawnFounder { position: at(i) }));
+        }
+        let observed = count_allocations(|| world.step());
+        assert_eq!(
+            observed, 0,
+            "draining a new batch of {count} commands allocated inside the tick"
+        );
+        assert_eq!(world.pending_commands(), 0);
+        assert!(world.population() > 0, "commands did not spawn agents");
+    }
 }
 
 #[test]
