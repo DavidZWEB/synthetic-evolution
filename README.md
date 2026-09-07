@@ -4,17 +4,16 @@ An open-ended artificial life simulator. Neural-network-brained organisms evolve
 implicit selection in a closed energy economy — no fitness function, no training
 objective. Fitness is survival and reproduction.
 
-Rust simulation core compiled to WASM, Svelte + WebGL client.
+Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
-across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
-has started with the variable-length allocator foundation; world integration and
-structural mutation are still pending. See
-[docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md).
-The complete loop runs in WASM with live
-instrumentation; the native shell produces paired evolving/control telemetry and
-diagnoses known failure modes. The
-remaining 5k-agent simulation-throughput limit is recorded separately from acceptance in
+across three seeds against randomized-at-birth controls. Phase 2 genetic architecture
+implementation is underway; the
+[Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
+for current milestone status and remaining design decisions. The complete loop runs
+in WASM with live instrumentation; the native shell produces paired evolving/control
+telemetry and diagnoses known failure modes. The remaining 5k-agent
+simulation-throughput limit is recorded separately from acceptance in
 [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md).
 
 ## Quick start
@@ -24,7 +23,8 @@ Two prerequisites: **[rustup](https://rustup.rs)** and **Node 22** (via
 what matters, not the manager).
 
 ```bash
-git clone <this repo> && cd synthetic-evolution
+git clone https://github.com/DavidZWEB/synthetic-evolution.git
+cd synthetic-evolution
 ./scripts/setup.sh
 ```
 
@@ -52,9 +52,9 @@ If something in setup doesn't work on a fresh machine, that is a bug in
 
 ```
 sim-core/        the simulation. Pure Rust: no I/O, no wasm-bindgen, deterministic
-shells/native/   CLI — headless runs, batch sweeps, golden-hash tests
+shells/native/   CLI — headless paired runs, metrics, diagnostics
 shells/wasm/     wasm-bindgen bindings for the browser worker
-web/             Vite + Svelte 5 client
+web/             Vite + Svelte 5 + WebGL2 client
 docs/            spec, phase plans, development setup
 scripts/setup.sh one command to make a fresh machine work
 ```
@@ -72,7 +72,9 @@ scripts/setup.sh one command to make a fresh machine work
 ## The short version of the rules
 
 `sim-core` is deterministic: same seed and params produce a byte-identical run on every
-platform. It does no I/O, holds no `static` mutable state, and does not allocate in the
-tick. Energy is conserved, offspring spawn near their parents, and there is no explicit
-fitness function. Each of those looks like a detail and is load-bearing —
-[AGENTS.md](AGENTS.md) explains why before you change one.
+platform. It does no I/O, holds no `static` mutable state, allocates nothing in the hot
+loop, and keeps every behavioral tunable in runtime config. Energy is conserved;
+offspring spawn near their parents; metabolic cost scales with brain and sensor
+complexity; sensors cannot bypass the world; and there is no explicit fitness function.
+Forward-compatibility genome fields are intentional. These constraints are
+load-bearing — read [AGENTS.md](AGENTS.md) before changing them.
