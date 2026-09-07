@@ -80,8 +80,9 @@ jobs:
       - name: Test WASM boundary and determinism
         run: wasm-pack test --node shells/wasm
 
-      # Pull requests are not deployed, so CI owns proving the complete browser bundle
-      # can be produced from a clean checkout.
+      # Keep build failures in CI even though same-repository PRs also build for their
+      # preview deploy. Fork and Dependabot PRs cannot access the Azure token, so this
+      # remains their only clean-checkout bundle proof.
       - name: Build web client
         run: npm run build --prefix web
 

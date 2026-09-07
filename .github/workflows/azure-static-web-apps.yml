@@ -7,8 +7,15 @@
 #
 # It does not run the tests itself. Production deploys are triggered by ci.yml
 # finishing, and only when it succeeded, so main can only reach the live site on a
-# commit whose suite passed. Pull requests build in CI but do not deploy; the closed
-# event remains temporarily so previews created by older workflow revisions are removed.
+# commit whose suite passed. Same-repository pull requests deploy straight from their
+# PR events so Azure can create and update its native per-PR preview environment. CI
+# still reports independently; fork and Dependabot PRs cannot receive the deployment
+# secret and are deliberately skipped.
+#
+# Preview environments are finite, non-rotating slots: Azure caps each app at 3 on
+# Free and 10 on Standard. An open PR keeps one slot keyed by its number, updates
+# reuse that slot, and only action: close releases it. Teardown is therefore capacity
+# management, not cosmetic cleanup.
 #
 # One consequence of workflow_run worth knowing before editing this file: GitHub
 # always runs the copy of it that is on the default branch. Changes to the production
@@ -21,35 +28,101 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [closed]
+    types: [opened, synchronize, reopened, edited]
     branches: [main]
+  # Unlike pull_request, pull_request_target still runs when a PR is conflicted.
+  # This close-only path never checks out or executes PR code, but can use the
+  # deployment secret to remove previews reliably. It is intentionally unfiltered
+  # by base branch so a PR retargeted away from main still tears down its preview.
+  pull_request_target:
+    types: [closed, edited]
 
-# A second push to the same branch makes the first deploy irrelevant.
-concurrency:
-  group: swa-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+# Keep the workflow read-only by default. The upload job grants pull-request write
+# access locally because the Azure action uses repo_token to comment the preview URL.
 permissions:
   contents: read
 
 jobs:
   build_and_deploy:
-    # A CI run that failed, was cancelled, or was skipped is not a green light.
+    # A CI run that failed, was cancelled, or was skipped is not a production green
+    # light. PR previews are intentionally independent so a failing change can still
+    # be inspected. Never run untrusted fork or Dependabot code with the Azure token.
     if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch) ||
+      (github.event_name == 'pull_request' &&
+       (github.event.action != 'edited' ||
+        github.event.changes.base != null) &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+    permissions:
+      contents: read
+      pull-requests: write
+    # Serialize Azure operations for one destination. Each run rechecks live state,
+    # so an older run becomes a no-op rather than overwriting a newer deployment.
+    # queue: max preserves up to 100 pending lifecycle events instead of replacing
+    # an older pending close or retarget with the newest run.
+    concurrency:
+      group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     name: Build and deploy
     steps:
+      # Queued and manually rerun workflows may outlive the event that started them.
+      # Re-read current state before checking out or running a historical revision.
+      # The YAML anchor keeps this safety decision identical to the pre-upload check
+      # without checking repository code out before the initial decision.
+      - name: Resolve current deployment
+        id: initial
+        uses: actions/github-script@v7
+        with:
+          script: &resolve-current-deployment |
+            if (context.eventName === 'workflow_run') {
+              const branch = context.payload.repository.default_branch;
+              const { data } = await github.rest.repos.getBranch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch,
+              });
+              core.setOutput(
+                'deploy',
+                data.commit.sha === context.payload.workflow_run.head_sha ? 'true' : 'false',
+              );
+              return;
+            }
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const eligible =
+              pull.state === 'open' &&
+              pull.base.ref === context.payload.repository.default_branch &&
+              pull.head.repo?.full_name === repository &&
+              pull.user?.login !== 'dependabot[bot]';
+            const current =
+              pull.head.sha === context.payload.pull_request.head.sha &&
+              pull.base.sha === context.payload.pull_request.base.sha;
+            core.setOutput('deploy', eligible && current ? 'true' : 'false');
+
       # A workflow_run event carries the default branch's ref, not the commit that
       # was tested, so the tested SHA has to be named explicitly. Deploying
-      # github.ref here would ship whatever main happens to be at now, which is not
-      # necessarily what CI just passed.
+      # github.ref there would ship whatever main happens to be at now. A PR preview
+      # uses the merge commit for the base revision captured by its event; the live
+      # checks skip the run if either side has moved since then.
       - uses: actions/checkout@v4
+        if: steps.initial.outputs.deploy == 'true'
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
+        if: steps.initial.outputs.deploy == 'true'
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -59,23 +132,37 @@ jobs:
       # restores $CARGO_HOME/bin, so setup.sh finds the pinned wasm-pack already
       # present and skips a from-source `cargo install` that costs minutes.
       - uses: Swatinem/rust-cache@v2
+        if: steps.initial.outputs.deploy == 'true'
 
       # scripts/setup.sh is the single source of truth for what a working checkout
       # needs: the pinned toolchain from rust-toolchain.toml, the pinned wasm-pack,
-      # and npm ci. ci.yml has already run the suite on this commit before this
-      # workflow is triggered; browser automation is opt-in and is not requested here.
+      # and npm ci. CI owns the test suite; this workflow only prepares the deployable
+      # artifact, and browser automation is not needed for that.
       - name: Set up toolchains and install dependencies
+        if: steps.initial.outputs.deploy == 'true'
         run: ./scripts/setup.sh --skip-tests
 
       # The build script generates the gitignored wasm bindings before invoking Vite,
       # matching the clean-checkout path developers use.
       - name: Build wasm and client
+        if: steps.initial.outputs.deploy == 'true'
         run: npm run build --prefix web
 
+      # The branch or PR can move while the build runs. Check again immediately
+      # before Azure sees the artifact so an obsolete build cannot win the race.
+      - name: Confirm deployment is still current
+        id: current
+        if: steps.initial.outputs.deploy == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: *resolve-current-deployment
+
       - name: Deploy
+        if: steps.current.outputs.deploy == 'true'
         uses: Azure/static-web-apps-deploy@v1
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           # When skip_app_build is true, this action zips and uploads app_location
           # verbatim — it does NOT combine it with output_location, despite
@@ -91,14 +178,50 @@ jobs:
           skip_app_build: true
 
   close_pull_request:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      (github.event.action == 'closed' ||
+       (github.event.action == 'edited' &&
+        github.event.changes.base != null &&
+        github.event.pull_request.base.ref != github.event.repository.default_branch)) &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: read
+    # Wait for an active upload. Azure can otherwise finish deploying after an early
+    # close action found no environment, leaving an orphaned public preview.
+    concurrency:
+      group: swa-${{ github.workflow }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
-      # Tears down previews created before PR deployment was disabled. No checkout or
-      # build is needed, and this job can be removed once those previews are gone.
+      # A close event can be rerun after the PR was reopened. Check live state so an
+      # old event cannot delete the current preview.
+      - name: Confirm preview should close
+        id: preview
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const eligible =
+              pull.state === 'open' &&
+              pull.base.ref === context.payload.repository.default_branch &&
+              pull.head.repo?.full_name === repository &&
+              pull.user?.login !== 'dependabot[bot]';
+            core.setOutput('close', eligible ? 'false' : 'true');
+
+      # Tears down the per-PR preview site. No checkout or build is needed.
       - uses: Azure/static-web-apps-deploy@v1
+        if: steps.preview.outputs.close == 'true'
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
           action: close
-          app_location: web
+          app_location: /dev/null
