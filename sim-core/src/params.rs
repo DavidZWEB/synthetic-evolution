@@ -510,8 +510,12 @@ impl SimParams {
     /// Written here rather than on `World` because none of it is about a world: it is a
     /// property of two `SimParams` and one number, which is what makes it testable
     /// without building a simulation to ask.
+    ///
+    /// The current params belong to an already validated world. Retuning preserves
+    /// its allocated grids, so a smaller sensing radius must not be charged for a
+    /// hypothetical finer grid in a new world.
     pub fn check_retune(&self, next: &SimParams, grid_cell: f32) -> Result<(), ParamError> {
-        next.validate()?;
+        next.validate_values()?;
 
         for (changed, message) in [
             (
@@ -561,10 +565,18 @@ impl SimParams {
         }
         Ok(())
     }
+
+    /// Validates scalar values and the storage needed to construct a new world.
+    pub fn validate(&self) -> Result<(), ParamError> {
+        self.validate_values()?;
+        StorageLayout::new(self)?;
+        Ok(())
+    }
+
     /// `!(x > 0.0)` rather than `x <= 0.0` throughout: the negated form also rejects
     /// NaN, which is the shape a bad value arrives in from JSON.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
-    pub fn validate(&self) -> Result<(), ParamError> {
+    fn validate_values(&self) -> Result<(), ParamError> {
         if !(self.world.size > 0.0) || !self.world.size.is_finite() {
             return Err(ParamError("world.size must be finite and positive"));
         }
@@ -752,7 +764,6 @@ impl SimParams {
                 "metabolism costs must be finite and non-negative",
             ));
         }
-        StorageLayout::new(self)?;
         Ok(())
     }
 }

@@ -223,6 +223,26 @@ fn invalid_or_oversized_genomes_are_rejected_before_claiming_resources() {
 }
 
 #[test]
+fn sensing_retunes_do_not_budget_a_replacement_grid() {
+    let mut params = params();
+    params.world.max_agents = 2;
+    params.plants.max_plants = 0;
+    params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap();
+    let mut world = World::new(42, params.clone()).unwrap();
+    let cell = world.spatial_hash().cell_size();
+    params.sensing.vision_range = 50.0;
+    assert!(
+        params.validate().is_err(),
+        "a new finer grid exceeds this budget"
+    );
+    world
+        .set_params(params)
+        .expect("live retuning retains the allocated grid");
+    assert_eq!(world.spatial_hash().cell_size(), cell);
+    assert_eq!(world.params().sensing.vision_range, 50.0);
+}
+
+#[test]
 fn observing_refusals_does_not_change_simulation_state() {
     let mut params = params();
     params.storage.genes_per_slot = 50;

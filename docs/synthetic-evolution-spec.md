@@ -112,6 +112,10 @@ must explicitly raise the budget; never lower population or expand storage silen
 This is not a host-RAM guarantee: shell snapshots/transports, allocator/OS overhead,
 and a second control world are additional. Storage configuration is fixed for a
 world's lifetime, because changing it would require rebuilding reserved buffers.
+Live retuning validates scalar values and the unchanged storage policy against the
+already-allocated grids. It must not charge a sensing-radius reduction for the finer
+grid that a new world would construct; startup budgeting and live retuning are
+different boundaries.
 
 A spawn claims every constituent arena before claiming a pool identity. Refusal
 unwinds prior claims without changing live data, free-span bookkeeping, pool order,

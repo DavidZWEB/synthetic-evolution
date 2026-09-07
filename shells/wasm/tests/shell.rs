@@ -322,3 +322,23 @@ fn inspector_reports_compensated_energy() {
     let inspection: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
     assert_eq!(inspection["energy"].as_f64(), Some(9_999_999_999.0));
 }
+
+#[wasm_bindgen_test]
+fn sensing_retunes_do_not_rebudget_existing_grids() {
+    let mut params = sim_core::SimParams::default();
+    params.world.max_agents = 2;
+    params.plants.max_plants = 0;
+    let budget = params.estimated_construction_bytes().unwrap();
+    let initial = format!(
+        r#"{{"world":{{"max_agents":2}},"plants":{{"max_plants":0}},"storage":{{"max_memory_bytes":{budget}}}}}"#
+    );
+    let mut sim = Sim::new(42, Some(initial)).unwrap();
+    let before = sim.snapshot_layout().unwrap();
+    let next = format!(
+        r#"{{"world":{{"max_agents":2}},"plants":{{"max_plants":0}},"storage":{{"max_memory_bytes":{budget}}},"sensing":{{"vision_range":50.0}}}}"#
+    );
+    assert!(wasm::validate_params(Some(next.clone())).is_err());
+    sim.set_params(&next)
+        .expect("retuning must retain the current grids");
+    assert_eq!(sim.snapshot_layout().unwrap(), before);
+}
