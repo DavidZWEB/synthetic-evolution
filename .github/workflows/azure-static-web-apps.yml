@@ -23,13 +23,21 @@ on:
     types: [completed]
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
     branches: [main]
+  # Unlike pull_request, pull_request_target still runs when a PR is conflicted.
+  # This close-only path never checks out or executes PR code, but can use the
+  # deployment secret to remove previews reliably. It is intentionally unfiltered
+  # by base branch so a PR retargeted away from main still tears down its preview.
+  pull_request_target:
+    types: [closed]
 
 # A newer event for the same production branch or PR makes the older deploy irrelevant.
+# A close event waits behind an active upload instead of cancelling it: Azure can
+# otherwise finish the server-side deployment after an early close finds nothing.
 concurrency:
   group: swa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'pull_request_target' }}
 
 # repo_token below comments the preview URL on the pull request. The repository's
 # default workflow permissions are read-only, so this permission must be explicit.
@@ -104,10 +112,12 @@ jobs:
 
   close_pull_request:
     if: >-
-      github.event_name == 'pull_request' &&
+      github.event_name == 'pull_request_target' &&
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     name: Close preview environment
     steps:
