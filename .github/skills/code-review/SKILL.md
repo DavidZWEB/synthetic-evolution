@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Independently review a pull request, branch, staged diff, or unstaged diff against Synthetic Evolution's repository rules. Use after opening or updating a pull request and whenever asked for a code review. The review must be performed by a separate code-review agent running Claude Opus 5 with maximum reasoning.
+description: Coordinate an independent review of a pull request, branch, staged diff, or unstaged diff against Synthetic Evolution's repository rules. Use only from the parent or implementing agent after opening or updating a pull request, or when asked to arrange a review. Do not invoke from an agent already launched as the independent reviewer.
 ---
 
 # Independent code review
@@ -9,9 +9,25 @@ A review must be independent from the agent that implemented the change. The par
 agent coordinates the review and handles any follow-up; it does not substitute its own
 assessment for the independent reviewer's pass.
 
-## Required reviewer
+If you were launched as the independent reviewer, perform the requested review directly.
+Do not invoke this skill, launch another reviewer, or delegate the review again.
 
-Invoke the task tool with all of these settings:
+## Required reviewer properties
+
+Every supported agent environment must use its native sub-agent mechanism to launch a
+reviewer with these properties:
+
+- separate context from the implementing agent;
+- Claude Opus 5 with maximum reasoning;
+- long context when the platform exposes that setting;
+- read-only responsibility for the review;
+- ability to inspect the repository and the pinned change set itself.
+
+Do not silently use another model, lower the reasoning effort, or perform the review
+yourself. If that reviewer is unavailable, report the review as blocked rather than
+calling a weaker pass complete.
+
+For Copilot CLI, invoke the task tool with:
 
 - `agent_type: code-review`
 - `model: claude-opus-5`
@@ -19,14 +35,15 @@ Invoke the task tool with all of these settings:
 - `context_tier: long_context`
 - `mode: background`
 
-Do not silently use another model, lower the reasoning effort, or perform the review
-yourself. If that reviewer is unavailable, report the review as blocked rather than
-calling a weaker pass complete.
+Background mode keeps the reviewer available for a correction pass. After launching
+it, do not mutate the reviewed worktree. Continue only non-mutating work outside that
+worktree; if there is none, end the turn and wait for the completion notification. Do
+not poll. Read the result once with `read_agent` after notification.
 
-Background mode is deliberate: it keeps the independent reviewer available for the
-required correction pass. After launching it, continue only genuinely independent
-work; otherwise wait for the completion notification. Do not poll. Read the result once
-with `read_agent` after notification.
+Other agents must use an equivalent native mechanism with the required properties
+above. Keep the reviewer available for follow-up when the platform supports it; if it
+does not, launch a fresh independent Claude Opus 5 maximum-reasoning reviewer for the
+correction pass and give it the original findings plus the updated full scope.
 
 The review agent is read-only. Do not ask it to edit files, commit, push, resolve
 threads, or approve or merge a pull request.
@@ -36,9 +53,9 @@ threads, or approve or merge a pull request.
 Before launching the reviewer:
 
 1. Identify the repository root, current worktree, current branch, working-tree state,
-   and the exact comparison base. For a pull request, include its number and base
-   branch. For local work, say explicitly whether the scope is staged changes,
-   unstaged changes, all local changes, or the branch diff.
+   exact `HEAD` SHA, and exact comparison-base SHA. For a pull request, include its
+   number and base branch. For local work, say explicitly whether the scope is staged
+   changes, unstaged changes, all local changes, or the branch diff.
 2. Include the user's intended behavior and acceptance criteria. State facts, not the
    implementing agent's conclusions about correctness.
 3. Tell the reviewer to inspect the actual diff and any callers, tests, generated
@@ -47,6 +64,14 @@ Before launching the reviewer:
 4. Require the reviewer to read `AGENTS.md` first. For changes to `sim-core`,
    simulation behavior, or serialized world state, require the spec reading mandated
    there. For other surfaces, point it only to the relevant documentation.
+5. Require the reviewer to confirm `git rev-parse HEAD`, the comparison-base SHA, and
+   `git status --short` before reviewing. If any differs from the prompt, it must stop
+   and report the scope mismatch.
+
+Freeze the reviewed worktree until the reviewer responds. Do not edit, format,
+regenerate, commit, merge, rebase, check out another revision, or run any command that
+changes tracked files there. Fetching is allowed only when the prompt pins the base by
+SHA rather than by a moving ref.
 
 If there is no concrete change set, stop and say that a code review needs a pull
 request, branch diff, staged diff, or unstaged diff.
@@ -55,7 +80,8 @@ request, branch diff, staged diff, or unstaged diff.
 
 Give the independent agent a complete prompt containing:
 
-- the worktree path and precise diff scope;
+- the worktree path, exact head and base SHAs, captured working-tree state, and precise
+  diff scope;
 - the original user request and any deliberate behavior changes;
 - an instruction to apply `AGENTS.md`, including its invariants, load-bearing rules,
   design guidance, validation requirements, and landing rules;
@@ -76,8 +102,9 @@ finding or tell it that the implementation is probably correct.
 
 ## Handling findings
 
-Verify that every reported location still matches the reviewed revision before acting.
-Do not dismiss a finding merely because automated checks pass.
+Before acting, confirm that the worktree still has the pinned head SHA and captured
+working-tree state, and verify that every reported location matches that reviewed
+snapshot. Do not dismiss a finding merely because automated checks pass.
 
 - If the user asked only for a review, report findings without modifying the branch.
 - During implementation work, fix clear defects that are within scope. Follow
@@ -87,7 +114,9 @@ Do not dismiss a finding merely because automated checks pass.
   changing behavior.
 - After corrections, send the same reviewer a follow-up with `write_agent` and ask it
   to review the correction against its original finding and the updated full diff.
-  Keep the reviewer separate from the implementation.
+  Include the new exact head and base SHAs and working-tree state, and freeze the
+  worktree again. On platforms without persistent reviewers, launch the fresh
+  independent reviewer described above.
 - Continue until the independent reviewer reports no remaining high-confidence
   findings or a human decision is required.
 

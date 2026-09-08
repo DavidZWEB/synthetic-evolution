@@ -205,12 +205,13 @@ follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena
 
 **Then run an independent review of the PR you just raised.** Opening it is not the end
 of the task. Follow `.github/skills/code-review/SKILL.md`; agents that do not discover
-project skills automatically must read and apply it directly. `gh pr diff` may establish
-the review scope, but self-review is not a substitute for the independent reviewer.
-Report the findings in the same reply that hands over the PR. Review against the five
-invariants, load-bearing rules, and code-design guidance above, then check ordinary
-correctness, every changed caller, and whether each test could fail for the bug it claims
-to catch. Report explicitly when the review is clean.
+project skills automatically must read and apply its platform-neutral reviewer
+requirements directly, using their equivalent native sub-agent mechanism. `gh pr diff`
+may establish the review scope, but self-review is not a substitute for the independent
+reviewer. Report the findings in the same reply that hands over the PR. Review against
+the five invariants, load-bearing rules, and code-design guidance above, then check
+ordinary correctness, every changed caller, and whether each test could fail for the bug
+it claims to catch. Report explicitly when the review is clean.
 
 **Fixes found after the PR opens land as a second commit** — never amended into the first.
 The audience is the human reading the open PR, not `main`'s history: a separate commit hands
