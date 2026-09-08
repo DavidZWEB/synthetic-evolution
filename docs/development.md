@@ -195,7 +195,7 @@ MCP and its matching direct Playwright dependency together and regenerate the lo
 do not change the browser-test pin alone.
 `.github/mcp.json` is Copilot CLI's repository configuration; other agents use their
 own MCP discovery locations, listed in `AGENTS.md`. Copilot CLI also discovers the
-shared visual-check skill under `.github/skills/`.
+project's visual-check and independent code-review skills under `.github/skills/`.
 
 `npm run test:browser --prefix web` uses the existing Node test runner with the pinned
 Playwright Chromium runtime. It builds WASM, starts its own local Vite servers, and

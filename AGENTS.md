@@ -18,9 +18,9 @@ it from this file.
 
 **Agent tooling:** MCP configuration discovery is client-specific. Copilot CLI reads
 `.github/mcp.json`; Claude Code uses `.mcp.json`; VS Code uses `.vscode/mcp.json`.
-The shared browser workflow lives in `.github/skills/web-client-visual-check/`; Copilot
-CLI discovers project skills there, while other agents may require their own supported
-skill location.
+The shared browser and independent-review workflows live under `.github/skills/`.
+Copilot CLI discovers project skills there, while other agents may require their own
+supported skill location.
 
 ## The five invariants
 
