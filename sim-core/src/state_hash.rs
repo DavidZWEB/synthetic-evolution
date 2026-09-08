@@ -300,6 +300,13 @@ impl World {
             }
         }
 
+        // Sparse wiring is sampled once and retained for future founder commands.
+        // The current stream position cannot substitute for it (spec section 7.8).
+        h.u32(self.plan.genes().len() as u32);
+        for gene in self.plan.genes() {
+            fold_gene(&mut h, gene);
+        }
+
         // First-fit placement affects which later births fit, even when every live
         // genome and every free-element count is identical (spec section 2.2a).
         fold_arena(&mut h, &self.genes);
@@ -330,6 +337,35 @@ mod tests {
     use super::*;
     use crate::params::SimParams;
     use glam::Vec3;
+
+    #[test]
+    fn cached_founder_wiring_is_hashed_independently_of_the_rng_position() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 0;
+        params.sensing.vision_rays = 0;
+        params.sensing.chemo_sensors = 1;
+        params.sensing.energy_sensors = 0;
+        params.brain.hidden_neurons = 0;
+        params.brain.oscillators = 0;
+        params.brain.connections_per_target = Some(1);
+        let mut world = World::new(42, params.clone()).unwrap();
+        let before = world.state_hash();
+        let stream = world.rng.state_fingerprint();
+        let mut next = 0;
+        let replacement =
+            crate::founder::FounderPlan::new(&params, &mut crate::Rng::from_seed(99), || {
+                let id = crate::InnovationId::new(next);
+                next += 1;
+                id
+            })
+            .unwrap();
+        assert_eq!(next, world.next_innovation);
+        assert_ne!(replacement.genes(), world.plan.genes());
+        world.plan = replacement;
+        assert_eq!(world.rng.state_fingerprint(), stream);
+        assert_ne!(world.state_hash(), before);
+    }
 
     #[test]
     fn variable_capacity_is_future_relevant_even_in_an_empty_world() {

@@ -10,15 +10,19 @@
 //! state and live handle placement. The preceding storage-integration commit retains
 //! the old references, proving that shipped trajectories did not move. Earlier hashes
 //! already covered recurrent state, pool order/incarnations, parts, and turn metadata.
+//!
+//! Phase 2 M3 refreshes them again solely to cover the cached founder template.
+//! Sparse wiring survives RNG advancement and affects later founder commands.
+//! The preceding M3 implementation commit preserves the old reference values.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x6664_43a1_234e_66f8;
+pub const SHIPPED_GOLDEN: u64 = 0x4467_ed0e_d1d7_3fc7;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0x1121_6798_795d_01cd;
+pub const BREEDING_GOLDEN: u64 = 0xbdaa_46f3_d3dd_1e86;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;

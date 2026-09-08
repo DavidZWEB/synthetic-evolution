@@ -835,10 +835,20 @@ a hand-expanded genome feeds, reproduces, hits a pooled-neuron limit, and contin
 stepping in both heredity modes. This pins the variable-storage path across targets,
 not a claim that useful structure evolved.
 
+M2's [`structural_case.rs`](../sim-core/tests/common/structural_case.rs) and M3's
+[`organs_case.rs`](../sim-core/tests/common/organs_case.rs) additionally pin neural
+and sensor edits, bounded refusals, births, slot reuse, and continued stepping in
+both heredity modes. The M3 case starts from a sparse chemo-only founder; it proves
+cross-target mechanism agreement, not ecological viability.
+
 `state_hash` folds world state, including positions, energies, genomes, recurrent neural
 state, future slot-allocation order, variable-arena capacities/free spans and live
-handle placement, RNG state, and tick. Allocator layout matters because freeing an
-agent changes fragmentation and later birth success. Stale free-space payload and
+handle placement, the retained founder template, RNG state, and tick. Allocator layout
+matters because freeing an agent changes fragmentation and later birth success.
+Sparse founder wiring is sampled once and reused by later founder commands; current
+RNG state cannot substitute for that cached template. M3's separate reference refresh
+adds this coverage without changing trajectories or shipped defaults.
+Stale free-space payload and
 optional observer counters are not authoritative. A behavior-changing refactor
 must not silently move the reference; an intended behavior change requires a deliberate,
 reviewable update. Strengthening hash coverage can also change references without

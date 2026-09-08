@@ -5,10 +5,10 @@
 //! summation reordered, a `HashMap` introduced, a platform `sin` slipping past the lint,
 //! a default nudged in passing.
 //!
-//! **A failure here is not automatically a bug.** It means behaviour moved. If the move
-//! was intended, update the constant in the same commit as the change and say in the
-//! message why the behaviour is different. An unexplained update is the red flag; a
-//! well-explained one is ordinary work.
+//! **A failure here is not automatically a bug.** Behaviour or hash coverage moved.
+//! An intended change updates the constant in the same commit and explains its cause.
+//! Keep coverage-only refreshes separate from dynamics changes so reviewers can tell
+//! which happened. An unexplained update is the red flag.
 //!
 //! The runs use `SimParams::default()` on purpose. That makes the test sensitive to every
 //! shipped default, which is the point: a default is behaviour, and changing one should
@@ -27,6 +27,14 @@ mod storage_case;
 
 #[path = "common/structural_case.rs"]
 mod structural_case;
+
+#[path = "common/organs_case.rs"]
+mod organs_case;
+
+#[test]
+fn organ_mutation_matches_its_reference_in_both_modes() {
+    organs_case::check_organ_runs();
+}
 
 #[test]
 fn structural_mutation_matches_its_reference_in_both_modes() {

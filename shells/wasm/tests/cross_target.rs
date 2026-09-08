@@ -27,6 +27,14 @@ mod storage_case;
 #[path = "../../../sim-core/tests/common/structural_case.rs"]
 mod structural_case;
 
+#[path = "../../../sim-core/tests/common/organs_case.rs"]
+mod organs_case;
+
+#[wasm_bindgen_test]
+fn organ_mutation_agrees_with_native_in_both_modes() {
+    organs_case::check_organ_runs();
+}
+
 #[wasm_bindgen_test]
 fn structural_mutation_agrees_with_native_in_both_modes() {
     structural_case::check_structural_runs();

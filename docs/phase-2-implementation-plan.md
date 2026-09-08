@@ -454,6 +454,12 @@ browser URL sharing support the new shapes. Reachable eye acquisition and wiring
 are demonstrated mechanisms, not evidence that selection finds them useful; M8
 owns viability and structural-null experiments.
 
+The subsequent hash-coverage commit includes the cached founder template and
+refreshes the earlier references solely for that additional state. The preceding
+implementation commit retains all six existing values. A shared native/WASM
+sensor scenario pins sparse founders, eye acquisition, removal, bounded refusal,
+and slot reuse in both modes.
+
 ## M4 - Genetic distance and species assignment
 
 Implement D4/D5 as separate systems with world-owned state. Reuse innovation

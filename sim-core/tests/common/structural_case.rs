@@ -8,8 +8,9 @@ use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
-pub const EVOLVING_GOLDEN: u64 = 0x9750_0d5d_09d3_345c;
-pub const CONTROL_GOLDEN: u64 = 0xa0e5_8fc3_0457_988c;
+// M3 coverage-only refresh: include the retained founder template (spec section 7.8).
+pub const EVOLVING_GOLDEN: u64 = 0x42b9_0632_3a36_f0f7;
+pub const CONTROL_GOLDEN: u64 = 0x9105_0e23_1dc6_9947;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();
