@@ -332,6 +332,13 @@ contracts; they do not establish useful evolved complexity.
 
 ## M2 - Neural structural mutation and topology-safe control
 
+**Lifecycle preparation:** agent admission, transactional arena claims, founder
+seeding, and removal now live in the private `world/lifecycle.rs` module.
+`world.rs` retains state, construction, and accessors; the public `World` methods
+and `spawn_validated` caller contract are unchanged. The existing world-level
+regressions continue exercising those entry points. This is a behavior-preserving
+extraction, not implementation or approval of structural mutation.
+
 Implement D2's neuron/connection operators and the approved D3 structural-heredity
 semantics together with integration into births, reusing M1's topology-safe scalar
 redraw. D3's separate structural-null experiment is implemented in M8 under its
