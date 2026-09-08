@@ -6,6 +6,8 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
+use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
+
 use crate::Result;
 use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION};
 
@@ -44,26 +46,46 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         })?;
         match record {
             MetricsRecord::Header(next) if header.is_none() && samples.is_empty() => {
-                if next.schema_version != SCHEMA_VERSION {
+                if !matches!(next.schema_version, 3 | SCHEMA_VERSION) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unsupported metrics schema {}", next.schema_version),
                     )
                     .into());
                 }
-                if next.phase != 1 {
+                let legacy = next.schema_version == 3;
+                let expected_phase = if legacy { 1 } else { 2 };
+                let expected_control = if legacy {
+                    "randomized_at_birth"
+                } else {
+                    RANDOMIZED_AT_BIRTH_PROTOCOL
+                };
+                if next.phase != expected_phase || next.control != expected_control {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unsupported simulation phase {}", next.phase),
+                        format!(
+                            "unsupported metrics protocol combination: schema {}, phase {}, control {}",
+                            next.schema_version, next.phase, next.control
+                        ),
                     )
                     .into());
                 }
-                if next.control != "randomized_at_birth" {
+                let structural = &next.params.mutation.structural;
+                if legacy
+                    && [
+                        structural.remove_connection_rate,
+                        structural.remove_neuron_rate,
+                        structural.toggle_connection_rate,
+                        structural.add_connection_rate,
+                        structural.add_neuron_rate,
+                    ]
+                    .iter()
+                    .any(|&rate| rate != 0.0)
+                {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("unsupported control protocol {}", next.control),
-                    )
-                    .into());
+                        "legacy randomized_at_birth protocol cannot have nonzero structural mutation rates",
+                    ).into());
                 }
                 if next.seed.parse::<u64>().is_err() {
                     return Err(io::Error::new(
@@ -85,7 +107,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         format!("metrics header contains {error}"),
                     )
                 })?;
-                header = Some(next);
+                header = Some(*next);
             }
             MetricsRecord::Header(_) if !samples.is_empty() => {
                 return Err(io::Error::new(
@@ -140,7 +162,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                samples.push(sample);
+                samples.push(*sample);
             }
         }
     }
@@ -173,28 +195,142 @@ mod tests {
     use super::*;
     use crate::metrics::{RunSample, StateHashes, WorldMetrics};
 
+    fn final_records() -> [serde_json::Value; 2] {
+        [
+            serde_json::to_value(MetricsRecord::Header(Box::new(RunHeader {
+                schema_version: SCHEMA_VERSION,
+                sim_version: "test".to_owned(),
+                source_revision: "test".to_owned(),
+                phase: 2,
+                seed: "42".to_owned(),
+                ticks: 0,
+                founders: 1,
+                sample_every: 5,
+                params: SimParams::default(),
+                control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            })))
+            .unwrap(),
+            serde_json::to_value(MetricsRecord::Sample(Box::new(RunSample {
+                tick: 0,
+                evolving: WorldMetrics::default(),
+                random_control: WorldMetrics::default(),
+                final_state_hashes: Some(StateHashes {
+                    evolving: "1".to_owned(),
+                    random_control: "1".to_owned(),
+                }),
+            })))
+            .unwrap(),
+        ]
+    }
+
+    fn parse_values(records: &[serde_json::Value]) -> Result<MetricsData> {
+        let jsonl = records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        parse_metrics(Cursor::new(jsonl))
+    }
+
+    #[test]
+    fn reads_current_and_explicit_legacy_protocols_without_inventing_observations() {
+        let current = parse_values(&final_records()).unwrap();
+        assert_eq!(current.header.control, RANDOMIZED_AT_BIRTH_PROTOCOL);
+        let mut records = final_records();
+        records[0]["data"]["schema_version"] = 3.into();
+        records[0]["data"]["phase"] = 1.into();
+        records[0]["data"]["control"] = "randomized_at_birth".into();
+        records[0]["data"]["params"]["mutation"]
+            .as_object_mut()
+            .unwrap()
+            .remove("structural");
+        for cohort in ["evolving", "random_control"] {
+            records[1]["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("structural_mutations");
+        }
+        let legacy = parse_values(&records).unwrap();
+        assert_eq!(legacy.header.control, "randomized_at_birth");
+        assert_eq!(
+            legacy.header.params.mutation.structural,
+            SimParams::default().mutation.structural,
+        );
+        assert_eq!(legacy.samples[0].evolving.structural_mutations, None);
+        assert_eq!(legacy.samples[0].random_control.structural_mutations, None);
+    }
+
+    #[test]
+    fn rejects_unknown_or_mixed_protocol_versions() {
+        for (schema, phase, control) in [
+            (3, 2, "randomized_at_birth"),
+            (3, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (4, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (4, 2, "randomized_at_birth"),
+            (4, 2, "unknown"),
+            (4, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (5, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
+        ] {
+            let mut records = final_records();
+            records[0]["data"]["schema_version"] = schema.into();
+            records[0]["data"]["phase"] = phase.into();
+            records[0]["data"]["control"] = control.into();
+            assert!(
+                parse_values(&records).is_err(),
+                "accepted {schema}/{phase}/{control}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_control_rejects_each_nonzero_structural_rate_but_current_accepts_it() {
+        for rate in [
+            "remove_connection_rate",
+            "remove_neuron_rate",
+            "toggle_connection_rate",
+            "add_connection_rate",
+            "add_neuron_rate",
+        ] {
+            let mut records = final_records();
+            records[0]["data"]["params"]["mutation"]["structural"][rate] = 0.1.into();
+            parse_values(&records).expect("current structural configuration");
+            records[0]["data"]["schema_version"] = 3.into();
+            records[0]["data"]["phase"] = 1.into();
+            records[0]["data"]["control"] = "randomized_at_birth".into();
+            let error = parse_values(&records)
+                .err()
+                .expect("legacy structural rate accepted");
+            assert!(
+                error
+                    .to_string()
+                    .contains("nonzero structural mutation rates"),
+                "{error}"
+            );
+        }
+    }
+
     #[test]
     fn rejects_a_truncated_metrics_stream() {
         let header = RunHeader {
             schema_version: SCHEMA_VERSION,
             sim_version: "test".to_owned(),
             source_revision: "test".to_owned(),
-            phase: 1,
+            phase: 2,
             seed: "42".to_owned(),
             ticks: 10,
             founders: 1,
             sample_every: 5,
             params: SimParams::default(),
-            control: "randomized_at_birth".to_owned(),
+            control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let records = [
-            MetricsRecord::Header(header),
-            MetricsRecord::Sample(RunSample {
+            MetricsRecord::Header(Box::new(header)),
+            MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
                 evolving: WorldMetrics::default(),
                 random_control: WorldMetrics::default(),
                 final_state_hashes: None,
-            }),
+            })),
         ];
         let mut jsonl = String::new();
         for record in records {
@@ -213,13 +349,13 @@ mod tests {
             schema_version: SCHEMA_VERSION,
             sim_version: "test".to_owned(),
             source_revision: "test".to_owned(),
-            phase: 1,
+            phase: 2,
             seed: "42".to_owned(),
             ticks: 0,
             founders: 1,
             sample_every: 5,
             params: SimParams::default(),
-            control: "randomized_at_birth".to_owned(),
+            control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let final_sample = RunSample {
             tick: 0,
@@ -231,9 +367,9 @@ mod tests {
             }),
         };
         let records = [
-            MetricsRecord::Header(final_header),
-            MetricsRecord::Sample(final_sample.clone()),
-            MetricsRecord::Sample(final_sample),
+            MetricsRecord::Header(Box::new(final_header)),
+            MetricsRecord::Sample(Box::new(final_sample.clone())),
+            MetricsRecord::Sample(Box::new(final_sample)),
         ];
         let jsonl = records
             .iter()
@@ -252,19 +388,19 @@ mod tests {
         let mut params = SimParams::default();
         params.world.dt = 0.0;
         let records = [
-            MetricsRecord::Header(RunHeader {
+            MetricsRecord::Header(Box::new(RunHeader {
                 schema_version: SCHEMA_VERSION,
                 sim_version: "test".to_owned(),
                 source_revision: "test".to_owned(),
-                phase: 1,
+                phase: 2,
                 seed: "42".to_owned(),
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
                 params,
-                control: "randomized_at_birth".to_owned(),
-            }),
-            MetricsRecord::Sample(RunSample {
+                control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            })),
+            MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
                 evolving: WorldMetrics::default(),
                 random_control: WorldMetrics::default(),
@@ -272,7 +408,7 @@ mod tests {
                     evolving: "1".to_owned(),
                     random_control: "1".to_owned(),
                 }),
-            }),
+            })),
         ];
         let jsonl = records
             .iter()
@@ -293,7 +429,7 @@ mod tests {
     #[test]
     fn rejects_metrics_schemas_without_current_storage_observations() {
         for version in [1, 2] {
-            let header = MetricsRecord::Header(RunHeader {
+            let header = MetricsRecord::Header(Box::new(RunHeader {
                 schema_version: version,
                 sim_version: "test".to_owned(),
                 source_revision: "test".to_owned(),
@@ -304,7 +440,7 @@ mod tests {
                 sample_every: 5,
                 params: SimParams::default(),
                 control: "randomized_at_birth".to_owned(),
-            });
+            }));
             let jsonl = serde_json::to_string(&header).unwrap();
             let error = parse_metrics(Cursor::new(jsonl))
                 .err()

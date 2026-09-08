@@ -1,22 +1,27 @@
-//! Mutation operators. Phase 1 perturbs and resets scalars; nothing here changes
-//! structure.
+//! Scalar mutation and the transient state shared by structural edits.
 //!
 //! Every operator works **in place on a gene slice**, because mutation happens on
 //! every birth and a birth happens inside the tick. Nothing allocates.
 //!
-//! Structure is invariant under these operators, so a mutated genome is coherent if
-//! its parent was. That is a weaker guarantee than it will need to be — Phase 2 adds
-//! add-neuron, add-connection, and add/remove-sensor, and the property test in this
-//! module is written against the general claim ("mutation never orphans a reference")
-//! rather than the Phase 1 shortcut, so it starts failing the moment that stops
-//! holding for real.
+//! Finite scalar results and draw order retain the legacy behavior; bias overflow is
+//! capped at the f32 representation boundary. `structural` owns bounded topology
+//! changes, and the heredity policy that combines them lives in `control`.
 //!
-//! Deliberately not here: the topology operators of spec §3.3 (add connection, add
-//! neuron, gene duplication) and the meta-gene operator. They arrive with Phase 2.
+//! Sensor operators arrive in M3. Gene duplication and meta-gene mutation remain
+//! outside this milestone.
 
 use crate::genome::{Activation, Gene};
 use crate::params::MutationParams;
 use crate::rng::Rng;
+
+pub mod structural;
+
+/// Borrowed world-owned mutation resources, not access to physical world state.
+pub(crate) struct MutationState<'a> {
+    pub rng: &'a mut Rng,
+    pub next_innovation: &'a mut u32,
+    pub neuron_scratch: &'a mut [u32],
+}
 
 /// Mutates a genome in place.
 ///
@@ -39,7 +44,10 @@ pub fn mutate(genes: &mut [Gene], rng: &mut Rng, params: &MutationParams) {
             }
             Gene::Neuron(n) => {
                 if rng.chance(params.neuron_perturb_rate) {
-                    n.bias += rng.normal(0.0, params.bias_perturb_sigma);
+                    // Preserve coherent input to structural edits even if a finite
+                    // perturbation scale overflows f32; this is a representation bound.
+                    n.bias = (n.bias + rng.normal(0.0, params.bias_perturb_sigma))
+                        .clamp(-f32::MAX, f32::MAX);
                     // Multiplicative on tau, so it explores across orders of magnitude
                     // instead of random-walking off the bottom of its range.
                     let scale = 1.0 + rng.normal(0.0, params.tau_perturb_factor);
@@ -75,6 +83,21 @@ mod tests {
     use crate::params::{MutationParams, SimParams};
     use crate::rng::Rng;
     use proptest::prelude::*;
+
+    #[test]
+    fn finite_bias_genes_survive_extreme_valid_perturbations() {
+        let mut genes = tiny();
+        let params = MutationParams {
+            neuron_perturb_rate: 1.0,
+            bias_perturb_sigma: f32::MAX,
+            ..MutationParams::default()
+        };
+        let mut rng = Rng::from_seed(42);
+        for _ in 0..20 {
+            mutate(&mut genes, &mut rng, &params);
+            assert_eq!(validate(&genes), Ok(()));
+        }
+    }
 
     fn weights(genes: &[Gene]) -> Vec<f32> {
         genes

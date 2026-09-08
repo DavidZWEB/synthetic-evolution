@@ -4,6 +4,8 @@ use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
+
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 fn temporary(name: &str) -> std::path::PathBuf {
@@ -83,8 +85,9 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[0].contains(r#""kind":"header""#));
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
-    assert_eq!(header["data"]["phase"], 1);
-    assert_eq!(header["data"]["schema_version"], 3);
+    assert_eq!(header["data"]["phase"], 2);
+    assert_eq!(header["data"]["schema_version"], 4);
+    assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     assert!(
         header["data"]["source_revision"]
             .as_str()
@@ -113,6 +116,15 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
                 .unwrap();
             assert_eq!(failures.len(), 6);
             assert!(failures.values().all(|count| count.as_u64().is_some()));
+            let mutations = sample["data"][cohort]["structural_mutations"]
+                .as_object()
+                .unwrap();
+            assert_eq!(mutations.len(), 5);
+            for counts in mutations.values() {
+                let counts = counts.as_object().unwrap();
+                assert_eq!(counts.len(), 6);
+                assert!(counts.values().all(|count| count.as_u64() == Some(0)));
+            }
         }
     }
     assert!(
@@ -155,7 +167,7 @@ fn diagnose_finds_a_deliberately_collapsed_genome_population() {
 }
 
 #[test]
-fn collected_runs_report_arena_pressure_without_changing_the_control_protocol() {
+fn collected_runs_report_arena_pressure_separately_from_structural_edits() {
     let params = r#"{
         "world":{"size":100.0,"max_agents":2},
         "storage":{"genes_per_slot":142},
@@ -167,7 +179,7 @@ fn collected_runs_report_arena_pressure_without_changing_the_control_protocol() 
     }"#;
     let (lines, report) = run_and_diagnose(params, 7, 2, 1, 1);
     let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    assert_eq!(header["data"]["control"], "randomized_at_birth");
+    assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     for cohort in ["evolving", "random_control"] {
         let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
         assert_eq!(
@@ -197,6 +209,46 @@ fn collected_runs_report_arena_pressure_without_changing_the_control_protocol() 
                 .any(|finding| finding["code"] == "storage_capacity")
         );
     }
+}
+
+#[test]
+fn configured_structural_edits_are_observed_in_each_cohort() {
+    let (lines, report) = run_and_diagnose(include_str!("fixtures/structural.json"), 7, 1, 1, 1);
+    let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+    let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    for cohort in ["evolving", "random_control"] {
+        assert_eq!(final_sample["data"][cohort]["population"], 2);
+        assert_eq!(final_sample["data"][cohort]["descendants"], 1);
+        for operator in [
+            "remove_connection",
+            "remove_neuron",
+            "toggle_connection",
+            "add_connection",
+            "add_neuron",
+        ] {
+            assert_eq!(
+                initial["data"][cohort]["structural_mutations"][operator]["attempted"],
+                0
+            );
+            let counts = &final_sample["data"][cohort]["structural_mutations"][operator];
+            assert_eq!(counts["attempted"], 1, "{cohort}/{operator}");
+            assert_eq!(counts["applied"], 1, "{cohort}/{operator}");
+        }
+        assert!(
+            final_sample["data"][cohort]["spawn_failures"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|value| value.as_u64() == Some(0))
+        );
+    }
+    assert!(
+        !report["unavailable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("structural-mutation"))
+    );
 }
 
 #[test]
@@ -260,7 +312,7 @@ fn plain_run_prints_a_summary_without_streaming_metrics() {
 
 #[test]
 fn optional_collection_preserves_the_run_and_its_final_hashes() {
-    let run = |collect| {
+    let run = |collect, fixture| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_native"));
         command.args([
             "--seed",
@@ -270,10 +322,7 @@ fn optional_collection_preserves_the_run_and_its_final_hashes() {
             "--founders",
             "8",
             "--params",
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/tests/fixtures/sustaining.json"
-            ),
+            fixture,
         ]);
         if collect {
             command.args(["--metrics", "-"]);
@@ -286,14 +335,25 @@ fn optional_collection_preserves_the_run_and_its_final_hashes() {
         );
         output
     };
-    let plain = run(false);
-    let observed = run(true);
-    assert!(plain.stdout.is_empty());
-    assert!(!observed.stdout.is_empty());
-    assert_eq!(
-        plain.stderr, observed.stderr,
-        "collection changed final population or hashes"
-    );
+    for fixture in [
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sustaining.json"
+        ),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/structural.json"
+        ),
+    ] {
+        let plain = run(false, fixture);
+        let observed = run(true, fixture);
+        assert!(plain.stdout.is_empty());
+        assert!(!observed.stdout.is_empty());
+        assert_eq!(
+            plain.stderr, observed.stderr,
+            "collection changed final population or hashes for {fixture}"
+        );
+    }
 }
 
 #[test]

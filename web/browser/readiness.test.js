@@ -80,6 +80,31 @@ async function selectFirstFounder(page) {
 }
 
 for (const mode of ['development', 'transferable']) {
+  test(`scalar control explains heredity and preserves the shared mode ID (${mode})`, async () => {
+    await withClient(mode, async (page) => {
+      const heredity = page.getByRole('combobox', { name: 'heredity', exact: true });
+      const explanation = /inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth/;
+      assert.match(await heredity.getAttribute('title'), explanation);
+      assert.match(await heredity.getAttribute('aria-description'), explanation);
+      assert.equal(
+        await heredity.locator('option[value="randomized_at_birth"]').innerText(),
+        'scalar control',
+      );
+      await heredity.selectOption({ label: 'scalar control' });
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await page.waitForFunction(() =>
+        new URLSearchParams(location.hash.slice(1)).get('inheritance') === 'randomized_at_birth');
+      await waitForTransport(page, mode);
+      await page.reload();
+      await waitForTransport(page, mode);
+      assert.equal(await heredity.inputValue(), 'randomized_at_birth');
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('header dt')].find((el) => el.textContent === 'tick')
+          ?.nextElementSibling?.textContent === '1');
+    });
+  });
+
   test(`paused inspection catches a manual step (${mode})`, async () => {
     await withClient(mode, async (page) => {
       await selectFirstFounder(page);

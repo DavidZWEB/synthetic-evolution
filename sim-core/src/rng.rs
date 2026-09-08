@@ -51,8 +51,16 @@ impl Rng {
     /// Uniform in `[low, high)`.
     #[inline]
     pub fn range(&mut self, low: f32, high: f32) -> f32 {
-        debug_assert!(low <= high);
-        low + self.unit() * (high - low)
+        debug_assert!(low.is_finite() && high.is_finite() && low <= high);
+        let unit = self.unit();
+        let width = high - low;
+        if width.is_finite() {
+            low + unit * width
+        } else {
+            // Finite endpoints can straddle a wider-than-f32 interval. Preserve the
+            // ordinary path's arithmetic/draws, but avoid infinity times zero here.
+            (1.0 - unit) * low + unit * high
+        }
     }
 
     /// Uniform in `[0, n)`. Returns 0 for `n == 0`.
@@ -98,6 +106,31 @@ impl Rng {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_finite_intervals_stay_finite_and_consume_one_draw() {
+        let mut rng = Rng::from_seed(7);
+        let mut reference = rng.clone();
+        for _ in 0..1_000 {
+            let value = rng.range(-f32::MAX, f32::MAX);
+            assert!(value.is_finite());
+            assert!((-f32::MAX..=f32::MAX).contains(&value));
+            reference.unit();
+            assert_eq!(rng.state_fingerprint(), reference.state_fingerprint());
+        }
+    }
+
+    #[test]
+    fn ordinary_range_arithmetic_is_bit_identical() {
+        let mut rng = Rng::from_seed(42);
+        let mut reference = rng.clone();
+        for (low, high) in [(-4.0, 4.0), (0.05, 2.0), (0.0, 0.0)] {
+            for _ in 0..100 {
+                let expected = low + reference.unit() * (high - low);
+                assert_eq!(rng.range(low, high).to_bits(), expected.to_bits());
+            }
+        }
+    }
 
     #[test]
     fn same_seed_gives_the_same_stream() {

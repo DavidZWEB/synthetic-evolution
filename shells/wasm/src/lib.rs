@@ -26,6 +26,7 @@ use wasm_bindgen::prelude::*;
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
+use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
@@ -62,8 +63,8 @@ pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
 }
 
-/// Builds the separate random-brain control used to check whether apparent behavior
-/// depends on cumulative neural inheritance (spec §7.8).
+/// Builds the scalar-inheritance control (spec §7.8). Topology is inherited and can
+/// evolve; neural scalars are redrawn after structural edits. The JS name is stable.
 #[wasm_bindgen]
 pub fn random_control(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
     Sim::with_brain_inheritance(
@@ -168,6 +169,7 @@ pub struct Sim {
     world: World,
     snapshot: Snapshot,
     spawn_failures: SpawnFailureCounts,
+    structural_mutations: StructuralMutationCounts,
 }
 
 #[derive(Serialize)]
@@ -190,6 +192,7 @@ impl Sim {
             world,
             snapshot,
             spawn_failures: SpawnFailureCounts::default(),
+            structural_mutations: StructuralMutationCounts::default(),
         })
     }
 }
@@ -225,9 +228,12 @@ impl Sim {
     /// Advances `ticks` ticks and refreshes the snapshot once, at the end.
     pub fn step_many(&mut self, ticks: u32) {
         let counts = &mut self.spawn_failures;
+        let mutations = &mut self.structural_mutations;
         for _ in 0..ticks {
-            self.world
-                .step_with_spawn_observer(|error| counts.record(error));
+            self.world.step_with_observers(
+                |error| counts.record(error),
+                |event| mutations.record(event),
+            );
         }
         self.refresh();
     }
@@ -317,6 +323,16 @@ impl Sim {
             spawn_failures: self.spawn_failures,
         };
         serde_json::to_string(&diagnostics).map_err(|e| js_error("storage diagnostics", e))
+    }
+
+    /// Cumulative structural candidate edits since construction, separate from births
+    /// and spawn refusals. Only successful positive-rate gates count as attempts.
+    ///
+    /// Applied candidates can still fail to spawn; these counts do not measure live
+    /// complexity. Like other JSON requests, this can detach snapshot views (§7.3).
+    pub fn structural_mutation_diagnostics(&self) -> Result<String, JsError> {
+        serde_json::to_string(&self.structural_mutations)
+            .map_err(|e| js_error("structural mutation diagnostics", e))
     }
 
     /// Retunes the world. Errors on anything that would resize what is already

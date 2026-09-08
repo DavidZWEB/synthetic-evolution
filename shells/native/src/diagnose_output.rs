@@ -15,7 +15,7 @@ pub(crate) fn print_human(report: &DiagnosisReport) -> io::Result<()> {
 pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> io::Result<()> {
     writeln!(output, "samples: {}", report.samples)?;
     write_findings(output, "evolving", &report.evolving)?;
-    write_findings(output, "random control", &report.random_control)?;
+    write_findings(output, "scalar control", &report.random_control)?;
     writeln!(output, "comparison:")?;
     if let Some(reason) = &report.comparison.unavailable {
         writeln!(output, "  - not run: {reason}")?;
@@ -26,7 +26,7 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
             write_comparison_metric(output, "mean speed", &metrics.mean_speed)?;
         }
         if report.comparison.findings.is_empty() {
-            writeln!(output, "  - no known Phase 1 failure signature detected")?;
+            writeln!(output, "  - no known failure signature detected")?;
         }
         write_finding_list(output, &report.comparison.findings)?;
     }
@@ -40,7 +40,7 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
 fn write_findings(output: &mut impl Write, name: &str, findings: &[Finding]) -> io::Result<()> {
     writeln!(output, "{name}:")?;
     if findings.is_empty() {
-        writeln!(output, "  - no known Phase 1 failure signature detected")?;
+        writeln!(output, "  - no known failure signature detected")?;
     }
     write_finding_list(output, findings)
 }

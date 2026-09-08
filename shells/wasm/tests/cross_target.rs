@@ -24,6 +24,14 @@ use common::*;
 #[path = "../../../sim-core/tests/common/storage_case.rs"]
 mod storage_case;
 
+#[path = "../../../sim-core/tests/common/structural_case.rs"]
+mod structural_case;
+
+#[wasm_bindgen_test]
+fn structural_mutation_agrees_with_native_in_both_modes() {
+    structural_case::check_structural_runs();
+}
+
 #[wasm_bindgen_test]
 fn variable_storage_agrees_with_native_in_both_heredity_modes() {
     storage_case::check_variable_storage_runs();

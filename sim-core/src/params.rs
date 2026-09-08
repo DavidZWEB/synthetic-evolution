@@ -297,6 +297,7 @@ pub struct ReproductionParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MutationParams {
+    pub structural: StructuralMutationParams,
     /// Per-connection chance of a Gaussian nudge.
     ///
     /// **0.025 rather than the original 0.8.** With 240 founding connections, 0.8
@@ -322,6 +323,54 @@ pub struct MutationParams {
     /// Multiplicative, so tau explores across orders of magnitude rather than
     /// random-walking off the bottom of its range.
     pub tau_perturb_factor: f32,
+}
+
+/// Per-offspring structural edits, disabled by default while preserving the accepted
+/// scalar-only baseline. Physical removal remains opt-in pending distance calibration.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StructuralMutationParams {
+    /// Physical deletion loses the edge's innovation marker. Re-adding the same
+    /// endpoints gets a fresh ID, so distance can increase without changed wiring.
+    /// Keep the shipped default at zero until D4 calibrates distance coefficients
+    /// and the species threshold against deletion/recreation (spec §3.4).
+    /// Explicit calibration runs may opt in before changing the default.
+    pub remove_connection_rate: f32,
+    /// Removing/rebuilding a neuron also replaces its incident-edge innovation
+    /// history. Keep the shipped default at zero until D4's coefficients and
+    /// threshold are calibrated against this marker turnover (spec §3.4);
+    /// nonzero rates remain available for explicit calibration runs.
+    pub remove_neuron_rate: f32,
+    pub toggle_connection_rate: f32,
+    pub add_connection_rate: f32,
+    pub add_neuron_rate: f32,
+    pub split_neuron_bias: f32,
+    /// Initial incoming weight when splitting an edge; outgoing weight is inherited.
+    pub split_input_weight: f32,
+}
+
+impl Default for StructuralMutationParams {
+    fn default() -> Self {
+        Self {
+            remove_connection_rate: 0.0,
+            remove_neuron_rate: 0.0,
+            toggle_connection_rate: 0.0,
+            add_connection_rate: 0.0,
+            add_neuron_rate: 0.0,
+            split_neuron_bias: 0.0,
+            split_input_weight: 1.0,
+        }
+    }
+}
+
+impl StructuralMutationParams {
+    pub fn is_disabled(&self) -> bool {
+        self.remove_connection_rate == 0.0
+            && self.remove_neuron_rate == 0.0
+            && self.toggle_connection_rate == 0.0
+            && self.add_connection_rate == 0.0
+            && self.add_neuron_rate == 0.0
+    }
 }
 
 /// Eating. What an agent can draw from a plant it is touching, and when it asks.
@@ -703,6 +752,53 @@ impl SimParams {
                 "mutation bounds and perturbation scales must be finite and non-negative",
             ));
         }
+        let structural = &self.mutation.structural;
+        for (rate, message) in [
+            (
+                structural.remove_connection_rate,
+                "mutation.structural.remove_connection_rate must be in [0, 1]",
+            ),
+            (
+                structural.remove_neuron_rate,
+                "mutation.structural.remove_neuron_rate must be in [0, 1]",
+            ),
+            (
+                structural.toggle_connection_rate,
+                "mutation.structural.toggle_connection_rate must be in [0, 1]",
+            ),
+            (
+                structural.add_connection_rate,
+                "mutation.structural.add_connection_rate must be in [0, 1]",
+            ),
+            (
+                structural.add_neuron_rate,
+                "mutation.structural.add_neuron_rate must be in [0, 1]",
+            ),
+        ] {
+            if !(0.0..=1.0).contains(&rate) {
+                return Err(ParamError(message));
+            }
+        }
+        if !structural.split_neuron_bias.is_finite() {
+            return Err(ParamError(
+                "mutation.structural.split_neuron_bias must be finite",
+            ));
+        }
+        if !structural.split_input_weight.is_finite()
+            || (structural.add_neuron_rate > 0.0
+                && structural.split_input_weight.abs() > self.mutation.weight_limit)
+        {
+            return Err(ParamError(
+                "mutation.structural.split_input_weight must be finite and within weight_limit when splitting is enabled",
+            ));
+        }
+        // Structural edits can leave a target with fan-in one. The scalar control
+        // must still be able to redraw its full two-sided interval (spec section 3.3).
+        if !structural.is_disabled() && !(2.0 * self.brain.weight_init_scale).is_finite() {
+            return Err(ParamError(
+                "brain.weight_init_scale must have a finite two-sided range when structural mutation is enabled",
+            ));
+        }
         if self
             .plants
             .signature
@@ -849,6 +945,7 @@ impl Default for ReproductionParams {
 impl Default for MutationParams {
     fn default() -> Self {
         Self {
+            structural: StructuralMutationParams::default(),
             weight_perturb_rate: 0.025,
             weight_perturb_sigma: 0.15,
             weight_reset_rate: 0.0015625,
@@ -892,6 +989,63 @@ mod tests {
     /// `SimParams` rather than on `World`.
     mod retune {
         use super::*;
+
+        #[test]
+        fn structural_defaults_are_disabled_and_old_zero_weight_limits_stay_valid() {
+            let mut params = SimParams::default();
+            assert!(params.mutation.structural.is_disabled());
+            params.mutation.weight_limit = 0.0;
+            params.validate().unwrap();
+            params.mutation.structural.add_neuron_rate = 1.0;
+            assert!(params.validate().is_err());
+            params.mutation.structural.split_input_weight = 0.0;
+            params.validate().unwrap();
+        }
+
+        #[test]
+        fn structural_rates_and_initializers_are_validated() {
+            type Change = fn(&mut StructuralMutationParams, f32);
+            let rates: [Change; 5] = [
+                |p, v| p.remove_connection_rate = v,
+                |p, v| p.remove_neuron_rate = v,
+                |p, v| p.toggle_connection_rate = v,
+                |p, v| p.add_connection_rate = v,
+                |p, v| p.add_neuron_rate = v,
+            ];
+            for change in rates {
+                for value in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+                    let mut params = SimParams::default();
+                    change(&mut params.mutation.structural, value);
+                    assert!(params.validate().is_err());
+                }
+            }
+            let mut params = SimParams::default();
+            params.mutation.structural.split_neuron_bias = f32::NAN;
+            assert!(params.validate().is_err());
+            params.mutation.structural.split_neuron_bias = 0.0;
+            params.mutation.structural.split_input_weight = f32::INFINITY;
+            assert!(params.validate().is_err());
+        }
+
+        #[test]
+        fn structural_rates_can_be_retuned_without_resizing_storage() {
+            let current = SimParams::default();
+            let mut next = current.clone();
+            next.mutation.structural.add_connection_rate = 0.05;
+            next.mutation.structural.add_neuron_rate = 0.02;
+            next.mutation.structural.toggle_connection_rate = 0.02;
+            current.check_retune(&next, 62.5).unwrap();
+            assert_eq!(current.storage, next.storage);
+        }
+
+        #[test]
+        fn structural_controls_require_representable_single_input_weight_draws() {
+            let mut params = SimParams::default();
+            params.brain.weight_init_scale = f32::MAX * 0.75;
+            params.validate().unwrap();
+            params.mutation.structural.add_neuron_rate = 0.02;
+            assert!(params.validate().is_err());
+        }
 
         const GRID_CELL: f32 = 50.0;
 

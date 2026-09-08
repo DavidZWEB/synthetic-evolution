@@ -3,7 +3,8 @@
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
-use sim_core::control::BrainInheritance;
+use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
+use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::world::World;
@@ -31,13 +32,13 @@ pub fn run(args: RunArgs) -> Result<()> {
         schema_version: SCHEMA_VERSION,
         sim_version: env!("CARGO_PKG_VERSION").to_owned(),
         source_revision: env!("SYNTHETIC_EVOLUTION_REVISION").to_owned(),
-        phase: 1,
+        phase: 2,
         seed: args.seed.to_string(),
         ticks: args.ticks,
         founders: args.founders,
         sample_every: args.sample_every,
         params: params.clone(),
-        control: "randomized_at_birth".to_owned(),
+        control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
     };
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
@@ -46,6 +47,10 @@ pub fn run(args: RunArgs) -> Result<()> {
         .metrics
         .as_ref()
         .map(|_| [SpawnFailureCounts::default(); 2]);
+    let mut structural_mutations = args
+        .metrics
+        .as_ref()
+        .map(|_| [StructuralMutationCounts::default(); 2]);
     seed(
         &mut evolving,
         args.founders,
@@ -60,16 +65,30 @@ pub fn run(args: RunArgs) -> Result<()> {
     let mut output = args.metrics.as_deref().map(metrics_writer).transpose()?;
     let mut final_sample = None;
     if let Some(output) = output.as_mut() {
-        write_record(output, &MetricsRecord::Header(header))?;
-        let sample = sample_pair(&evolving, &random_control, spawn_failures, args.ticks == 0)?;
-        write_record(output, &MetricsRecord::Sample(sample.clone()))?;
+        write_record(output, &MetricsRecord::Header(Box::new(header)))?;
+        let sample = sample_pair(
+            &evolving,
+            &random_control,
+            spawn_failures,
+            structural_mutations,
+            args.ticks == 0,
+        )?;
+        write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
         final_sample = Some(sample);
     }
 
     for _ in 0..args.ticks {
-        if let Some([evolving_counts, control_counts]) = spawn_failures.as_mut() {
-            evolving.step_with_spawn_observer(|error| evolving_counts.record(error));
-            random_control.step_with_spawn_observer(|error| control_counts.record(error));
+        if let (Some([evolving_counts, control_counts]), Some([evolving_edits, control_edits])) =
+            (spawn_failures.as_mut(), structural_mutations.as_mut())
+        {
+            evolving.step_with_observers(
+                |error| evolving_counts.record(error),
+                |event| evolving_edits.record(event),
+            );
+            random_control.step_with_observers(
+                |error| control_counts.record(error),
+                |event| control_edits.record(event),
+            );
         } else {
             evolving.step();
             random_control.step();
@@ -82,9 +101,10 @@ pub fn run(args: RunArgs) -> Result<()> {
                 &evolving,
                 &random_control,
                 spawn_failures,
+                structural_mutations,
                 tick == args.ticks,
             )?;
-            write_record(output, &MetricsRecord::Sample(sample.clone()))?;
+            write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
             final_sample = Some(sample);
         }
     }
@@ -93,7 +113,15 @@ pub fn run(args: RunArgs) -> Result<()> {
         output.flush()?;
     }
     let final_sample = final_sample.map_or_else(
-        || sample_pair(&evolving, &random_control, spawn_failures, true),
+        || {
+            sample_pair(
+                &evolving,
+                &random_control,
+                spawn_failures,
+                structural_mutations,
+                true,
+            )
+        },
         Ok,
     )?;
     let hashes = final_sample

@@ -28,14 +28,13 @@ use glam::Vec3;
 
 use crate::agents::SpawnSpec;
 use crate::brain;
-use crate::control::BrainInheritance;
 use crate::effectors::{self, AgentIntents};
 use crate::energy;
 use crate::feeding;
 use crate::genome::{self, BodyTrait};
 use crate::metabolism;
 use crate::movement;
-use crate::mutate;
+use crate::mutate::{MutationState, structural::StructuralMutationEvent};
 use crate::perceive::{self, SelfView, WorldView};
 use crate::reproduction;
 use crate::spawn::SpawnError;
@@ -57,6 +56,14 @@ impl World {
 
     /// Opt-in observation; the ordinary step monomorphizes away the no-op callback.
     pub fn step_with_spawn_observer(&mut self, mut on_refusal: impl FnMut(SpawnError)) {
+        self.step_with_observers(&mut on_refusal, |_| {});
+    }
+
+    pub fn step_with_observers(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+    ) {
         // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
         self.apply_commands_with_observer(&mut on_refusal);
         self.rebuild_spatial_hash(); // 1
@@ -69,7 +76,7 @@ impl World {
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
         self.resolve_deaths(); // 10
-        self.resolve_births_with_observer(&mut on_refusal); // 10
+        self.resolve_births_with_observers(&mut on_refusal, &mut on_mutation); // 10
         self.advance_tick(); // 11
     }
 
@@ -334,6 +341,14 @@ impl World {
         &mut self,
         mut on_refusal: impl FnMut(SpawnError),
     ) -> usize {
+        self.resolve_births_with_observers(&mut on_refusal, |_| {})
+    }
+
+    pub fn resolve_births_with_observers(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+    ) -> usize {
         self.note_breeders();
         let breeding = core::mem::take(&mut self.breeding);
         let mut born = 0;
@@ -351,19 +366,17 @@ impl World {
             let genome = self.agents.genome[p];
             scratch.clear();
             scratch.extend_from_slice(self.genes.get(genome));
-            match self.brain_inheritance {
-                BrainInheritance::Evolving => {
-                    mutate::mutate(&mut scratch, &mut self.rng, &self.params.mutation);
-                }
-                BrainInheritance::RandomizedAtBirth => {
-                    self.plan.randomize_brain(
-                        &mut self.rng,
-                        &self.params,
-                        &mut scratch,
-                        &mut self.brain_fan_in_scratch,
-                    );
-                }
-            }
+            self.brain_inheritance.prepare_offspring(
+                &self.plan,
+                &mut scratch,
+                &self.params,
+                &mut MutationState {
+                    rng: &mut self.rng,
+                    next_innovation: &mut self.next_innovation,
+                    neuron_scratch: &mut self.brain_fan_in_scratch,
+                },
+                &mut on_mutation,
+            );
 
             let position = reproduction::offspring_position(
                 self.agents.position[p],
@@ -387,8 +400,8 @@ impl World {
                 ),
                 parent_a: parent,
             };
-            // Scalar-only mutation/redraw preserves the parent's validated counts;
-            // structural operators must enforce bounds before this fast path (spec §3.3).
+            // Structural edits enforce coherence and per-genome bounds atomically
+            // before the validated spawn fast path (spec section 3.3).
             let spawned = self.spawn_validated(&spec, &scratch);
             self.genome_scratch = scratch;
 
