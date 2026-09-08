@@ -203,10 +203,12 @@ exception: a docs change that records a decision is exactly the kind worth a sec
 eyes, because nothing else in the repo will catch it if the reasoning is wrong. Branch names
 follow the work: `phase-1/m8-tick`, `docs/memory-footprint-findings`, `fix/arena-empty-block`.
 
-**Then review the PR you just raised.** Opening it is not the end of the task. Read the
-diff back as a reviewer would — use the agent's code-review workflow or `gh pr diff` —
-and report the findings in the same reply that hands over the PR. Review against the
-five invariants, load-bearing rules, and code-design guidance above, then check ordinary
+**Then run an independent review of the PR you just raised.** Opening it is not the end
+of the task. Follow `.github/skills/code-review/SKILL.md`; agents that do not discover
+project skills automatically must read and apply it directly. `gh pr diff` may establish
+the review scope, but self-review is not a substitute for the independent reviewer.
+Report the findings in the same reply that hands over the PR. Review against the five
+invariants, load-bearing rules, and code-design guidance above, then check ordinary
 correctness, every changed caller, and whether each test could fail for the bug it claims
 to catch. Report explicitly when the review is clean.
 
