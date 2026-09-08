@@ -17,11 +17,16 @@ Invoke the task tool with all of these settings:
 - `model: claude-opus-5`
 - `reasoning_effort: max`
 - `context_tier: long_context`
-- `mode: sync`, unless there is genuine independent work to do while it runs
+- `mode: background`
 
 Do not silently use another model, lower the reasoning effort, or perform the review
 yourself. If that reviewer is unavailable, report the review as blocked rather than
 calling a weaker pass complete.
+
+Background mode is deliberate: it keeps the independent reviewer available for the
+required correction pass. After launching it, continue only genuinely independent
+work; otherwise wait for the completion notification. Do not poll. Read the result once
+with `read_agent` after notification.
 
 The review agent is read-only. Do not ask it to edit files, commit, push, resolve
 threads, or approve or merge a pull request.
