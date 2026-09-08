@@ -56,11 +56,13 @@
   <label>
     heredity
     <select
+      title="Scalar control inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth."
+      aria-description="Scalar control inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth."
       value={brainInheritance}
       onchange={(event) => onbraininheritance(event.currentTarget.value)}
     >
       <option value="evolving">evolving</option>
-      <option value="randomized_at_birth">random control</option>
+      <option value="randomized_at_birth">scalar control</option>
     </select>
   </label>
   <button onclick={onreseed}>reseed</button>

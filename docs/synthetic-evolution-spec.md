@@ -240,6 +240,14 @@ type Gene =
 
 `InnovationId` is a monotonic counter (NEAT-style). Two genomes' shared ancestry is visible by matching IDs, which gives you both meaningful crossover and a cheap genetic distance metric. It is a **field on `World`, not a `static`** — see §7.2, since a process must be able to hold more than one world.
 
+Runtime admission additionally requires unique innovation IDs across gene kinds and
+at most one retained connection per ordered neuron pair, including disabled edges.
+Successful external spawns advance the counter past supplied IDs; failed spawns do
+not. Checked reservations never issue `NULL_ID` or wrap. Generic offline crossover
+still operates on coherent gene lists, not guaranteed runtime-admissible offspring;
+its eventual sexual pathway must reconcile or reject admission conflicts rather
+than inheriting an unreviewed M2 recombination policy.
+
 Sensors and effectors bind to neurons **by ID**, not by index. That indirection is what makes the interface dynamic — an agent can lose an eye and its brain is still coherent.
 
 ### 3.2 Brain
@@ -263,15 +271,52 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 | Weight perturbation | 0.025 per connection | Gaussian, σ evolvable; ~6 of Phase 1's 240 connections per birth |
 | Weight reset | 0.0015625 per connection | Uniform resample; ~0.375 per Phase 1 birth |
 | Neuron scalar perturbation | 0.00625 per neuron | Bias, tau, and oscillator period; ~0.175 of Phase 1's 28 neurons per birth |
-| Add connection | 0.05 | Between existing neurons |
-| Add neuron | 0.02 | Split an existing connection |
-| Disable/enable connection | 0.02 | |
+| Add connection | 0 in M2 | Opt-in candidate rate 0.05; existing neurons, including recurrence/self-edges |
+| Add neuron | 0 in M2 | Opt-in candidate rate 0.02; split an enabled connection |
+| Disable/enable connection | 0 in M2 | Opt-in candidate rate 0.02; retain identity and weight |
+| Remove connection | 0 | Physical deletion; nonzero shipped rates require joint distance review (§3.4) |
+| Remove neuron | 0 | Remove an eligible neuron and incident edges; same deletion gate |
 | Add sensor | 0.02 | Random modality + params |
 | Remove sensor | 0.02 | |
 | Add effector | 0.01 | |
 | Mutate body trait | 0.1 | |
 | **Gene duplication** | 0.005 | Duplicate a subgraph with fresh IDs |
 | Mutate meta-genes | 0.05 | Mutation rates evolve |
+
+**DECIDED for M2:** ship all neural structural rates at zero initially, preserving
+the accepted scalar-only default runs. Rates live under `mutation.structural` and
+are runtime-tunable. The later operators in the table retain proposed starting
+rates, not a claim that they are enabled in the current phase.
+
+Each positive-rate operator gets one Bernoulli gate and at most one edit attempt per
+offspring, in this order: remove connection, remove neuron, toggle connection, add
+connection, add neuron. Zero rates consume no random draws. Selection is from the
+eligible candidates without retry loops. Preflight per-genome limits, scratch
+capacity, and required IDs before modifying genes; a refused edit leaves the
+candidate unchanged. Draws already used remain consumed. IDs reserved by an applied
+edit remain consumed even if a later edit or the eventual world spawn is refused.
+ID exhaustion declines growth rather than wrapping; deletion/toggling and re-enabling
+an existing edge do not require fresh IDs.
+
+Neuron removal protects oscillators, active sensor targets, and effector sources,
+and deletes all incident connections. Adding a connection re-enables a retained
+disabled pair with its original ID and weight; a new pair receives a fresh ID and
+a weight initialized from `min(weight_init_scale, weight_limit)` divided by the
+square root of the new active target fan-in. A split retains its old edge disabled
+and atomically adds one sigmoid neuron and two fresh-ID edges. Initial bias and
+incoming weight are runtime fields (defaults 0 and 1); tau uses the configured
+founder range, and the outgoing weight is inherited. The incoming weight must fit
+the configured weight limit when splitting is enabled. A CTRNN split is not assumed
+to preserve behavior.
+
+Operator observations count candidate edits, not necessarily surviving births.
+Record applied edits and refusal reasons separately from spawn failures; observers
+are optional and must not alter RNG, identities, or simulation state.
+
+The scalar pass must supply coherent genes to structural edits. If bias arithmetic
+overflows with an extreme finite perturbation scale, clamp at the finite f32
+representation limits rather than carrying an infinite bias into the child. This
+does not change ordinary finite results or the random-draw sequence.
 
 **Gene duplication deserves emphasis.** It is the primary mechanism by which biological complexity actually increases — duplicate then diverge. Without it, genomes grow one connection at a time and complex sensory organs essentially never appear. With it, an agent can duplicate a working eye and then specialize the copy.
 
@@ -780,6 +825,14 @@ hash match alone cannot prove exact continuation.
 Every phase success criterion in §8 is a judgment about whether something *interesting* evolved. No assertion covers this, and no amount of Tier 1 and 2 passing implies it. Treat any claim that a phase is complete on the strength of green tests as unverified.
 
 A tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them. In Phase 1's fixed topology this breaks cumulative neural-scalar inheritance without changing sensors, body, or ecology. Indistinguishable behavior does not establish a benefit from that inheritance. In automated reporting (§7.9), every behavioral metric should be printed alongside the relevant control's value for the same metric.
+
+**DECIDED for M2:** evolving offspring receive the legacy scalar pass followed by
+structural edits. Scalar-control offspring receive the same structural rules followed
+by a redraw of all neural scalars on their resulting topology. This is the
+`randomized_at_birth_v2` telemetry protocol; it can inherit/evolve topology and is
+not a structural-null control. The browser retains the `randomized_at_birth` mode
+identifier for existing links but labels it "scalar control". With all structural
+rates zero, each mode preserves its previous dynamics and random-draw sequence.
 
 **DECIDED: Phase 2 also requires an approved structural-null comparison before
 acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone

@@ -116,7 +116,7 @@ pub(crate) fn validate_limits(genes: &[Gene], limits: &StorageParams) -> Result<
             return Err(SpawnError::GenomeLimit { kind, count, limit });
         }
     }
-    genome::validate(genes).map_err(SpawnError::InvalidGenome)
+    genome::validate_architecture(genes).map_err(SpawnError::InvalidGenome)
 }
 
 #[cfg(test)]

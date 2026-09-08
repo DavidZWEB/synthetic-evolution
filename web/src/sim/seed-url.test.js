@@ -46,7 +46,7 @@ test('parameter JSON round-trips through the fragment canonically', () => {
   });
 });
 
-test('random-control heredity round-trips through the fragment', () => {
+test('scalar-control heredity keeps the legacy mode ID in shared fragments', () => {
   const href = writeRunUrl('https://example.test/', {
     seed: '42',
     founders: 2000,
@@ -57,6 +57,19 @@ test('random-control heredity round-trips through the fragment', () => {
     'https://example.test/#seed=42&founders=2000&inheritance=randomized_at_birth',
   );
   assert.equal(readRunUrl(href, 2000).brainInheritance, RANDOMIZED_AT_BIRTH);
+});
+
+test('scalar-control links preserve opt-in structural rates without changing the mode ID', () => {
+  const params = '{"mutation":{"structural":{"add_neuron_rate":0.01}}}';
+  const href = writeRunUrl('https://example.test/', {
+    seed: '42',
+    founders: 2,
+    brainInheritance: RANDOMIZED_AT_BIRTH,
+    params,
+  });
+  const run = readRunUrl(href, 2000);
+  assert.equal(run.brainInheritance, 'randomized_at_birth');
+  assert.equal(run.params, params);
 });
 
 test('invalid run fragments fail loudly', () => {

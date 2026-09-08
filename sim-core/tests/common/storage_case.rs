@@ -26,7 +26,7 @@ fn run(mode: BrainInheritance) -> u64 {
         .instantiate(&mut Rng::from_seed(77), &params, &mut genes);
     for _ in 0..8 {
         genes.push(Gene::Neuron(NeuronGene {
-            id: world.next_innovation(),
+            id: world.next_innovation().expect("IDs available"),
             bias: 0.0,
             tau: 1.0,
             activation: Activation::Sigmoid,

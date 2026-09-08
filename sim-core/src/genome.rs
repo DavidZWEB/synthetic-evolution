@@ -271,6 +271,10 @@ pub enum GenomeError {
     /// A weight or bias that is not finite. One NaN reaches every downstream neuron
     /// within a tick and the agent goes permanently inert.
     NonFinite,
+    /// Runtime architecture cannot reuse an innovation across different gene kinds.
+    DuplicateInnovation,
+    /// Runtime architecture has at most one retained connection per ordered pair.
+    DuplicateConnection,
 }
 
 pub(crate) fn valid_tau(tau: f32) -> bool {
@@ -372,6 +376,43 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
                     return Err(GenomeError::NonFinite);
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Runtime admission adds innovation and endpoint uniqueness to generic coherence.
+///
+/// The offline crossover utility is not a birth pathway and still operates on the
+/// generic gene-list format. Its output, like any external genome, must pass runtime
+/// admission before entering a world; this does not predefine Phase 6 reconciliation.
+pub(crate) fn validate_architecture(genes: &[Gene]) -> Result<(), GenomeError> {
+    validate(genes)?;
+    for (index, gene) in genes.iter().enumerate() {
+        if let Some(id) = gene.innovation() {
+            let kind = gene.sort_key().0;
+            let mut start = 0;
+            while start < index {
+                let previous_kind = genes[start].sort_key().0;
+                if previous_kind == kind {
+                    break;
+                }
+                let length = genes[start..index]
+                    .partition_point(|previous| previous.sort_key().0 == previous_kind);
+                if genes[start..start + length]
+                    .binary_search_by_key(&Some(id), Gene::innovation)
+                    .is_ok()
+                {
+                    return Err(GenomeError::DuplicateInnovation);
+                }
+                start += length;
+            }
+        }
+        if let Gene::Connection(connection) = gene
+            && genes[..index].iter().any(|previous| matches!(previous,
+                Gene::Connection(other) if other.from == connection.from && other.to == connection.to))
+        {
+            return Err(GenomeError::DuplicateConnection);
         }
     }
     Ok(())

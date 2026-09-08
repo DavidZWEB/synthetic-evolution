@@ -64,7 +64,7 @@ impl Cohort {
     fn name(self) -> &'static str {
         match self {
             Self::Evolving => "evolving",
-            Self::Control => "random control",
+            Self::Control => "scalar control",
         }
     }
 }
@@ -87,7 +87,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     let (random_control, control_idle_unavailable) =
         diagnose_cohort(header, samples, Cohort::Control);
     let mut unavailable = vec![
-        "species-cluster diagnostics require Phase 2; Phase 1 monoculture uses exact genome variants".to_owned(),
+        "species-cluster diagnostics are unavailable until M4 clustering; monoculture uses exact genome variants, not species".to_owned(),
         "predator/prey diagnostics require Phase 3 trophic roles".to_owned(),
         "signal-correlation diagnostics require Phase 4 signaling".to_owned(),
     ];
@@ -105,6 +105,16 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         {
             unavailable.push(format!(
                 "complete spawn-refusal counts for {} are unavailable: stepping was not observed for every sample",
+                cohort.name()
+            ));
+        }
+        if samples.is_empty()
+            || samples
+                .iter()
+                .any(|sample| select(sample, cohort).structural_mutations.is_none())
+        {
+            unavailable.push(format!(
+                "complete structural-mutation counts for {} are unavailable: schema 3 or unobserved sampling does not establish zero edits",
                 cohort.name()
             ));
         }
@@ -135,6 +145,13 @@ fn diagnose_cohort(
         .find(|(_, sample)| sample.spawn_failures.is_some())
     {
         diagnose_storage(*tick, sample, &mut findings);
+    }
+    if let Some((tick, sample)) = metrics
+        .iter()
+        .rev()
+        .find(|(_, sample)| sample.structural_mutations.is_some())
+    {
+        diagnose_structural_mutations(*tick, sample, &mut findings);
     }
 
     if let Some((index, (tick, _))) = metrics
@@ -375,6 +392,47 @@ fn diagnose_storage(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding
     }
 }
 
+fn diagnose_structural_mutations(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding>) {
+    let Some(counts) = sample.structural_mutations else {
+        return;
+    };
+    for (operator, counts) in [
+        ("remove_connection", counts.remove_connection),
+        ("remove_neuron", counts.remove_neuron),
+        ("toggle_connection", counts.toggle_connection),
+        ("add_connection", counts.add_connection),
+        ("add_neuron", counts.add_neuron),
+    ] {
+        for (code, count, cause) in [
+            (
+                "structural_genome_limit",
+                counts.genome_limit,
+                "a structural candidate edit exceeded a per-genome cap; aggregate arena capacity does not remove this limit",
+            ),
+            (
+                "structural_scratch_limit",
+                counts.scratch_limit,
+                "a structural candidate edit exceeded preallocated mutation scratch capacity",
+            ),
+            (
+                "structural_innovation_exhausted",
+                counts.innovation_exhausted,
+                "a structural candidate edit could not obtain fresh innovation IDs; energy and arena allowances cannot restore IDs",
+            ),
+        ] {
+            if count > 0 {
+                findings.push(Finding {
+                    code,
+                    signal: format!(
+                        "{operator}: {count} cumulative refused candidate edits through tick {tick}; these are not spawn refusals"
+                    ),
+                    likely_causes: vec![cause],
+                });
+            }
+        }
+    }
+}
+
 struct IdleRequirements {
     observation_ticks: u64,
     speed_threshold: f64,
@@ -430,14 +488,14 @@ fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonRepor
             Some(sample)
                 if sample.evolving.descendants == 0 || sample.random_control.descendants == 0 =>
             {
-                "random-control comparison requires living descendants in both cohorts"
+                "scalar-control comparison requires living descendants in both cohorts"
             }
             Some(sample)
                 if sample.evolving.population < 10 || sample.random_control.population < 10 =>
             {
-                "random-control comparison requires at least 10 living agents in both cohorts"
+                "scalar-control comparison requires at least 10 living agents in both cohorts"
             }
-            _ => "random-control comparison requires at least three consecutive eligible samples",
+            _ => "scalar-control comparison requires at least three consecutive eligible samples",
         };
         return ComparisonReport {
             tail_means: None,
@@ -485,7 +543,7 @@ fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonRepor
                 tail_means.mean_speed.relative_gap,
             ),
             likely_causes: vec![
-                "observed behavior may not reflect cumulative neural evolution",
+                "observed behavior may not reflect cumulative neural-scalar inheritance",
                 "repeat across seeds before drawing a conclusion",
             ],
         }]
@@ -521,6 +579,7 @@ fn select(sample: &RunSample, cohort: Cohort) -> &WorldMetrics {
 
 #[cfg(test)]
 mod tests {
+    use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
     use sim_core::params::SimParams;
 
     use super::*;
@@ -531,13 +590,13 @@ mod tests {
             schema_version: SCHEMA_VERSION,
             sim_version: "test".to_owned(),
             source_revision: "test-revision".to_owned(),
-            phase: 1,
+            phase: 2,
             seed: "42".to_owned(),
             ticks,
             founders: 100,
             sample_every: 1_000,
             params: SimParams::default(),
-            control: "randomized_at_birth".to_owned(),
+            control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         }
     }
 
@@ -576,6 +635,7 @@ mod tests {
             energy_drift: 0.0,
             arena_usage: Vec::new(),
             spawn_failures: None,
+            structural_mutations: None,
         }
     }
 
@@ -586,6 +646,97 @@ mod tests {
             random_control: world(population, variants, 1.0),
             final_state_hashes: None,
         }
+    }
+
+    #[test]
+    fn mutation_pressure_is_separate_from_birth_pressure_and_live_complexity() {
+        use sim_core::mutate::structural::StructuralMutationCounts;
+        use sim_core::spawn::SpawnFailureCounts;
+
+        let mut samples = vec![sample(0, 1, 1), sample(1_000, 0, 0)];
+        for sample in &mut samples {
+            for metrics in [&mut sample.evolving, &mut sample.random_control] {
+                metrics.spawn_failures = Some(SpawnFailureCounts::default());
+                metrics.structural_mutations = Some(StructuralMutationCounts::default());
+            }
+        }
+        let evolving = samples[1].evolving.structural_mutations.as_mut().unwrap();
+        evolving.add_neuron.attempted = 9;
+        evolving.add_neuron.applied = 4;
+        evolving.add_neuron.genome_limit = 2;
+        evolving.add_neuron.scratch_limit = 3;
+        let control = samples[1]
+            .random_control
+            .structural_mutations
+            .as_mut()
+            .unwrap();
+        control.add_connection.attempted = 7;
+        control.add_connection.innovation_exhausted = 7;
+        let report = diagnose(&header(1_000), &samples);
+        for (code, count) in [
+            ("structural_genome_limit", 2),
+            ("structural_scratch_limit", 3),
+        ] {
+            let finding = report.evolving.iter().find(|f| f.code == code).unwrap();
+            assert!(
+                finding
+                    .signal
+                    .contains(&format!("add_neuron: {count} cumulative"))
+            );
+            assert!(finding.signal.contains("not spawn refusals"));
+        }
+        let exhausted = report
+            .random_control
+            .iter()
+            .find(|f| f.code == "structural_innovation_exhausted")
+            .unwrap();
+        assert!(exhausted.signal.contains("add_connection: 7 cumulative"));
+        assert!(
+            !report
+                .evolving
+                .iter()
+                .any(|f| f.code == "structural_innovation_exhausted")
+        );
+        assert!(!report.evolving.iter().any(|f| f.code == "genome_limit"));
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("structural-mutation"))
+        );
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("M4 clustering"))
+        );
+    }
+
+    #[test]
+    fn absent_mutation_observations_are_unavailable_not_zero() {
+        use sim_core::mutate::structural::StructuralMutationCounts;
+
+        let mut samples = [sample(0, 1, 1)];
+        samples[0].evolving.structural_mutations = Some(StructuralMutationCounts::default());
+        let report = diagnose(&header(0), &samples);
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("structural-mutation counts for evolving"))
+        );
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("structural-mutation counts for scalar control"))
+        );
+        assert!(
+            !report
+                .random_control
+                .iter()
+                .any(|finding| finding.code.starts_with("structural_"))
+        );
     }
 
     #[test]
@@ -652,7 +803,7 @@ mod tests {
             report
                 .unavailable
                 .iter()
-                .any(|reason| { reason.contains("spawn-refusal counts for random control") })
+                .any(|reason| { reason.contains("spawn-refusal counts for scalar control") })
         );
         assert!(
             !report
@@ -1015,7 +1166,7 @@ mod tests {
         crate::diagnose_output::write_human(&mut output, &report).expect("writes");
         let output = String::from_utf8(output).expect("UTF-8");
         assert!(output.contains(
-            "comparison:\n  - not run: random-control comparison requires living descendants"
+            "comparison:\n  - not run: scalar-control comparison requires living descendants"
         ));
     }
 }

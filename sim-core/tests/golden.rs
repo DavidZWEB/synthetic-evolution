@@ -25,6 +25,14 @@ use common::*;
 #[path = "common/storage_case.rs"]
 mod storage_case;
 
+#[path = "common/structural_case.rs"]
+mod structural_case;
+
+#[test]
+fn structural_mutation_matches_its_reference_in_both_modes() {
+    structural_case::check_structural_runs();
+}
+
 #[test]
 fn variable_storage_matches_its_reference_in_both_heredity_modes() {
     storage_case::check_variable_storage_runs();

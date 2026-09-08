@@ -6,12 +6,38 @@
 //! agent. Passing one where the other is wanted produces a simulation that runs and
 //! is subtly wrong, so they are different types and the compiler checks it.
 //!
-//! Deliberately not here: any lookup tables or arenas that hold these. Types only.
+//! Also provides checked innovation reservations, without owning the world's counter.
+//! Lookup tables and arenas that hold these identifiers live elsewhere.
 
 use serde::{Deserialize, Serialize};
 
 /// Sentinel for "no such entity". `parentB` is always this in V1 (spec §3.4).
 pub const NULL_ID: u32 = u32::MAX;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InnovationExhausted;
+
+impl core::fmt::Display for InnovationExhausted {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("innovation ID space exhausted")
+    }
+}
+
+impl core::error::Error for InnovationExhausted {}
+
+/// Reserves a nonempty consecutive range, excluding NULL. Failure changes nothing.
+pub(crate) fn reserve_innovations(
+    next: &mut u32,
+    count: u32,
+) -> Result<InnovationId, InnovationExhausted> {
+    if count == 0 {
+        return Err(InnovationExhausted);
+    }
+    let end = next.checked_add(count).ok_or(InnovationExhausted)?;
+    let first = InnovationId::new(*next);
+    *next = end;
+    Ok(first)
+}
 
 macro_rules! define_id {
     ($(#[$meta:meta])* $name:ident) => {
@@ -98,6 +124,21 @@ define_id! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn innovation_reservations_are_atomic_and_never_issue_null() {
+        let mut next = NULL_ID - 2;
+        assert_eq!(reserve_innovations(&mut next, 3), Err(InnovationExhausted));
+        assert_eq!(next, NULL_ID - 2);
+        assert_eq!(
+            reserve_innovations(&mut next, 2).unwrap().raw(),
+            NULL_ID - 2
+        );
+        assert_eq!(next, NULL_ID);
+        assert_eq!(reserve_innovations(&mut next, 1), Err(InnovationExhausted));
+        assert_eq!(reserve_innovations(&mut next, 0), Err(InnovationExhausted));
+        assert_eq!(next, NULL_ID);
+    }
 
     #[test]
     fn null_is_distinguishable_from_a_real_id() {

@@ -5,9 +5,10 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M1 world-storage integration is implemented under the approved budget policy.**
-The remaining M0 mutation, distance, control-protocol, and lineage choices are still
-pending. The agreed scope includes add/remove sensors, basic manual checkpoints,
+**Status: M2 neural structural mutation is implemented under its approved operator
+and scalar-control contract.** Distance/deletion-default calibration, the actual
+structural-null protocol, and lineage choices remain pending. The agreed scope
+includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
 choices in M0 remain proposals, not additions to the normative spec.
 
@@ -20,9 +21,9 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 allocator/budget policy approved; other contracts open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 and M2 operator/scalar-control contracts approved; later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
-| M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; M0 mutation/control decisions | not started |
+| M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
@@ -148,17 +149,17 @@ approved. Never silently drop genes or mint energy to conceal pressure.
 
 ### D2 - Structural mutation semantics
 
-**Recommendation:** bounded per-birth attempts in a fixed operator order, using
+**Approved for M2:** bounded per-birth attempts in a fixed operator order, using
 world-owned innovation IDs and reusable scratch. Keep scalar mutation behavior
 unchanged initially. Zero structural rates must consume no extra random draws and
 must preserve the Phase 1 trajectory.
 
-| Operator | Proposed contract requiring approval |
+| Operator | Contract (neural operators approved; sensor details remain M3) |
 |---|---|
 | Add connection | Join existing neurons; recurrence/self-connections are legal. Do not add duplicate endpoint pairs; a retained disabled edge is re-enabled with its existing ID. |
 | Remove connection | Physically delete a selected connection. This is distinct from disabling it, which retains its innovation and storage/metabolic cost. |
 | Enable/disable connection | Toggle retained wiring without changing its ID. |
-| Add neuron | Split an enabled connection: retain it disabled, add one neuron and two fresh-ID connections atomically. Set initialization through runtime parameters; a CTRNN split is not assumed behavior-neutral. |
+| Add neuron | Split an enabled connection: retain it disabled, add a sigmoid neuron and two fresh-ID connections atomically. Bias/incoming weight default to configurable 0/1; tau uses the existing founder range, and outgoing weight is inherited. A CTRNN split is not assumed behavior-neutral. |
 | Remove neuron | Remove an eligible non-oscillator neuron plus incident connections. Protect sensor targets and effector sources; removing an organ is a separate operator. Preserve the always-present oscillator scaffold in spec section 3.2. |
 | Add sensor | Add a supported modality plus one fresh target neuron per channel atomically. New channels become useful through the connection operator; they must be reachable from a sensor-poor founder. |
 | Remove sensor | Remove the sensor gene, leaving its target neurons coherent and available to the neural operators (spec section 2.2c). |
@@ -176,21 +177,32 @@ Implement and exercise deletion with explicit test/experiment parameters in M2; 
 zero shipped rate must not become an excuse to leave the operator unimplemented.
 
 Use fresh monotonic IDs for new structural origins, retain IDs for inherited genes,
-and do not add a NEAT-style global event-deduplication registry implicitly. Define
-ID exhaustion without wrapping into `NULL_ID`. Canonical ordering is by kind and ID,
-not a global ID-sorted slice; all operators, distance, and crossover must agree.
+and do not add a NEAT-style global event-deduplication registry implicitly. Checked
+reservations decline on exhaustion without wrapping into `NULL_ID`. Reserve only
+after an edit is feasible; applied edits retain their IDs and RNG draws even if the
+world later refuses the birth. Successful external genome admission advances the
+counter past supplied IDs. Canonical ordering remains by kind and ID, not a global
+ID-sorted slice.
 
-Approve rates for neuron/connection removal, which section 3.3 does not currently
-supply, and the exact enable/disable sampling rule. Rates, initialization distributions, and meaningful
-growth limits belong in `SimParams`. Preserve the existing cost accounting, including
-charging disabled connections; changing that policy is a separate design decision.
+Each enabled operator receives one chance and at most one candidate edit, in the
+order remove connection, remove neuron, toggle, add connection, split. Toggle samples
+a retained connection and flips only its enabled flag. All five shipped rates are
+zero; 0.05/0.02/0.02 for addition/splitting/toggling are opt-in examples, not a default
+change. Physical deletion defaults still require D4 evidence before activation.
+Rates and initializers belong in `SimParams`. Preserve existing cost accounting,
+including charging disabled connections.
 
 ### D3 - What the random-brain control means with evolving topology
 
-**Recommendation:** retain a scalar-heredity control. Control offspring undergo the
+**Approved:** retain a scalar-heredity control. Control offspring undergo the
 same structural mutation rules, inherit non-neural genes and topology, and redraw
 all neural scalars using fan-in derived from their actual genome. Founders still
 match the evolving world's founders exactly for the same seed/params.
+
+The evolving pipeline runs scalar mutation before structural edits; the control
+runs structural edits before scalar redraw. Protocol `randomized_at_birth_v2`
+records this explicitly. The legacy browser mode identifier remains accepted, with
+the label "scalar control"; zero structural defaults preserve existing seed links.
 
 This control can evolve topology and sensors. It tests cumulative **neural scalar**
 inheritance, not the absence of all evolution. It cannot alone establish that
@@ -362,6 +374,22 @@ defaults until the operator/control contract is approved and integration is read
 enable them deliberately, not as an incidental consequence of a new default field.
 Physical deletion also retains D2/D4's joint approval gate; its forced scenarios
 exist even while shipped deletion rates remain zero.
+
+**Delivered:** all five neural operators run through the birth pipeline with
+preflighted genome/scratch limits and checked innovation reservations. Runtime
+admission rejects cross-kind ID reuse and parallel endpoint pairs; generic offline
+crossover remains separate from runtime admission rather than inventing Phase 6
+reconciliation. Existing scalar-only and M1 storage golden references are unchanged.
+A new shared native/WASM scenario exercises actual edits, births, removal, genome
+limits, arena refusal, and continued stepping in both heredity modes.
+
+Scalar bias overflow is capped only at the finite f32 representation boundary so
+extreme valid perturbation scales do not feed incoherent genes to structural edits;
+ordinary finite results and random draws are unchanged. Schema 4 / phase 2 /
+`randomized_at_birth_v2` telemetry separates candidate-edit outcomes from birth
+refusals, and explicitly reads valid schema-3 legacy records without inventing
+mutation observations. The browser retains its legacy mode identifier while naming
+the control's scalar-only scope. None of this establishes useful evolved complexity.
 
 ## M3 - Sensor mutation and configurable founders
 

@@ -1,7 +1,7 @@
 //! The JS boundary, exercised from the target it actually runs on.
 //!
-//! These do not check the simulation — `sim-core` owns that and tests it natively. What
-//! they check is the marshalling: that a bad params string is an error rather than a
+//! `sim-core` owns operator correctness. These check boundary integration, including
+//! configured edits and observations: that a bad params string is an error rather than a
 //! silent fallback, that the snapshot spans describe the buffer they claim to, and that
 //! a structural retune is refused at the boundary rather than corrupting a pool JS holds
 //! views over.
@@ -12,7 +12,28 @@
 
 use wasm_bindgen_test::wasm_bindgen_test;
 
+use sim_core::genome::Gene;
+use sim_core::mutate::structural::StructuralMutationCounts;
+use sim_core::params::SimParams;
 use wasm::{Sim, random_control, validate_params};
+
+fn structural_params() -> SimParams {
+    serde_json::from_str(include_str!("../../native/tests/fixtures/structural.json")).unwrap()
+}
+
+fn mutations(sim: &Sim) -> StructuralMutationCounts {
+    serde_json::from_str(
+        &sim.structural_mutation_diagnostics()
+            .expect("mutation diagnostics"),
+    )
+    .expect("valid counters")
+}
+
+fn genome(sim: &Sim, slot: u32) -> Vec<Gene> {
+    let inspection: serde_json::Value =
+        serde_json::from_str(&sim.inspect_agent(slot, 1).expect("live first incarnation")).unwrap();
+    serde_json::from_value(inspection["genome"].clone()).unwrap()
+}
 
 fn sim(agents: u32) -> Sim {
     let mut sim = Sim::new(7, None).expect("defaults are valid");
@@ -62,6 +83,269 @@ fn random_control_matches_founders_then_breaks_neural_inheritance() {
     );
     assert!(evolving.descendants() > 0);
     assert!(control.descendants() > 0);
+    assert_eq!(mutations(&evolving), StructuralMutationCounts::default());
+    assert_eq!(mutations(&control), StructuralMutationCounts::default());
+}
+
+#[wasm_bindgen_test]
+fn structural_diagnostics_cover_actual_edits_and_are_isolated_per_world_and_recreation() {
+    let params = serde_json::to_string(&structural_params()).unwrap();
+    let mut evolving = Sim::new(7, Some(params.clone())).unwrap();
+    let mut control = random_control(7, Some(params.clone())).unwrap();
+    let zero = StructuralMutationCounts::default();
+    for sim in [&mut evolving, &mut control] {
+        assert_eq!(sim.seed_founders(1), 1);
+        assert_eq!(
+            mutations(sim),
+            zero,
+            "founders are not structurally mutated"
+        );
+    }
+    evolving.step_many(1);
+    assert_eq!(
+        mutations(&control),
+        zero,
+        "another world's steps changed the control"
+    );
+    let observed = mutations(&evolving);
+    control.step_many(1);
+    for sim in [&evolving, &control] {
+        let counts = mutations(sim);
+        for operator in [
+            counts.remove_connection,
+            counts.remove_neuron,
+            counts.toggle_connection,
+            counts.add_connection,
+            counts.add_neuron,
+        ] {
+            assert_eq!(operator.attempted, 1);
+            assert_eq!(operator.applied, 1);
+            assert_eq!(
+                operator.no_candidate
+                    + operator.genome_limit
+                    + operator.scratch_limit
+                    + operator.innovation_exhausted,
+                0
+            );
+        }
+        assert_eq!(sim.population(), 2);
+        assert_eq!(sim.descendants(), 1);
+        let storage = storage(sim);
+        assert_eq!(
+            storage.as_object().unwrap().len(),
+            2,
+            "storage envelope changed"
+        );
+        assert!(
+            storage["spawn_failures"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|value| value.as_u64() == Some(0))
+        );
+    }
+    let hash = evolving.state_hash();
+    let layout = evolving.snapshot_layout().unwrap();
+    evolving.step_many(0);
+    assert_eq!(mutations(&evolving), observed);
+    assert_eq!(evolving.state_hash(), hash);
+    assert_eq!(evolving.snapshot_layout().unwrap(), layout);
+    let mut recreated = Sim::new(7, Some(params)).unwrap();
+    assert_eq!(recreated.seed_founders(1), 1);
+    assert_eq!(mutations(&recreated), zero);
+    assert_eq!(mutations(&evolving), observed);
+}
+
+#[wasm_bindgen_test]
+fn splitting_is_inherited_but_scalar_control_redraws_the_resulting_brain() {
+    let mut params = structural_params();
+    params.mutation.structural = Default::default();
+    params.mutation.structural.add_neuron_rate = 1.0;
+    params.mutation.structural.split_neuron_bias = 0.375;
+    let json = serde_json::to_string(&params).unwrap();
+    let mut evolving = Sim::new(7, Some(json.clone())).unwrap();
+    let mut control = random_control(7, Some(json)).unwrap();
+    for sim in [&mut evolving, &mut control] {
+        assert_eq!(sim.seed_founders(1), 1);
+    }
+    let parent = genome(&evolving, 0);
+    assert_eq!(genome(&control, 0), parent);
+    let non_neural = |genes: &[Gene]| {
+        genes
+            .iter()
+            .copied()
+            .filter(|gene| !matches!(gene, Gene::Neuron(_) | Gene::Connection(_)))
+            .collect::<Vec<_>>()
+    };
+    for (sim, is_control) in [(&mut evolving, false), (&mut control, true)] {
+        sim.step_many(1);
+        assert_eq!(mutations(sim).add_neuron.applied, 1);
+        assert_eq!(sim.descendants(), 1);
+        assert_eq!(genome(sim, 0), parent, "birth changed the parent");
+        let child = genome(sim, 1);
+        assert_eq!(child.len(), parent.len() + 3);
+        assert_eq!(non_neural(&child), non_neural(&parent));
+        let added = child
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Neuron(neuron)
+                    if !parent
+                        .iter()
+                        .any(|gene| gene.innovation() == Some(neuron.id)) =>
+                {
+                    Some(neuron)
+                }
+                _ => None,
+            })
+            .expect("split added a neuron");
+        if is_control {
+            assert_ne!(
+                added.bias, params.mutation.structural.split_neuron_bias,
+                "new neuron escaped scalar redraw"
+            );
+        } else {
+            assert_eq!(added.bias, params.mutation.structural.split_neuron_bias);
+        }
+        for gene in &child {
+            if let Gene::Neuron(neuron) = gene
+                && let Some(Gene::Neuron(original)) = parent
+                    .iter()
+                    .find(|gene| gene.innovation() == Some(neuron.id))
+            {
+                if is_control {
+                    assert_ne!(neuron.tau, original.tau, "inherited scalar tau");
+                } else {
+                    assert_eq!(
+                        neuron, original,
+                        "disabled scalar mutation changed a neuron"
+                    );
+                }
+                assert_eq!(neuron.activation, original.activation);
+            }
+            if let Gene::Connection(connection) = gene
+                && let Some(Gene::Connection(original)) = parent
+                    .iter()
+                    .find(|gene| gene.innovation() == Some(connection.id))
+            {
+                assert_eq!(
+                    (connection.from, connection.to),
+                    (original.from, original.to)
+                );
+                if is_control {
+                    assert_ne!(
+                        connection.weight, original.weight,
+                        "existing connection, including disabled edges, escaped redraw"
+                    );
+                } else {
+                    assert_eq!(connection.weight, original.weight);
+                }
+            }
+        }
+        assert_eq!(
+            child
+                .iter()
+                .filter(|gene| matches!(gene, Gene::Connection(c) if !c.enabled))
+                .count(),
+            1
+        );
+    }
+}
+
+#[wasm_bindgen_test]
+fn a_refused_candidate_edit_can_birth_and_an_applied_edit_can_fail_to_birth() {
+    let mut params = structural_params();
+    params.mutation.structural = Default::default();
+    params.mutation.structural.add_neuron_rate = 1.0;
+    let mut probe = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
+    assert_eq!(probe.seed_founders(1), 1);
+    let founder_genes = genome(&probe, 0).len() as u32;
+    params.storage.max_genes = founder_genes;
+    let mut capped = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
+    assert_eq!(capped.seed_founders(1), 1);
+    capped.step_many(1);
+    assert_eq!(mutations(&capped).add_neuron.genome_limit, 1);
+    assert_eq!(mutations(&capped).add_neuron.applied, 0);
+    assert_eq!(
+        capped.descendants(),
+        1,
+        "a mutation refusal is not a birth refusal"
+    );
+    assert_eq!(storage(&capped)["spawn_failures"]["genome_limit"], 0);
+
+    params.storage.max_genes = SimParams::default().storage.max_genes;
+    params.world.max_agents = 2;
+    params.storage.genes_per_slot = founder_genes.div_ceil(2);
+    let mut full = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
+    assert_eq!(full.seed_founders(1), 1);
+    full.step_many(1);
+    assert_eq!(mutations(&full).add_neuron.applied, 1);
+    assert_eq!(storage(&full)["spawn_failures"]["arena_capacity"], 1);
+    assert_eq!(full.population(), 1);
+    assert_eq!(
+        full.descendants(),
+        0,
+        "applied edits are not successful births"
+    );
+}
+
+#[wasm_bindgen_test]
+fn structural_configuration_validates_at_all_boundaries_and_retunes_without_resetting_counts() {
+    let mut params = structural_params();
+    params.mutation.structural = Default::default();
+    let canonical = serde_json::to_value(&params).unwrap();
+    let mut sim = Sim::new(7, Some(canonical.to_string())).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    for rate in [
+        "remove_connection_rate",
+        "remove_neuron_rate",
+        "toggle_connection_rate",
+        "add_connection_rate",
+        "add_neuron_rate",
+    ] {
+        let mut valid = canonical.clone();
+        valid["mutation"]["structural"][rate] = 0.5.into();
+        validate_params(Some(valid.to_string())).expect("rate exists and is valid");
+        sim.set_params(&valid.to_string())
+            .expect("rates can be retuned");
+        for value in [-0.1, 1.1] {
+            let mut invalid = valid.clone();
+            invalid["mutation"]["structural"][rate] = value.into();
+            assert!(validate_params(Some(invalid.to_string())).is_err());
+            assert!(Sim::new(7, Some(invalid.to_string())).is_err());
+            assert!(random_control(7, Some(invalid.to_string())).is_err());
+            let hash = sim.state_hash();
+            let before = sim.params_json().unwrap();
+            assert!(sim.set_params(&invalid.to_string()).is_err());
+            assert_eq!(sim.params_json().unwrap(), before);
+            assert_eq!(sim.state_hash(), hash);
+        }
+    }
+    for invalid in [
+        r#"{"mutation":{"structural":{"split_neuron_bias":1e40}}}"#,
+        r#"{"mutation":{"structural":{"split_input_weight":1e40}}}"#,
+        r#"{"mutation":{"weight_limit":0.25,"structural":{"add_neuron_rate":1,"split_input_weight":1}}}"#,
+        r#"{"brain":{"weight_init_scale":3e38},"mutation":{"structural":{"add_connection_rate":1}}}"#,
+    ] {
+        assert!(validate_params(Some(invalid.into())).is_err());
+        assert!(Sim::new(7, Some(invalid.into())).is_err());
+        assert!(random_control(7, Some(invalid.into())).is_err());
+        assert!(sim.set_params(invalid).is_err());
+    }
+    params.mutation.structural.add_neuron_rate = 1.0;
+    sim.set_params(&serde_json::to_string(&params).unwrap())
+        .unwrap();
+    sim.step_many(1);
+    assert_eq!(mutations(&sim).add_neuron.applied, 1);
+    let counts = mutations(&sim);
+    params.mutation.structural.add_neuron_rate = 0.0;
+    sim.set_params(&serde_json::to_string(&params).unwrap())
+        .unwrap();
+    sim.step_many(1);
+    assert_eq!(
+        mutations(&sim),
+        counts,
+        "disabling mutation reset or incremented counters"
+    );
 }
 
 #[wasm_bindgen_test]
@@ -341,4 +625,19 @@ fn sensing_retunes_do_not_rebudget_existing_grids() {
     sim.set_params(&next)
         .expect("retuning must retain the current grids");
     assert_eq!(sim.snapshot_layout().unwrap(), before);
+}
+
+#[wasm_bindgen_test]
+fn structural_births_keep_extreme_scalar_biases_finite() {
+    let mut params = structural_params();
+    params.mutation.neuron_perturb_rate = 1.0;
+    params.mutation.bias_perturb_sigma = f32::MAX;
+    params.mutation.structural = Default::default();
+    params.mutation.structural.toggle_connection_rate = 1.0;
+    let mut sim = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    sim.step_many(1);
+    assert_eq!(sim.descendants(), 1);
+    assert_eq!(mutations(&sim).toggle_connection.applied, 1);
+    sim_core::genome::validate(&genome(&sim, 1)).unwrap();
 }

@@ -33,14 +33,19 @@ impl World {
     /// runs, which is exactly why that test exists (spec §5.1).
     pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
-        self.spawn_validated(spec, genes)
+        let id = self.spawn_validated(spec, genes)?;
+        // Imported genomes may carry fresh IDs beyond this world's template. Keep
+        // subsequent structural edits from reusing them (spec section 3.1).
+        if let Some(last) = genes.iter().filter_map(Gene::innovation).max() {
+            self.next_innovation = self.next_innovation.max(last.raw() + 1);
+        }
+        Ok(id)
     }
 
     /// Caller must establish genome coherence and every `StorageParams` limit.
     ///
     /// Public spawns validate explicitly; founders are covered by construction
-    /// validation. Births currently preserve their validated parent's counts through
-    /// scalar-only mutation/redraw. Structural operators must enforce coherence and
+    /// validation. The birth mutation pipeline must preserve architecture and enforce
     /// limits atomically before using this path (spec sections 2.2a and 3.3).
     pub(crate) fn spawn_validated(
         &mut self,

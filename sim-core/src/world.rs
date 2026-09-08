@@ -21,7 +21,7 @@ use crate::control::BrainInheritance;
 use crate::effectors::{Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
-use crate::ids::{AgentId, InnovationId};
+use crate::ids::{AgentId, InnovationExhausted, InnovationId, reserve_innovations};
 use crate::ledger::EnergyLedger;
 use crate::params::{ParamError, SimParams};
 use crate::perceive::Sensor;
@@ -374,10 +374,8 @@ impl World {
     }
 
     /// Draws the next innovation id and advances the counter.
-    pub fn next_innovation(&mut self) -> InnovationId {
-        let id = InnovationId::new(self.next_innovation);
-        self.next_innovation += 1;
-        id
+    pub fn next_innovation(&mut self) -> Result<InnovationId, InnovationExhausted> {
+        reserve_innovations(&mut self.next_innovation, 1)
     }
 
     /// The world's founding topology.
@@ -911,13 +909,17 @@ mod tests {
         // the world's first ids during construction.
         let mut a = small_world();
         let mut b = small_world();
-        let first = a.next_innovation();
+        let first = a.next_innovation().unwrap();
         assert!(
             first.raw() > 0,
             "the founding plan should already have drawn ids"
         );
-        assert_eq!(a.next_innovation().raw(), first.raw() + 1);
-        assert_eq!(b.next_innovation(), first, "counter leaked between worlds");
+        assert_eq!(a.next_innovation().unwrap().raw(), first.raw() + 1);
+        assert_eq!(
+            b.next_innovation().unwrap(),
+            first,
+            "counter leaked between worlds"
+        );
     }
 
     #[test]

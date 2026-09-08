@@ -225,7 +225,7 @@ Commit the lockfile change in the same commit as the manifest change. A manifest
 
 ## Headless metrics
 
-The native shell runs an evolving world beside a same-seed, same-params random-brain
+The native shell runs an evolving world beside a same-seed, same-params scalar-heredity
 control and writes both metric vectors into one self-describing JSONL stream:
 
 ```bash
@@ -239,22 +239,80 @@ use shipped defaults. Omit `--metrics` for only a completion summary and final h
 use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-readable
 report.
 
-Metrics schema **3** retains all Phase 1 signals and adds two fields to each cohort's
-sample: `arena_usage` contains current element counts for `Genes`, `Neurons`,
-`Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
+### Opt-in neural structural mutation (M2)
+
+All five shipped rates under **`SimParams.mutation.structural` are zero**. Missing
+fields, including old saved params and shared URLs, retain zero rates; the default
+scalar-only dynamics and random-draw sequences remain unchanged. To opt in, pass a
+partial params document such as this with `--params params.json` (the WASM constructor
+and `Sim.set_params` accept the same JSON):
+
+```json
+{
+  "mutation": {
+    "structural": {
+      "remove_connection_rate": 0.001,
+      "remove_neuron_rate": 0.001,
+      "toggle_connection_rate": 0.01,
+      "add_connection_rate": 0.01,
+      "add_neuron_rate": 0.005,
+      "split_neuron_bias": 0.0,
+      "split_input_weight": 1.0
+    }
+  }
+}
+```
+
+This is a protocol example, not a recommended configuration. Rates are per-offspring
+operator probabilities in `[0, 1]`, applied in the order shown: remove connection,
+remove neuron, toggle connection, add connection, then split an enabled connection
+to add a neuron. Initializers must be finite; when splitting is enabled,
+`abs(split_input_weight)` cannot exceed `mutation.weight_limit`. Rates and
+initializers can be retuned without resizing a world. Founders are not structurally
+mutated. M2 does not enable sensor mutation (M3), body mutation, or sexual reproduction.
+
+Evolving offspring receive legacy neural-scalar mutation followed by structural
+edits. Scalar-control offspring receive structural edits followed by a full
+neural-scalar redraw on the resulting topology, retaining topology and non-neural
+genes. This control **can inherit and evolve topology**: it is neither a no-evolution
+control nor the separate structural-null comparison planned for M8. Report both
+cohorts' metric vectors across multiple seeds, not a ranking or a claim of useful
+structure based only on gene counts.
+
+### Telemetry protocol and observations
+
+New output uses metrics schema **4**, `phase: 2`, and
+`control: "randomized_at_birth_v2"` (the shared core protocol constant).
+The reader explicitly supports legacy **schema 3 / phase 1 /
+`control: "randomized_at_birth"`** records, without relabeling them as v2; legacy
+records claiming any nonzero structural rate are rejected. Schemas 1 and 2, unknown
+schemas, and other schema/phase/control combinations are rejected.
+
+Schema 4 retains the earlier metric fields. `arena_usage` contains current element
+counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
 `largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
 `u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,
-`arena_fragmentation`, `arena_block_limit`, and `invalid_genome`. Counts belong to each
-shell/world, not deterministic simulation state. They count actual refused attempts,
-not founder requests clamped to pool capacity. The `--metrics` path observes seeding,
-command spawns, and natural births; plain runs use the unobserved stepping path.
-Samples created outside a collected run encode unavailable counts as `null`, not
-invented zeroes. `diagnose` reports that unavailability and distinguishes arena
-capacity from fragmentation; more energy does not resolve storage refusals.
-Schemas 1 and 2 are explicitly rejected rather than silently treated as complete
-storage telemetry. Exact `genome_variants` remain distinct from species: this storage
-milestone does not enable species clustering or structural mutation, and the
-`randomized_at_birth` control protocol and Phase 1 scalar heredity remain unchanged.
+`arena_fragmentation`, `arena_block_limit`, and `invalid_genome`. These count actual
+refused spawn attempts, not founder requests clamped to pool capacity.
+
+Each cohort also has **`structural_mutations`**, with separate `remove_connection`,
+`remove_neuron`, `toggle_connection`, `add_connection`, and `add_neuron` counters.
+Each operator records cumulative saturating `u64` values for `attempted`, `applied`,
+`no_candidate`, `genome_limit`, `scratch_limit`, and `innovation_exhausted`.
+An attempt is counted only after a positive-rate Bernoulli gate succeeds. An applied
+edit changes an **offspring candidate**, which can subsequently fail to spawn;
+a refused edit can still result in an unedited successful birth. Neither applied
+edits nor refused edits establish live complexity or a count of births.
+
+Counts belong to each shell/world, not deterministic simulation state. The `--metrics`
+path observes seeding, command spawns, and natural births, collecting structural edits
+separately in both cohorts; plain runs use the unobserved stepping path.
+Samples created outside a collected run encode unavailable observations as `null`,
+not invented zeroes. Schema 3's absent `structural_mutations` fields likewise decode
+to `null`. `diagnose` reports availability and mutation caps, scratch limits, and
+innovation exhaustion separately from spawn pressure, and distinguishes arena capacity
+from fragmentation; more energy does not resolve these limits. Exact `genome_variants`
+remain distinct from species: species-cluster diagnostics await M4 clustering.
 
 `SimParams.storage` reserves shared arena allowances and sets a default
 `max_memory_bytes` of **100663296 (96 MiB) per world**. Larger native configurations
@@ -264,15 +322,23 @@ undersupply are errors. The budget covers core-construction requests, not proces
 RSS: a paired run owns two separately budgeted worlds, with allocator/OS overhead,
 metrics, and any shell snapshots/transports additional. The WASM shell similarly
 exposes `Sim.storage_diagnostics()` JSON on demand with `arena_usage` and cumulative
-`spawn_failures`; its snapshot and browser transports are outside the core budget.
-This is not a browser resident-memory safety guarantee.
+`spawn_failures`; that envelope is unchanged. The separate
+`Sim.structural_mutation_diagnostics()` method returns the five operator-counter
+objects on demand. Both kinds of counters start at zero on world construction,
+are isolated per world, and survive retuning. JSON requests can grow WASM memory,
+so clients must refresh detached snapshot views. Snapshots and browser transports
+are outside the core budget. This is not a browser resident-memory safety guarantee.
 
 The committed files under `shells/native/tests/fixtures/` deliberately induce extinction,
-exact-genome monoculture, or a cheap sustaining population. They test telemetry and
+exact-genome monoculture, or a cheap sustaining population. `structural.json` forces
+all five structural operators for shell integration checks. These test telemetry and
 diagnostics; they are not candidate simulation defaults.
 
-For visual control checks, the web app's **heredity** selector creates either the ordinary
-evolving world or the same-seed `randomized_at_birth` control. Changing it takes effect on
+For visual control checks, the web app's **heredity** selector labels the alternatives
+**evolving** and **scalar control**, explaining that topology is inherited and may evolve
+while neural scalars are redrawn. The JS `random_control` constructor and browser/URL
+mode ID `randomized_at_birth` remain compatible; this mode ID is not the versioned
+telemetry protocol. Changing heredity takes effect on
 **reseed** because heredity mode is construction-time experiment configuration, not a
 `SimParams` retune. Shared URL fragments retain the mode, so evolving and control tabs can
 be opened with identical seed, founders, and params. The live **descendants** count excludes

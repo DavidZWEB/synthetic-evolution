@@ -208,6 +208,54 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
 }
 
 #[test]
+fn neural_structural_births_and_observers_never_allocate() {
+    use sim_core::mutate::structural::StructuralMutationCounts;
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    let rates = &mut params.mutation.structural;
+    rates.remove_connection_rate = 1.0;
+    rates.remove_neuron_rate = 1.0;
+    rates.toggle_connection_rate = 1.0;
+    rates.add_connection_rate = 1.0;
+    rates.add_neuron_rate = 1.0;
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+    ] {
+        let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
+        let parent = world.spawn_founder(Vec3::ZERO).unwrap();
+        let mut counts = StructuralMutationCounts::default();
+        let observed = count_allocations(|| {
+            for _ in 0..20 {
+                world.agents_mut().energy[parent.index()] = 300.0;
+                world.intents_mut().reproduce[parent.index()] = 1.0;
+                assert_eq!(
+                    world.resolve_births_with_observers(
+                        |_| panic!("birth refused"),
+                        |event| counts.record(event),
+                    ),
+                    1
+                );
+                let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
+                world.despawn(child);
+            }
+        });
+        assert_eq!(observed, 0, "structural birth allocated");
+        for applied in [
+            counts.remove_connection.applied,
+            counts.remove_neuron.applied,
+            counts.toggle_connection.applied,
+            counts.add_connection.applied,
+            counts.add_neuron.applied,
+        ] {
+            assert_eq!(applied, 20, "an operator did not execute");
+        }
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;

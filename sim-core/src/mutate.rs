@@ -1,22 +1,27 @@
-//! Mutation operators. Phase 1 perturbs and resets scalars; nothing here changes
-//! structure.
+//! Scalar mutation and the transient state shared by structural edits.
 //!
 //! Every operator works **in place on a gene slice**, because mutation happens on
 //! every birth and a birth happens inside the tick. Nothing allocates.
 //!
-//! Structure is invariant under these operators, so a mutated genome is coherent if
-//! its parent was. That is a weaker guarantee than it will need to be — Phase 2 adds
-//! add-neuron, add-connection, and add/remove-sensor, and the property test in this
-//! module is written against the general claim ("mutation never orphans a reference")
-//! rather than the Phase 1 shortcut, so it starts failing the moment that stops
-//! holding for real.
+//! Finite scalar results and draw order retain the legacy behavior; bias overflow is
+//! capped at the f32 representation boundary. `structural` owns bounded topology
+//! changes, and the heredity policy that combines them lives in `control`.
 //!
-//! Deliberately not here: the topology operators of spec §3.3 (add connection, add
-//! neuron, gene duplication) and the meta-gene operator. They arrive with Phase 2.
+//! Sensor operators arrive in M3. Gene duplication and meta-gene mutation remain
+//! outside this milestone.
 
 use crate::genome::{Activation, Gene};
 use crate::params::MutationParams;
 use crate::rng::Rng;
+
+pub mod structural;
+
+/// Borrowed world-owned mutation resources, not access to physical world state.
+pub(crate) struct MutationState<'a> {
+    pub rng: &'a mut Rng,
+    pub next_innovation: &'a mut u32,
+    pub neuron_scratch: &'a mut [u32],
+}
 
 /// Mutates a genome in place.
 ///
