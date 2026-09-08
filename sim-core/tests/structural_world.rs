@@ -201,6 +201,35 @@ fn imported_ids_advance_the_counter_only_after_a_successful_spawn() {
 }
 
 #[test]
+fn disabling_edits_keeps_retained_topology_redraw_finite_for_wide_intervals() {
+    let mut p = params();
+    p.mutation.structural.add_neuron_rate = 1.0;
+    let mut world =
+        World::new_with_brain_inheritance(42, p.clone(), BrainInheritance::RandomizedAtBirth)
+            .unwrap();
+    let parent = world.spawn_founder(Default::default()).unwrap();
+    ready(&mut world, parent);
+    assert_eq!(world.resolve_births(), 1);
+    let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
+    assert_eq!(world.brain(child).len(), world.brain(parent).len() + 1);
+    p.mutation.structural.add_neuron_rate = 0.0;
+    world.set_params(p.clone()).unwrap();
+    p.brain.weight_init_scale = 3e38;
+    world.set_params(p).unwrap();
+    world.intents_mut().reproduce[parent.index()] = 0.0;
+    ready(&mut world, child);
+    assert_eq!(world.resolve_births(), 1);
+    let grandchild = world
+        .pool()
+        .iter_live()
+        .find(|&id| id != parent && id != child)
+        .unwrap();
+    assert_architecture(world.genome(grandchild));
+    world.step();
+    assert!(world.brain(grandchild).iter().all(|n| n.output.is_finite()));
+}
+
+#[test]
 fn runtime_admission_rejects_cross_kind_ids_and_parallel_edges() {
     let mut world = World::new(42, params()).unwrap();
     let parent = world.spawn_founder(Default::default()).unwrap();

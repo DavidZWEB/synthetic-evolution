@@ -834,6 +834,12 @@ not a structural-null control. The browser retains the `randomized_at_birth` mod
 identifier for existing links but labels it "scalar control". With all structural
 rates zero, each mode preserves its previous dynamics and random-draw sequence.
 
+Disabling structural rates does not discard evolved topology. Scalar redraw must
+remain safe for its retained fan-in, including one-input neurons. Sampling a finite
+interval whose width overflows f32 uses bounded interpolation rather than an
+infinite intermediate; ordinary interval arithmetic and the single random draw are
+unchanged.
+
 **DECIDED: Phase 2 also requires an approved structural-null comparison before
 acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone
 establish that structural growth is adaptive. Decide the structural-null protocol at

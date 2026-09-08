@@ -289,6 +289,42 @@ fn a_refused_candidate_edit_can_birth_and_an_applied_edit_can_fail_to_birth() {
 }
 
 #[wasm_bindgen_test]
+fn disabling_structural_edits_preserves_finite_redraw_on_retained_topology() {
+    let mut params = structural_params();
+    params.mutation.structural = Default::default();
+    params.mutation.structural.add_neuron_rate = 1.0;
+    let mut sim = random_control(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    sim.step_many(1);
+    assert_eq!(mutations(&sim).add_neuron.applied, 1);
+    params.mutation.structural.add_neuron_rate = 0.0;
+    sim.set_params(&serde_json::to_string(&params).unwrap())
+        .unwrap();
+    params.brain.weight_init_scale = 3e38;
+    sim.set_params(&serde_json::to_string(&params).unwrap())
+        .unwrap();
+    sim.step_many(1);
+    let population = sim.population();
+    assert!(
+        population > 2,
+        "a post-retune scalar-control birth must occur"
+    );
+    sim.step_many(1);
+    for slot in 0..population {
+        sim_core::genome::validate(&genome(&sim, slot)).unwrap();
+        let inspection: serde_json::Value =
+            serde_json::from_str(&sim.inspect_agent(slot, 1).unwrap()).unwrap();
+        assert!(
+            inspection["activations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|value| value.as_f64().is_some_and(f64::is_finite))
+        );
+    }
+}
+
+#[wasm_bindgen_test]
 fn structural_configuration_validates_at_all_boundaries_and_retunes_without_resetting_counts() {
     let mut params = structural_params();
     params.mutation.structural = Default::default();
