@@ -2,6 +2,10 @@
 //!
 //! Owns spawn-time allocation/compilation, founder seeding, and removal accounting.
 //! Reproduction eligibility, mutation, and tick ordering remain in their systems.
+//!
+//! Lifecycle entry-point regressions deliberately live in the parent `world.rs`
+//! `tests` module. Add new entry-point cases there until that group is moved together,
+//! rather than creating a second unit-test home here.
 
 use glam::Vec3;
 
