@@ -39,7 +39,10 @@ pub fn mutate(genes: &mut [Gene], rng: &mut Rng, params: &MutationParams) {
             }
             Gene::Neuron(n) => {
                 if rng.chance(params.neuron_perturb_rate) {
-                    n.bias += rng.normal(0.0, params.bias_perturb_sigma);
+                    // Preserve coherent input to structural edits even if a finite
+                    // perturbation scale overflows f32; this is a representation bound.
+                    n.bias = (n.bias + rng.normal(0.0, params.bias_perturb_sigma))
+                        .clamp(-f32::MAX, f32::MAX);
                     // Multiplicative on tau, so it explores across orders of magnitude
                     // instead of random-walking off the bottom of its range.
                     let scale = 1.0 + rng.normal(0.0, params.tau_perturb_factor);
@@ -75,6 +78,21 @@ mod tests {
     use crate::params::{MutationParams, SimParams};
     use crate::rng::Rng;
     use proptest::prelude::*;
+
+    #[test]
+    fn finite_bias_genes_survive_extreme_valid_perturbations() {
+        let mut genes = tiny();
+        let params = MutationParams {
+            neuron_perturb_rate: 1.0,
+            bias_perturb_sigma: f32::MAX,
+            ..MutationParams::default()
+        };
+        let mut rng = Rng::from_seed(42);
+        for _ in 0..20 {
+            mutate(&mut genes, &mut rng, &params);
+            assert_eq!(validate(&genes), Ok(()));
+        }
+    }
 
     fn weights(genes: &[Gene]) -> Vec<f32> {
         genes
