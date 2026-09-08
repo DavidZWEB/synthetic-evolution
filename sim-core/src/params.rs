@@ -330,7 +330,16 @@ pub struct MutationParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StructuralMutationParams {
+    /// Physical deletion loses the edge's innovation marker. Re-adding the same
+    /// endpoints gets a fresh ID, so distance can increase without changed wiring.
+    /// Keep the shipped default at zero until D4 calibrates distance coefficients
+    /// and the species threshold against deletion/recreation (spec §3.4).
+    /// Explicit calibration runs may opt in before changing the default.
     pub remove_connection_rate: f32,
+    /// Removing/rebuilding a neuron also replaces its incident-edge innovation
+    /// history. Keep the shipped default at zero until D4's coefficients and
+    /// threshold are calibrated against this marker turnover (spec §3.4);
+    /// nonzero rates remain available for explicit calibration runs.
     pub remove_neuron_rate: f32,
     pub toggle_connection_rate: f32,
     pub add_connection_rate: f32,

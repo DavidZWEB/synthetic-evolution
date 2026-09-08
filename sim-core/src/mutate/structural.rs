@@ -1,6 +1,7 @@
 //! Bounded, deterministic neural topology edits on caller-owned genome storage.
 //! This module preserves architecture and reports attempted edits; scalar mutation,
 //! birth admission, world-owned resources, and heredity policy live elsewhere.
+//! M3 sensor/organ operators belong in `mutate/organs.rs`; this module stays neural-only.
 
 use serde::{Deserialize, Serialize};
 

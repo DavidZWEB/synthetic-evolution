@@ -393,6 +393,13 @@ the control's scalar-only scope. None of this establishes useful evolved complex
 
 ## M3 - Sensor mutation and configurable founders
 
+**Operator ownership:** keep connection/neuron edits in `mutate/structural.rs` and
+implement sensor/organ edits in `mutate/organs.rs`. `control.rs` remains the heredity
+orchestrator; M3 must wire both families through an explicitly documented fixed
+sequence while preserving zero-rate RNG behavior. Extract shared bounded-edit
+helpers only when both implementations need them. Do not create an unused organ
+module or placeholder operators ahead of that work.
+
 Implement D2's sensor operators for vision, chemo, and energy interoception only.
 Constrain sensor parameters to supported channels and the configured spatial-query
 envelope; retain zero elevation. Sensor count/ray caps must be separate from the
