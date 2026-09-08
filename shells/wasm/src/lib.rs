@@ -26,7 +26,7 @@ use wasm_bindgen::prelude::*;
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
 use sim_core::ids::AgentId;
-use sim_core::mutate::structural::StructuralMutationCounts;
+use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
@@ -63,8 +63,8 @@ pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
 }
 
-/// Builds the scalar-inheritance control (spec §7.8). Topology is inherited and can
-/// evolve; neural scalars are redrawn after structural edits. The JS name is stable.
+/// Builds the scalar-inheritance control (spec §7.8). Topology and sensors are inherited
+/// and can evolve; neural scalars are redrawn after edits. The JS name is stable.
 #[wasm_bindgen]
 pub fn random_control(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
     Sim::with_brain_inheritance(

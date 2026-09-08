@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
 use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
-use sim_core::mutate::structural::StructuralMutationCounts;
+use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::world::World;

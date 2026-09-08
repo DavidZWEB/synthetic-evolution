@@ -86,7 +86,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
     assert_eq!(header["data"]["phase"], 2);
-    assert_eq!(header["data"]["schema_version"], 4);
+    assert_eq!(header["data"]["schema_version"], 5);
     assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     assert!(
         header["data"]["source_revision"]
@@ -119,7 +119,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
             let mutations = sample["data"][cohort]["structural_mutations"]
                 .as_object()
                 .unwrap();
-            assert_eq!(mutations.len(), 5);
+            assert_eq!(mutations.len(), 7);
             for counts in mutations.values() {
                 let counts = counts.as_object().unwrap();
                 assert_eq!(counts.len(), 6);
@@ -248,6 +248,52 @@ fn configured_structural_edits_are_observed_in_each_cohort() {
             .unwrap()
             .iter()
             .any(|reason| reason.as_str().unwrap().contains("structural-mutation"))
+    );
+}
+
+#[test]
+fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
+    let mut params: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/structural.json")).unwrap();
+    params["sensing"]["vision_rays"] = 0.into();
+    params["sensing"]["chemo_sensors"] = 1.into();
+    params["sensing"]["energy_sensors"] = 0.into();
+    params["brain"]["hidden_neurons"] = 0.into();
+    params["brain"]["oscillators"] = 0.into();
+    params["brain"]["connections_per_target"] = 1.into();
+    params["mutation"]["structural"] = serde_json::json!({});
+    params["mutation"]["organs"] = serde_json::json!({
+        "remove_sensor_rate": 1.0,
+        "add_sensor_rate": 1.0,
+        "vision_weight": 0.0,
+        "chemo_weight": 1.0,
+        "energy_weight": 0.0
+    });
+    let (lines, report) = run_and_diagnose(&params.to_string(), 7, 1, 1, 1);
+    let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+    assert_eq!(header["data"]["schema_version"], 5);
+    assert_eq!(header["data"]["control"], "randomized_at_birth_v3");
+    let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+    let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    for cohort in ["evolving", "random_control"] {
+        assert_eq!(initial["data"][cohort]["genome_genes"]["mean"], 23.0);
+        assert_eq!(final_sample["data"][cohort]["descendants"], 1);
+        for operator in ["remove_sensor", "add_sensor"] {
+            assert_eq!(
+                initial["data"][cohort]["structural_mutations"][operator]["attempted"],
+                0
+            );
+            let counts = &final_sample["data"][cohort]["structural_mutations"][operator];
+            assert_eq!(counts["attempted"], 1);
+            assert_eq!(counts["applied"], 1);
+        }
+    }
+    assert!(
+        !report["unavailable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("sensor-mutation"))
     );
 }
 

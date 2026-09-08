@@ -23,6 +23,7 @@ pub enum ArenaKind {
 pub enum SpawnError {
     PoolFull,
     InvalidGenome(GenomeError),
+    SensorParameters(&'static str),
     GenomeLimit {
         kind: &'static str,
         count: usize,
@@ -39,6 +40,7 @@ impl core::fmt::Display for SpawnError {
         match self {
             Self::PoolFull => f.write_str("agent pool is full"),
             Self::InvalidGenome(reason) => write!(f, "invalid genome: {reason:?}"),
+            Self::SensorParameters(reason) => write!(f, "invalid sensor parameters: {reason}"),
             Self::GenomeLimit { kind, count, limit } => {
                 write!(f, "genome has {count} {kind}, exceeding limit {limit}")
             }
@@ -74,7 +76,9 @@ impl SpawnFailureCounts {
     pub fn record(&mut self, error: SpawnError) {
         let counter = match error {
             SpawnError::PoolFull => &mut self.pool_full,
-            SpawnError::InvalidGenome(_) => &mut self.invalid_genome,
+            SpawnError::InvalidGenome(_) | SpawnError::SensorParameters(_) => {
+                &mut self.invalid_genome
+            }
             SpawnError::GenomeLimit { .. } => &mut self.genome_limit,
             SpawnError::Arena { reason, .. } => match reason {
                 AllocationFailure::BlockLimit => &mut self.arena_block_limit,
@@ -117,6 +121,57 @@ pub(crate) fn validate_limits(genes: &[Gene], limits: &StorageParams) -> Result<
         }
     }
     genome::validate_architecture(genes).map_err(SpawnError::InvalidGenome)
+}
+
+/// Check actual allocated sensing bounds, not retuned founder initialization values.
+pub(crate) fn validate_sensor_parameters(
+    genes: &[Gene],
+    grid_cell: f32,
+    channels: usize,
+) -> Result<(), SpawnError> {
+    for gene in genes {
+        let Gene::Sensor(sensor) = gene else { continue };
+        match sensor.modality {
+            Modality::VisionRay => {
+                if sensor.params[1] != 0.0 {
+                    return Err(SpawnError::SensorParameters(
+                        "vision elevation must be zero",
+                    ));
+                }
+                if sensor.params[2] < 0.0 || sensor.params[2] > grid_cell {
+                    return Err(SpawnError::SensorParameters(
+                        "vision range exceeds the allocated envelope",
+                    ));
+                }
+                if sensor.params[3] < 0.0 {
+                    return Err(SpawnError::SensorParameters(
+                        "vision field of view must be non-negative",
+                    ));
+                }
+            }
+            Modality::Chemo => {
+                let channel = sensor.params[0];
+                if channel < 0.0 || channel.fract() != 0.0 || channel as f64 >= channels as f64 {
+                    return Err(SpawnError::SensorParameters(
+                        "chemo channel must name an allocated channel",
+                    ));
+                }
+                if sensor.params[1] < 0.0 || sensor.params[1] > grid_cell {
+                    return Err(SpawnError::SensorParameters(
+                        "chemo radius exceeds the allocated envelope",
+                    ));
+                }
+            }
+            Modality::Interoception => {
+                if sensor.params[0] != 0.0 {
+                    return Err(SpawnError::SensorParameters(
+                        "only energy interoception is supported",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

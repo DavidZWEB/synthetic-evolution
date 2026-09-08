@@ -72,6 +72,22 @@ test('scalar-control links preserve opt-in structural rates without changing the
   assert.equal(run.params, params);
 });
 
+test('sparse no-eye founder and organ config round-trips in both heredity modes', () => {
+  for (const brainInheritance of [EVOLVING, RANDOMIZED_AT_BIRTH]) {
+    for (const connectionsPerTarget of [null, 0, 1]) {
+      const params = JSON.stringify({
+        sensing: { vision_rays: 0, chemo_sensors: 1, energy_sensors: 0 },
+        brain: { hidden_neurons: 0, oscillators: 0, connections_per_target: connectionsPerTarget },
+        mutation: { organs: { remove_sensor_rate: 0.001, add_sensor_rate: 0.001 } },
+      });
+      const config = { seed: '9007199254740993', founders: 2, brainInheritance, params };
+      const href = writeRunUrl('https://example.test/', config);
+      assert.deepEqual(readRunUrl(href, 2000), config);
+      assert.equal(writeRunUrl(href, readRunUrl(href, 2000)), href);
+    }
+  }
+});
+
 test('invalid run fragments fail loudly', () => {
   assert.throws(() => readRunUrl('https://example.test/#seed=-1', 2000), /unsigned/);
   assert.throws(

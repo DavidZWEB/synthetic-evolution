@@ -276,8 +276,8 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 | Disable/enable connection | 0 in M2 | Opt-in candidate rate 0.02; retain identity and weight |
 | Remove connection | 0 | Physical deletion; nonzero shipped rates require joint distance review (§3.4) |
 | Remove neuron | 0 | Remove an eligible neuron and incident edges; same deletion gate |
-| Add sensor | 0.02 | Random modality + params |
-| Remove sensor | 0.02 | |
+| Add sensor | 0 in M3 | Opt-in candidate rate 0.02; configured modality mixture and fresh target neurons |
+| Remove sensor | 0 in M3 | Opt-in candidate rate 0.02; retain target neurons and wiring |
 | Add effector | 0.01 | |
 | Mutate body trait | 0.1 | |
 | **Gene duplication** | 0.005 | Duplicate a subgraph with fresh IDs |
@@ -318,11 +318,34 @@ overflows with an extreme finite perturbation scale, clamp at the finite f32
 representation limits rather than carrying an infinite bias into the child. This
 does not change ordinary finite results or the random-draw sequence.
 
+**DECIDED for M3:** organ edits run before the existing neural pass, in the order
+remove sensor, add sensor. This lets a removed organ's targets become eligible for
+neural pruning and a new organ's inputs acquire wiring in the same birth. Both new
+rates default to zero and consume no draws while disabled. Sensor/organ logic lives
+in `mutate/organs.rs`; neural logic remains in `mutate/structural.rs`.
+
+Addition chooses vision, food chemo, or energy interoception using configurable
+nonnegative weights (initially equal), before checking the selected modality's
+limits. Do not reroll a different modality on refusal. A successful edit atomically
+adds one fresh sigmoid target neuron per channel and one sensor, with no automatic
+connections. Target bias is configurable (initially zero), tau uses the existing
+brain range, and sensor initialization matches founders: random vision azimuth,
+zero elevation, configured range/FOV, food channel zero/current chemo radius, or
+energy selector zero. Deleting a sensor leaves its neurons and connections intact.
+All gene/neuron/sensor/ray, scratch, and ID checks precede changes or initialization
+draws; the same refusal/consumption rules as neural edits apply.
+
+Runtime sensor admission checks allocated channel and sensing-envelope bounds.
+Inherited genes remain valid after live range reductions because the world's
+allocated grid is retained; validate against that envelope, not the latest founder
+initialization range. Unsupported interoception selectors and nonzero elevation are
+not accepted as active Phase 2 sensor behavior.
+
 **Gene duplication deserves emphasis.** It is the primary mechanism by which biological complexity actually increases — duplicate then diverge. Without it, genomes grow one connection at a time and complex sensory organs essentially never appear. With it, an agent can duplicate a working eye and then specialize the copy.
 
 **Evolvable mutation rates** let lineages self-tune. Stable niches evolve low rates; lineages under pressure evolve high ones. It costs almost nothing to implement and it visibly improves the dynamics.
 
-**Founders must get simpler once these operators exist — revisit founder construction when they land.** Phase 1 issues every founder the complete sensory suite: three eyes, a nose, an interoceptor, fully connected. That is forced rather than chosen. With no add-sensor and no add-connection operator, anything missing from the founder is unreachable for every descendant for the whole of the phase, so density is the only safe default when structure cannot change.
+**Founders should get simpler through measurement once these operators exist.** Phase 1 issues every founder the complete sensory suite: three eyes, a nose, an interoceptor, fully connected. That is forced rather than chosen. With no add-sensor and no add-connection operator, anything missing from the founder is unreachable for every descendant for the whole of the phase, so density is the only safe default when structure cannot change.
 
 That argument expires the moment the structural operators above are *implemented* — add/remove neuron, connection, and sensor. **DECIDED: the sensor addition/removal pair lands in Phase 2 alongside the neural structural operators.** After that, a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
 
@@ -331,6 +354,21 @@ So when the structural operators arrive, invert the default: the founder should 
 - **The metabolic terms change meaning.** With a maximal founder, `k_sensor` (§5.2) is a tax every agent pays equally, so it selects for nothing within a generation-0 population. With a minimal founder it becomes the price of an upgrade, which is the selective role it was designed for.
 - **Minimal may not be viable, and that is a measurement.** A founder too simple to find food starves before it can reproduce, and the floor depends on the §5.5 energy economy and on food density, not on principle. Sweep it; do not reason it out.
 - **Founder composition should be runtime config**, for the same reason every other tunable is (§7.6). It is a parameter to sweep, not a constant to rewrite.
+
+**M3 founder configuration:** retain the existing vision/hidden/oscillator fields,
+add founder chemo and energy-sensor counts, and allow an optional incoming-connection
+count per hidden/output target. `None` means the original dense topology; a count
+selects up to that many distinct sources from the existing input/hidden/oscillator
+source set. Choose sparse wiring once per world after plant seeding, using the same
+world RNG, and share its template/innovation IDs across founders. Dense construction
+consumes no topology draws, so shipped defaults and prior runs stay unchanged.
+
+Preserve all four effectors and body/meta compatibility fields. Counts and allocation
+budgets must describe the exact sparse template without charging for dense wiring.
+A no-eye, one-chemoreceptor, zero-hidden/oscillator founder with one incoming edge
+per target is an opt-in small-controller candidate, not a viability claim. M8's
+multi-seed experiments and human acceptance choose any new shipped founder default;
+M3 does not replace the accepted dense default by assumption.
 
 ### 3.4 Crossover and speciation
 
@@ -839,6 +877,13 @@ remain safe for its retained fan-in, including one-input neurons. Sampling a fin
 interval whose width overflows f32 uses bounded interpolation rather than an
 infinite intermediate; ordinary interval arithmetic and the single random draw are
 unchanged.
+
+M3 extends the same policy to sensor edits with telemetry protocol
+`randomized_at_birth_v3`: evolving offspring run scalars, organ edits, then neural
+edits; controls run both edit families before neural-scalar redraw. Sensor parameters
+and bindings are not redrawn by that control. Legacy neural observations may still
+be available without organ observations; missing sensor counts remain explicitly
+unavailable rather than measured zero.
 
 **DECIDED: Phase 2 also requires an approved structural-null comparison before
 acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone

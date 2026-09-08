@@ -7,14 +7,21 @@
 //! capped at the f32 representation boundary. `structural` owns bounded topology
 //! changes, and the heredity policy that combines them lives in `control`.
 //!
-//! Sensor operators arrive in M3. Gene duplication and meta-gene mutation remain
-//! outside this milestone.
+//! Neural and organ operators have separate owners and share bounded editing
+//! primitives. Gene duplication and meta-gene mutation remain outside this milestone.
 
 use crate::genome::{Activation, Gene};
 use crate::params::MutationParams;
 use crate::rng::Rng;
 
+pub(crate) mod edit;
+mod events;
+pub(crate) mod organs;
 pub mod structural;
+pub use events::{
+    OperatorCounts, StructuralMutationCounts, StructuralMutationEvent, StructuralMutationResult,
+    StructuralOperator,
+};
 
 /// Borrowed world-owned mutation resources, not access to physical world state.
 pub(crate) struct MutationState<'a> {
@@ -113,7 +120,7 @@ mod tests {
     fn mutation_moves_weights() {
         let params = SimParams::default();
         let mut next_id = 0;
-        let plan = crate::founder::FounderPlan::new(&params, || {
+        let plan = crate::founder::FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             let id = crate::ids::InnovationId::new(next_id);
             next_id += 1;
             id
@@ -207,6 +214,7 @@ mod tests {
         fn neuron_parameters_stay_in_their_bounds(seed in any::<u64>()) {
             let mut genes = crate::founder::FounderPlan::new(
                 &SimParams::default(),
+                &mut Rng::from_seed(0),
                 {
                     let mut n = 0u32;
                     move || { n += 1; crate::ids::InnovationId::new(n - 1) }

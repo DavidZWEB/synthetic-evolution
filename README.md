@@ -9,8 +9,9 @@ Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
 across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
 now has pooled variable-length world storage, explicit memory budgets, and
-runtime-tunable neural structural mutation. New structural rates default to zero;
-sensor mutation and simpler-founder construction remain M3 work. The
+runtime-tunable neural and sensor structural mutation, and configurable sparse
+founders. New structural rates default to zero and dense founders remain the shipped
+default; simpler-founder viability is still an experiment, not an assumption. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

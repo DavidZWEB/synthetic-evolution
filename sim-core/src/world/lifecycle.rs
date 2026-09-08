@@ -33,6 +33,7 @@ impl World {
     /// runs, which is exactly why that test exists (spec §5.1).
     pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
+        spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
         let id = self.spawn_validated(spec, genes)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep
         // subsequent structural edits from reusing them (spec section 3.1).
@@ -42,7 +43,7 @@ impl World {
         Ok(id)
     }
 
-    /// Caller must establish genome coherence and every `StorageParams` limit.
+    /// Caller must establish genome coherence, sensor bounds, and every storage limit.
     ///
     /// Public spawns validate explicitly; founders are covered by construction
     /// validation. The birth mutation pipeline must preserve architecture and enforce

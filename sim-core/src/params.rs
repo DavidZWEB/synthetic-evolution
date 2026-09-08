@@ -203,10 +203,13 @@ pub struct SensingParams {
     pub vision_range: f32,
     /// Full cone width of one ray, radians.
     pub vision_fov: f32,
-    /// Rays per agent in Phase 1's fixed sensor set. Perception is 60–80% of tick
-    /// cost once vision is in, and ray count is metered as a metabolic cost so
-    /// evolution pays for its own compute (spec §2.2c).
+    /// Founder vision-ray count; evolved ray limits live in `StorageParams`.
+    /// Perception remains a metered metabolic cost (spec §2.2c).
     pub vision_rays: u32,
+    /// Founder food-chemoreceptor count, not an evolved-organ capacity.
+    pub chemo_sensors: u32,
+    /// Founder energy-interoceptor count, not an evolved-organ capacity.
+    pub energy_sensors: u32,
     /// Radius over which the chemo sensor samples concentration and gradient.
     pub chemo_radius: f32,
 }
@@ -222,16 +225,19 @@ impl SensingParams {
     }
 }
 
-/// Fixed CTRNN topology for Phase 1. The *representation* is already a variable-length
-/// gene list; only the mutation operators that change topology are absent (§3.1).
+/// Founder CTRNN topology and neural scalar initialization.
+/// Descendant topology evolves independently of these starting counts (spec §3.1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrainParams {
-    /// Hidden neurons per brain.
+    /// Hidden neurons in the founding template.
     pub hidden_neurons: u32,
     /// Always-present oscillator neurons. Cheap scaffold — evolution finds them fast
     /// and builds gaits and timing on them (spec §3.2).
     pub oscillators: u32,
+    /// Founder incoming connections per hidden/output target. None means dense;
+    /// a finite count selects distinct sources once per world, shared by all founders.
+    pub connections_per_target: Option<u32>,
     /// Inclusive range for a neuron's time constant. Small tau reacts, large tau
     /// integrates; the spread is what gives the brain a memory of any length.
     pub tau_min: f32,
@@ -298,6 +304,7 @@ pub struct ReproductionParams {
 #[serde(default, deny_unknown_fields)]
 pub struct MutationParams {
     pub structural: StructuralMutationParams,
+    pub organs: OrganMutationParams,
     /// Per-connection chance of a Gaussian nudge.
     ///
     /// **0.025 rather than the original 0.8.** With 240 founding connections, 0.8
@@ -370,6 +377,38 @@ impl StructuralMutationParams {
             && self.toggle_connection_rate == 0.0
             && self.add_connection_rate == 0.0
             && self.add_neuron_rate == 0.0
+    }
+}
+
+/// Sensor edits, disabled by default to preserve existing runs (spec section 3.3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OrganMutationParams {
+    pub remove_sensor_rate: f32,
+    pub add_sensor_rate: f32,
+    pub vision_weight: f32,
+    pub chemo_weight: f32,
+    pub energy_weight: f32,
+    /// Initial bias of fresh sensor-target neurons; tau uses the configured brain range.
+    pub neuron_bias: f32,
+}
+
+impl Default for OrganMutationParams {
+    fn default() -> Self {
+        Self {
+            remove_sensor_rate: 0.0,
+            add_sensor_rate: 0.0,
+            vision_weight: 1.0,
+            chemo_weight: 1.0,
+            energy_weight: 1.0,
+            neuron_bias: 0.0,
+        }
+    }
+}
+
+impl OrganMutationParams {
+    pub fn is_disabled(&self) -> bool {
+        self.remove_sensor_rate == 0.0 && self.add_sensor_rate == 0.0
     }
 }
 
@@ -543,7 +582,7 @@ impl SimParams {
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
-    /// | `sensing.vision_rays`, `brain.hidden_neurons`, `brain.oscillators` | the founding template and its fan-in scales |
+    /// | founder sensor counts, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
     /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
     /// read once when the larder is stocked. Refusing is the honest answer for all of
@@ -593,8 +632,11 @@ impl SimParams {
             ),
             (
                 next.sensing.vision_rays != self.sensing.vision_rays
+                    || next.sensing.chemo_sensors != self.sensing.chemo_sensors
+                    || next.sensing.energy_sensors != self.sensing.energy_sensors
                     || next.brain.hidden_neurons != self.brain.hidden_neurons
-                    || next.brain.oscillators != self.brain.oscillators,
+                    || next.brain.oscillators != self.brain.oscillators
+                    || next.brain.connections_per_target != self.brain.connections_per_target,
                 "the founding topology is fixed for the life of a world",
             ),
             (
@@ -792,9 +834,47 @@ impl SimParams {
                 "mutation.structural.split_input_weight must be finite and within weight_limit when splitting is enabled",
             ));
         }
+        let organs = &self.mutation.organs;
+        for (rate, message) in [
+            (
+                organs.remove_sensor_rate,
+                "mutation.organs.remove_sensor_rate must be in [0, 1]",
+            ),
+            (
+                organs.add_sensor_rate,
+                "mutation.organs.add_sensor_rate must be in [0, 1]",
+            ),
+        ] {
+            if !(0.0..=1.0).contains(&rate) {
+                return Err(ParamError(message));
+            }
+        }
+        let weights = [
+            organs.vision_weight,
+            organs.chemo_weight,
+            organs.energy_weight,
+        ];
+        if weights
+            .iter()
+            .any(|&weight| !weight.is_finite() || weight < 0.0)
+        {
+            return Err(ParamError(
+                "mutation.organs modality weights must be finite and non-negative",
+            ));
+        }
+        if organs.add_sensor_rate > 0.0 && weights.iter().all(|&weight| weight == 0.0) {
+            return Err(ParamError(
+                "mutation.organs needs a positive modality weight when addition is enabled",
+            ));
+        }
+        if !organs.neuron_bias.is_finite() {
+            return Err(ParamError("mutation.organs.neuron_bias must be finite"));
+        }
         // Structural edits can leave a target with fan-in one. The scalar control
         // must still be able to redraw its full two-sided interval (spec section 3.3).
-        if !structural.is_disabled() && !(2.0 * self.brain.weight_init_scale).is_finite() {
+        if (!structural.is_disabled() || !organs.is_disabled())
+            && !(2.0 * self.brain.weight_init_scale).is_finite()
+        {
             return Err(ParamError(
                 "brain.weight_init_scale must have a finite two-sided range when structural mutation is enabled",
             ));
@@ -910,6 +990,8 @@ impl Default for SensingParams {
             vision_range: 60.0,
             vision_fov: 0.5,
             vision_rays: 3,
+            chemo_sensors: 1,
+            energy_sensors: 1,
             chemo_radius: 40.0,
         }
     }
@@ -920,6 +1002,7 @@ impl Default for BrainParams {
         Self {
             hidden_neurons: 6,
             oscillators: 2,
+            connections_per_target: None,
             tau_min: 0.05,
             tau_max: 2.0,
             oscillator_period_min: 10.0,
@@ -946,6 +1029,7 @@ impl Default for MutationParams {
     fn default() -> Self {
         Self {
             structural: StructuralMutationParams::default(),
+            organs: OrganMutationParams::default(),
             weight_perturb_rate: 0.025,
             weight_perturb_sigma: 0.15,
             weight_reset_rate: 0.0015625,

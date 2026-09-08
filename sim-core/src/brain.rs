@@ -475,7 +475,7 @@ mod tests {
     /// neurons that pin.
     fn settled_founders(params: &SimParams, seeds: u64) -> (f32, f32) {
         let mut next = 0u32;
-        let plan = FounderPlan::new(params, || {
+        let plan = FounderPlan::new(params, &mut Rng::from_seed(0), || {
             next += 1;
             InnovationId::new(next - 1)
         })
@@ -549,7 +549,7 @@ mod tests {
     fn compiling_the_same_genome_twice_gives_the_same_brain() {
         let params = SimParams::default();
         let mut next = 0u32;
-        let plan = FounderPlan::new(&params, || {
+        let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             next += 1;
             InnovationId::new(next - 1)
         })

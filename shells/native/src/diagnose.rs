@@ -108,6 +108,24 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
                 cohort.name()
             ));
         }
+        for operator in ["remove_sensor", "add_sensor"] {
+            if samples.is_empty()
+                || samples.iter().any(|sample| {
+                    select(sample, cohort)
+                        .structural_mutations
+                        .and_then(|counts| match operator {
+                            "remove_sensor" => counts.remove_sensor,
+                            _ => counts.add_sensor,
+                        })
+                        .is_none()
+                })
+            {
+                unavailable.push(format!(
+                    "complete {operator} sensor-mutation counts for {} are unavailable: legacy or unobserved sampling does not establish zero edits",
+                    cohort.name()
+                ));
+            }
+        }
         if samples.is_empty()
             || samples
                 .iter()
@@ -146,13 +164,7 @@ fn diagnose_cohort(
     {
         diagnose_storage(*tick, sample, &mut findings);
     }
-    if let Some((tick, sample)) = metrics
-        .iter()
-        .rev()
-        .find(|(_, sample)| sample.structural_mutations.is_some())
-    {
-        diagnose_structural_mutations(*tick, sample, &mut findings);
-    }
+    diagnose_structural_mutations(&metrics, &mut findings);
 
     if let Some((index, (tick, _))) = metrics
         .iter()
@@ -392,43 +404,65 @@ fn diagnose_storage(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding
     }
 }
 
-fn diagnose_structural_mutations(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding>) {
-    let Some(counts) = sample.structural_mutations else {
-        return;
-    };
-    for (operator, counts) in [
-        ("remove_connection", counts.remove_connection),
-        ("remove_neuron", counts.remove_neuron),
-        ("toggle_connection", counts.toggle_connection),
-        ("add_connection", counts.add_connection),
-        ("add_neuron", counts.add_neuron),
+fn diagnose_structural_mutations(metrics: &[(u64, &WorldMetrics)], findings: &mut Vec<Finding>) {
+    let mut observed = [false; 7];
+    for &(tick, sample) in metrics.iter().rev() {
+        let Some(counts) = sample.structural_mutations else {
+            continue;
+        };
+        for (index, (operator, counts)) in [
+            ("remove_sensor", counts.remove_sensor),
+            ("add_sensor", counts.add_sensor),
+            ("remove_connection", Some(counts.remove_connection)),
+            ("remove_neuron", Some(counts.remove_neuron)),
+            ("toggle_connection", Some(counts.toggle_connection)),
+            ("add_connection", Some(counts.add_connection)),
+            ("add_neuron", Some(counts.add_neuron)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let Some(counts) = counts else { continue };
+            if observed[index] {
+                continue;
+            }
+            observed[index] = true;
+            diagnose_mutation_limits(tick, operator, counts, findings);
+        }
+    }
+}
+
+fn diagnose_mutation_limits(
+    tick: u64,
+    operator: &str,
+    counts: sim_core::mutate::OperatorCounts,
+    findings: &mut Vec<Finding>,
+) {
+    for (code, count, cause) in [
+        (
+            "structural_genome_limit",
+            counts.genome_limit,
+            "a structural candidate edit exceeded a per-genome gene, neuron, connection, sensor, or vision-ray cap; aggregate arena capacity does not remove this limit",
+        ),
+        (
+            "structural_scratch_limit",
+            counts.scratch_limit,
+            "a structural candidate edit exceeded preallocated mutation scratch capacity",
+        ),
+        (
+            "structural_innovation_exhausted",
+            counts.innovation_exhausted,
+            "a structural candidate edit could not obtain fresh innovation IDs; energy and arena allowances cannot restore IDs",
+        ),
     ] {
-        for (code, count, cause) in [
-            (
-                "structural_genome_limit",
-                counts.genome_limit,
-                "a structural candidate edit exceeded a per-genome cap; aggregate arena capacity does not remove this limit",
-            ),
-            (
-                "structural_scratch_limit",
-                counts.scratch_limit,
-                "a structural candidate edit exceeded preallocated mutation scratch capacity",
-            ),
-            (
-                "structural_innovation_exhausted",
-                counts.innovation_exhausted,
-                "a structural candidate edit could not obtain fresh innovation IDs; energy and arena allowances cannot restore IDs",
-            ),
-        ] {
-            if count > 0 {
-                findings.push(Finding {
+        if count > 0 {
+            findings.push(Finding {
                     code,
                     signal: format!(
                         "{operator}: {count} cumulative refused candidate edits through tick {tick}; these are not spawn refusals"
                     ),
                     likely_causes: vec![cause],
                 });
-            }
         }
     }
 }
@@ -736,6 +770,100 @@ mod tests {
                 .random_control
                 .iter()
                 .any(|finding| finding.code.starts_with("structural_"))
+        );
+    }
+
+    #[test]
+    fn organ_observation_availability_is_per_operator_and_cohort() {
+        use sim_core::mutate::{OperatorCounts, StructuralMutationCounts};
+
+        let mut samples = [sample(0, 1, 1), sample(1_000, 1, 1)];
+        for sample in &mut samples {
+            sample.evolving.structural_mutations = Some(StructuralMutationCounts {
+                remove_sensor: None,
+                ..Default::default()
+            });
+            sample.random_control.structural_mutations = Some(StructuralMutationCounts {
+                add_sensor: None,
+                ..Default::default()
+            });
+        }
+        samples[1]
+            .evolving
+            .structural_mutations
+            .as_mut()
+            .unwrap()
+            .add_sensor = Some(OperatorCounts {
+            attempted: 6,
+            genome_limit: 1,
+            scratch_limit: 2,
+            innovation_exhausted: 3,
+            ..Default::default()
+        });
+        let report = diagnose(&header(1_000), &samples);
+        for (operator, cohort, unavailable) in [
+            ("remove_sensor", "evolving", true),
+            ("add_sensor", "evolving", false),
+            ("remove_sensor", "scalar control", false),
+            ("add_sensor", "scalar control", true),
+        ] {
+            assert_eq!(
+                report.unavailable.iter().any(|reason| reason
+                    .contains(&format!("{operator} sensor-mutation counts for {cohort}"))),
+                unavailable
+            );
+        }
+        for code in [
+            "structural_genome_limit",
+            "structural_scratch_limit",
+            "structural_innovation_exhausted",
+        ] {
+            let finding = report
+                .evolving
+                .iter()
+                .find(|finding| finding.code == code)
+                .unwrap();
+            assert!(finding.signal.starts_with("add_sensor:"));
+            assert!(finding.signal.contains("not spawn refusals"));
+        }
+        assert!(
+            !report
+                .random_control
+                .iter()
+                .any(|finding| finding.code.starts_with("structural_"))
+        );
+    }
+
+    #[test]
+    fn later_missing_organ_counts_do_not_erase_observed_pressure() {
+        use sim_core::mutate::{OperatorCounts, StructuralMutationCounts};
+
+        let mut samples = [sample(0, 1, 1), sample(1_000, 1, 1)];
+        samples[0].evolving.structural_mutations = Some(StructuralMutationCounts {
+            add_sensor: Some(OperatorCounts {
+                attempted: 1,
+                genome_limit: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        samples[1].evolving.structural_mutations = Some(StructuralMutationCounts {
+            add_sensor: None,
+            ..Default::default()
+        });
+        let report = diagnose(&header(1_000), &samples);
+        let pressure = report
+            .evolving
+            .iter()
+            .find(|finding| finding.code == "structural_genome_limit")
+            .unwrap();
+        assert!(pressure.signal.contains("add_sensor: 1"));
+        assert!(pressure.signal.contains("through tick 0;"));
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("add_sensor sensor-mutation counts for evolving"))
         );
     }
 

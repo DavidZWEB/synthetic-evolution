@@ -56,8 +56,8 @@
   <label>
     heredity
     <select
-      title="Scalar control inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth."
-      aria-description="Scalar control inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth."
+      title="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth."
+      aria-description="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth."
       value={brainInheritance}
       onchange={(event) => onbraininheritance(event.currentTarget.value)}
     >

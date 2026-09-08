@@ -5,8 +5,8 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M2 neural structural mutation is implemented under its approved operator
-and scalar-control contract.** Distance/deletion-default calibration, the actual
+**Status: M3 sensor mutation and configurable founders are implemented under their
+approved contract.** Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -21,10 +21,10 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 and M2 operator/scalar-control contracts approved; later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 and M2-M3 operator/founder/control contracts approved; later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
-| M3 Sensors and founders | Sensor operators and configurable founder composition | M2 | not started |
+| M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
@@ -154,14 +154,14 @@ world-owned innovation IDs and reusable scratch. Keep scalar mutation behavior
 unchanged initially. Zero structural rates must consume no extra random draws and
 must preserve the Phase 1 trajectory.
 
-| Operator | Contract (neural operators approved; sensor details remain M3) |
+| Operator | Approved contract |
 |---|---|
 | Add connection | Join existing neurons; recurrence/self-connections are legal. Do not add duplicate endpoint pairs; a retained disabled edge is re-enabled with its existing ID. |
 | Remove connection | Physically delete a selected connection. This is distinct from disabling it, which retains its innovation and storage/metabolic cost. |
 | Enable/disable connection | Toggle retained wiring without changing its ID. |
 | Add neuron | Split an enabled connection: retain it disabled, add a sigmoid neuron and two fresh-ID connections atomically. Bias/incoming weight default to configurable 0/1; tau uses the existing founder range, and outgoing weight is inherited. A CTRNN split is not assumed behavior-neutral. |
 | Remove neuron | Remove an eligible non-oscillator neuron plus incident connections. Protect sensor targets and effector sources; removing an organ is a separate operator. Preserve the always-present oscillator scaffold in spec section 3.2. |
-| Add sensor | Add a supported modality plus one fresh target neuron per channel atomically. New channels become useful through the connection operator; they must be reachable from a sensor-poor founder. |
+| Add sensor | Choose the configured modality mixture and add one fresh target neuron per channel atomically, with no automatic wiring. New channels can gain connections in the following neural pass. |
 | Remove sensor | Remove the sensor gene, leaving its target neurons coherent and available to the neural operators (spec section 2.2c). |
 
 **Physical deletion and D4 must be approved together.** Deleting an edge discards its
@@ -400,6 +400,15 @@ sequence while preserving zero-rate RNG behavior. Extract shared bounded-edit
 helpers only when both implementations need them. Do not create an unused organ
 module or placeholder operators ahead of that work.
 
+**Approved M3 sequence and defaults:** remove sensor, add sensor, then the existing
+five neural operators. Both organ rates initially remain zero. Vision/food-chemo/
+energy selection weights start equal; initialization uses existing sensing ranges,
+random vision azimuth, zero elevation, a configurable zero target-neuron bias and the
+existing tau range. Removing an organ does not remove its neurons or connections.
+The scalar control runs both edit families and then redraws neural scalars, not
+sensor parameters; schema/protocol metadata must distinguish legacy missing organ
+observations from observed zeros.
+
 Implement D2's sensor operators for vision, chemo, and energy interoception only.
 Constrain sensor parameters to supported channels and the configured spatial-query
 envelope; retain zero elevation. Sensor count/ray caps must be separate from the
@@ -407,6 +416,11 @@ founder's starting counts.
 
 Make founder sensor counts, hidden/oscillator counts, and initial connectivity
 runtime configuration. Reuse the current fan-in scaling and shared founder IDs.
+Keep legacy count locations and add chemo/energy counts alongside vision, plus
+`brain.connections_per_target`: absent/full means dense, zero means no edges, and a
+positive count samples distinct inputs per hidden/output target. Sparse wiring is
+chosen once per world after plant seeding, without moving food geography. Exact
+counts and constructor accounting must agree with every supported configuration.
 Retain thrust, turn, ingest, and brain-gated reproduce: "minimal" must not remove
 reproduction simply because section 3.3's illustrative list abbreviates the loop.
 Keep body/meta hedges. The current dense founder remains a reproducible baseline;
@@ -418,6 +432,27 @@ load. Deterministic edit sequences demonstrate that a sensor-poor founder can ac
 an eye and connect it to effectors. This proves reachability, not evolved usefulness.
 Counts, scratch, compiled sensors, inspection, and parameter validation all agree
 for sparse, dense, and zero-vision founders.
+
+**Delivered:** bounded sensor removal/addition precedes the neural pass in both
+heredity modes. Fresh channels receive fresh target neurons without automatic
+wiring; removal retains neurons and connections. Public spawn admission checks
+sensor parameters against the actual allocated sensing envelope, including after
+safe range reductions. Combined organ/neural births exercise perception, complexity
+costs, refusal atomicity, and allocation-free ticking.
+
+Founder chemo/energy counts and optional incoming-edge counts now select exact
+template sizes. A no-eye, one-chemoreceptor, zero-hidden/oscillator profile with one
+input per effector has 23 genes, 7 neurons, and 4 connections. Dense and explicitly
+saturated connectivity retain the earlier draw order; sparse topology is sampled
+once after plants and reused by every founder. The accepted dense default remains
+unchanged.
+
+Schema 5 / phase 2 / `randomized_at_birth_v3` records sensor-aware scalar control.
+Schemas 3 and 4 remain explicitly readable, with unavailable historical organ
+observations kept distinct from measured zeros. WASM inspection/diagnostics and
+browser URL sharing support the new shapes. Reachable eye acquisition and wiring
+are demonstrated mechanisms, not evidence that selection finds them useful; M8
+owns viability and structural-null experiments.
 
 ## M4 - Genetic distance and species assignment
 
