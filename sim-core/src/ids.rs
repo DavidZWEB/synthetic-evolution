@@ -115,6 +115,12 @@ define_id! {
 }
 
 define_id! {
+    /// Monotonic classification identity, never a reusable storage or agent slot.
+    /// Retired species IDs are not resurrected (spec §3.4).
+    SpeciesId
+}
+
+define_id! {
     /// Slot in the parts arena. Every agent has exactly one part at its origin in V1;
     /// the indirection exists so Phase 5 morphology is an unlock, not a rewrite
     /// (spec §9.1).

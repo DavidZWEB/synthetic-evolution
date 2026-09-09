@@ -400,10 +400,9 @@ allocation-free, deterministic, and consumes no RNG.
 
 This first slice supplies measurement only: it does not assign species, introduce
 a threshold, or change trajectories. Coefficients may be supplied through existing
-JSON configuration and retuned while classification is absent; classification-time
-retuning policy, thresholds, representative storage, and extinction/overflow
-semantics remain separate approval gates. The provisional threshold in §5.5 is not
-yet implemented or calibrated.
+JSON configuration and retuned while World classification is absent. The standalone
+classifier follows the approved policy below; World integration and a shipped
+threshold remain pending. The provisional threshold in §5.5 is not calibrated.
 
 This measures retained innovation history, not functional wiring equality. Physical
 deletion discards an ancestry marker: independently recreating the same connection
@@ -413,6 +412,46 @@ shared origin. Phase 2 must review deletion policy and distance interpretation
 together, measuring deletion/recreation against retention/toggling and the resulting
 cluster changes before approving nonzero shipped physical-removal rates. Extra
 species labels caused by marker turnover are not evidence of useful divergence.
+
+**DECIDED for M4 species classification:** compare each successfully admitted founder
+or newborn with immutable copies of active species representatives. Choose the
+nearest representative with `distance < threshold`, breaking exact ties by the
+lowest species ID; otherwise create a fresh species. Founders use this same rule,
+not a forced root species. Membership is fixed for the individual's lifetime.
+The classifier consumes no RNG and has no effects on reproduction or energy.
+
+Representatives are owned copies, retained until the last member leaves. Retire
+immediately at zero members and emit extinction exactly once. Preserve §2.4's
+existing deaths-before-births implementation order and agent-index resolution;
+after extinction, even identical recolonizing genomes receive new IDs. Species IDs
+are monotonic u32 newtypes, starting at zero, excluding NULL and never reused.
+
+The approved initial capacity is 256 representative slots, each reserving up to
+`storage.max_genes`. At the current 1,024-gene cap this is 10 MiB of gene storage
+plus metadata, independent of representative length; full equal-size reservations
+avoid fragmentation failures. Include all classifier buffers in the core-construction
+budget when integrating with World. Capacity and the gene cap are configurable;
+zero capacity leaves all agents unclassified without allocating classifier buffers.
+
+Storage or ID exhaustion must never deny an otherwise valid birth or merge it into
+an incompatible species. Return an explicit unclassified outcome, retain no member
+for that outcome, and still allow matches to existing species when creation is
+exhausted. Do not later relabel unclassified individuals; classify their descendants
+independently. Report unclassified totals separately so active-species totals plus
+unclassified population account for the whole population. Oversized standalone inputs
+and unrepresentable membership counts also have explicit, atomic refusal outcomes.
+
+Freeze distance coefficients, threshold, capacity, and representative gene limit for
+the life of a classifier. Thresholds must be finite and positive; no automatic
+threshold adjustment or target species count is introduced. **Approved staging:**
+the first classifier slice accepts explicit constructor configuration and a supplied
+memory budget, but does not modify World, telemetry, or hashes. A later integration
+slice will put classification configuration in `SimParams`, freeze its live retunes,
+wire birth/death and unclassified accounting, and cover authoritative classifier
+state in hashing. A shipped threshold still requires approval; the provisional 3.0
+is above the structural-only maximum of 2 under the current coefficients.
+Retained ancestry/history remains M5 work; this component returns synchronous
+assignment and departure outcomes rather than owning an event archive.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.

@@ -96,6 +96,20 @@ fn a_default_world_stays_inside_its_declared_core_budget() {
 }
 
 #[test]
+fn standalone_species_estimate_covers_all_requested_buffers_exactly() {
+    use sim_core::species::Classifier;
+    let params = SimParams::default();
+    let bytes = Classifier::estimated_construction_bytes(256, params.storage.max_genes).unwrap();
+    take();
+    let classifier =
+        Classifier::try_new(256, params.storage.max_genes, 0.5, params.distance, bytes).unwrap();
+    let requested = take() as u64;
+    assert_eq!(requested, bytes);
+    assert_eq!(requested, 10_492_936);
+    std::hint::black_box(classifier);
+}
+
+#[test]
 fn estimate_covers_nondefault_constructor_shapes() {
     type Profile = fn(&mut SimParams);
     let profiles: [Profile; 11] = [

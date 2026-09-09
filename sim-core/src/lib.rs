@@ -36,6 +36,7 @@ pub mod rng;
 pub mod snapshot;
 pub mod spatial;
 pub mod spawn;
+pub mod species;
 pub mod state_hash;
 mod storage;
 pub mod tick;

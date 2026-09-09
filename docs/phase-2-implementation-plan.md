@@ -5,8 +5,8 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M3 is complete; M4's approved genetic-distance foundation is implemented.**
-Species policy and distance/deletion-default calibration, the actual
+**Status: M4's distance foundation and approved standalone classifier are implemented.**
+The shipped species threshold, World integration, distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -21,11 +21,11 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3 contracts, and D4 distance foundation approved; species/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3, D4 distance and D5 classifier contracts approved; shipped threshold/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
-| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | distance foundation implemented; classification policy still pending |
+| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | distance and standalone classifier implemented; World integration pending |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
@@ -247,8 +247,8 @@ equality. There is no implicit small-genome normalization heuristic.
 
 **Approved staging:** implement the allocation-free distance components and weighted
 comparison first, without species assignment or changed trajectories. Coefficients
-are runtime JSON configuration; the threshold and D5 classification/storage policies
-remain gated for the subsequent slice. The provisional §5.5 threshold is not a
+are runtime JSON configuration; D5's classifier contract is now approved below,
+while the shipped threshold and World integration remain pending. The provisional §5.5 threshold is not a
 calibrated default. Use f64 arithmetic on finite f32 weights/coefficients to avoid
 overflow at valid representation extremes.
 
@@ -263,26 +263,39 @@ effect; either would be another mutation/ancestry design choice.
 
 ### D5 - Stable species, not labels that change every frame
 
-**Recommendation:** classify founders and newborns against immutable representative
+**Approved:** classify successfully admitted founders and newborns against immutable representative
 genomes of active species. Select the nearest compatible representative with
 `distance < threshold`, breaking ties by ascending species ID; otherwise create a
 fresh species ID. Process births/deaths in the existing agent-index order and do
 not consume simulation RNG for representatives or colors.
 
 Membership stays fixed for an individual's lifetime, consistent with its immutable
-genome. Representatives must outlive the original representative agent. Retire an
-active species when its last member dies; historical IDs are never reused. Specify
-same-tick extinction/recolonization and root-species creation explicitly.
+genome. Representatives outlive the original representative agent. Retire immediately
+when the last member dies; historical IDs are never reused or resurrected. Preserve
+the existing deaths-before-births order: later same-tick recolonization gets a fresh
+ID. Founders use the ordinary nearest-representative rule, without a forced root.
 
-Representatives need their own bounded storage; never borrow a live agent's arena
-handle after death. Since this is observational in the asexual phase, running out
-of classification storage must not prevent reproduction. Approve either a capacity
-guarantee covering every active species or an explicit unavailable-classification
-state; silently merging incompatible species is not acceptable.
+Representatives use their own bounded storage, never a borrowed live-genome handle.
+The approved starting policy is 256 slots, each reserving `storage.max_genes`, with
+all buffers charged to the core-construction budget at World integration. Equal-size
+full reservations guarantee per-representative space without fragmentation; capacity
+can be configured down to zero.
 
-Coefficients, threshold, and resource limits are configuration, not adaptive knobs
-that chase a desired species count. Define whether they require a new run; the
-recommendation is construction-time configuration for stable historical meaning.
+Exhausted new-species storage or IDs produces an explicit unclassified newborn, not
+a denied ecological birth or a forced match. Existing compatible species remain
+usable. Do not later relabel unclassified individuals; classify their descendants
+independently. The integration must expose unclassified totals separately. IDs are
+monotonic u32 newtypes, starting at zero, excluding NULL; failure consumes no ID.
+
+Coefficients, finite positive threshold, and resource limits are fixed at classifier
+construction, not adaptive knobs that chase a species count. Once World owns a
+classifier, changing those values requires a new run.
+
+**Approved next slice:** implement and exercise the standalone classifier first,
+with an explicit threshold and construction budget. Defer World/telemetry integration
+and authoritative classifier hashing to a subsequent attributable change. No shipped
+threshold has been chosen: the spec's provisional 3.0 exceeds the structural-only
+maximum distance of 2 under the current coefficients.
 
 ### D6 - Persistent ancestry without unbounded tick allocation
 
@@ -475,6 +488,12 @@ value. `SimParams.distance` admits configurable coefficients without a species
 threshold or changes to world dynamics. Hand-worked and native/WASM comparisons
 separate deletion/recreation history from retained-ID toggling; classification and
 the remaining acceptance criteria below are not delivered by that measurement alone.
+
+**Standalone classifier delivered:** owned immutable representatives, nearest/strict
+threshold assignment, historical-ID tie-breaking, counted membership and exact-once
+retirement, bounded storage/ID outcomes, and checked standalone construction accounting.
+It accepts explicit configuration and does not yet replace World's placeholder species
+IDs, add population telemetry, freeze World's distance retunes, or change hashes.
 
 Implement D4/D5 as separate systems with world-owned state. Reuse innovation
 alignment conventions without coupling classification to crossover. No mating,
