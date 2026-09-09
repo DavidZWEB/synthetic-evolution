@@ -12,6 +12,7 @@ use crate::ids::{NULL_ID, SpeciesId};
 use crate::params::{DistanceParams, ParamError};
 
 mod events;
+mod hash;
 pub use events::{SpeciesEvent, SpeciesEventCounts};
 
 #[derive(Debug)]

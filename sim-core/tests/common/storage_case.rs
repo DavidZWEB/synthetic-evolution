@@ -8,9 +8,9 @@ use sim_core::genome::{Activation, BodyTrait, Gene, NeuronGene, body_trait};
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{AgentId, Rng, SimParams, SpawnSpec, World};
 
-// M3 coverage-only refresh: include the retained founder template (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x6d4c_85c6_4a63_d47a;
-pub const CONTROL_GOLDEN: u64 = 0x9c6a_5afa_b793_47ec;
+// M4 coverage-only refresh: include full classifier state (spec section 7.8).
+pub const EVOLVING_GOLDEN: u64 = 0xd24c_2bd2_19c7_9add;
+pub const CONTROL_GOLDEN: u64 = 0x4955_91ce_4b2b_95f7;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();

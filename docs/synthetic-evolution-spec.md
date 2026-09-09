@@ -926,6 +926,10 @@ and sensor edits, bounded refusals, births, slot reuse, and continued stepping i
 both heredity modes. The M3 case starts from a sparse chemo-only founder; it proves
 cross-target mechanism agreement, not ecological viability.
 
+M4's [`species_world_case.rs`](../sim-core/tests/common/species_world_case.rs) pins
+plant-funded classified births, same-tick retirement/recolonization, unclassified
+command admissions, and later storage/slot reuse in both heredity modes.
+
 `state_hash` folds world state, including positions, energies, genomes, recurrent neural
 state, future slot-allocation order, variable-arena capacities/free spans and live
 handle placement, the retained founder template, RNG state, and tick. Allocator layout
@@ -933,6 +937,18 @@ matters because freeing an agent changes fragmentation and later birth success.
 Sparse founder wiring is sampled once and reused by later founder commands; current
 RNG state cannot substitute for that cached template. M3's separate reference refresh
 adds this coverage without changing trajectories or shipped defaults.
+
+Full classifier coverage includes its frozen coefficients/threshold/capacities, next
+species ID, active membership counts, owned representative genomes, reservation
+handles and allocator metadata, plus World's unclassified population. This is
+authoritative future classification state, unlike shell-owned observation counters.
+Unused tails of full representative reservations and freed payload remain irrelevant.
+M4 separates the initial live-species-label metadata update (which moves the organ
+control reference) from the subsequent full classifier-coverage refresh. Neither
+changes ecology or RNG. A test-only ecological fingerprint masks classification
+metadata while retaining every ecological field and RNG position; several seeds
+and both heredity modes must agree with classification enabled or disabled.
+
 Stale free-space payload and
 optional observer counters are not authoritative. A behavior-changing refactor
 must not silently move the reference; an intended behavior change requires a deliberate,

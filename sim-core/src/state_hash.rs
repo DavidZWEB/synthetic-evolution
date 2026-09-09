@@ -92,7 +92,7 @@ impl Fnv1a {
     }
 }
 
-fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
+pub(crate) fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
     // The discriminant first, so a neuron and a connection holding the same numbers
     // cannot collide.
     match gene {
@@ -145,7 +145,7 @@ fn fold_gene(h: &mut Fnv1a, gene: &Gene) {
     }
 }
 
-fn fold_arena<T: Copy + Default>(h: &mut Fnv1a, arena: &VariableArena<T>) {
+pub(crate) fn fold_arena<T: Copy + Default>(h: &mut Fnv1a, arena: &VariableArena<T>) {
     h.u32(arena.capacity());
     h.u32(arena.live_blocks());
     h.u32(arena.free_elements());
@@ -319,6 +319,11 @@ impl World {
         h.u32(self.plan.genes().len() as u32);
         for gene in self.plan.genes() {
             fold_gene(&mut h, gene);
+        }
+
+        if include_classification {
+            self.classifier.fold_state(&mut h);
+            h.u32(self.unclassified);
         }
 
         // First-fit placement affects which later births fit, even when every live

@@ -36,6 +36,14 @@ mod distance_case;
 #[path = "../../../sim-core/tests/common/species_case.rs"]
 mod species_case;
 
+#[path = "../../../sim-core/tests/common/species_world_case.rs"]
+mod species_world_case;
+
+#[wasm_bindgen_test]
+fn classified_world_agrees_with_native_in_both_modes() {
+    species_world_case::check_classified_world_runs();
+}
+
 #[wasm_bindgen_test]
 fn standalone_species_agree_with_native() {
     species_case::check_species_cases();

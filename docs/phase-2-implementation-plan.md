@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M4 World integration is in progress with the approved provisional threshold 0.5.**
+**Status: M4 World integration is implemented with the approved provisional threshold 0.5.**
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -25,7 +25,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
-| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | distance and classifier done; World integration in progress |
+| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
@@ -497,13 +497,21 @@ retirement, bounded storage/ID outcomes, and checked standalone construction acc
 Its original slice accepted explicit configuration without replacing World's
 placeholder species IDs, adding population telemetry, or changing hashes.
 
-**World integration in progress:** shared admission/death paths own membership,
+**World integration delivered:** shared admission/death paths own membership,
 unclassified individuals remain explicit, and optional events reach native/WASM
 observers including command-driven admissions. Schema 6 and browser status/inspection
 expose real populations while preserving honest legacy unavailability. Species and
 distance configuration are frozen, with representative buffers inside the existing
 core budget. Classification-on/off comparisons across multiple seeds and both
 heredity modes guard unchanged ecological state and RNG.
+
+**Separate classifier hash coverage:** frozen policy, next IDs, active representatives,
+membership, reservation placement, and current unclassified population are included.
+The integration commit moves only the organ-control reference for its live species
+labels; the following coverage-only commit refreshes the references for the added
+state. A shared classified-World scenario covers plant-funded births, same-tick
+retirement/recolonization, unclassified commands, and later storage reuse on native
+and WASM. These are mechanism guarantees, not ecological acceptance.
 
 Implement D4/D5 as separate systems with world-owned state. Reuse innovation
 alignment conventions without coupling classification to crossover. No mating,

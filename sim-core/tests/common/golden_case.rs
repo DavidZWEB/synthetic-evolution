@@ -14,15 +14,19 @@
 //! Phase 2 M3 refreshes them again solely to cover the cached founder template.
 //! Sparse wiring survives RNG advancement and affects later founder commands.
 //! The preceding M3 implementation commit preserves the old reference values.
+//!
+//! M4's classifier-state coverage refresh follows a separate species-label metadata
+//! integration commit. It adds frozen policy, future IDs, representatives, membership,
+//! and allocation state without changing ecological dynamics.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x4467_ed0e_d1d7_3fc7;
+pub const SHIPPED_GOLDEN: u64 = 0x5b95_e09e_d104_4881;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0xbdaa_46f3_d3dd_1e86;
+pub const BREEDING_GOLDEN: u64 = 0xdbda_c853_7193_5d24;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;
