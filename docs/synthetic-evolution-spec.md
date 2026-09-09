@@ -378,6 +378,33 @@ Genetic distance (NEAT compatibility):
 δ = c1 * (disjoint / N) + c2 * (excess / N) + c3 * meanWeightDiff
 ```
 
+**DECIDED for M4's distance foundation:** align innovation-bearing genes by kind
+and ID, using the canonical gene order, without coupling the comparison to crossover.
+Within each kind, unmatched IDs beyond the other genome's maximum are excess and
+the remaining unmatched IDs are disjoint. If the other genome has no genes of that
+kind, all are excess. `N` is the larger total innovation-bearing gene count, with a
+minimum of one; there is no special small-genome normalization rule. Body/meta genes
+do not participate in these counts or in `N`.
+
+Average absolute weight differences over matching connections, including disabled
+ones; use zero when none match. Bias, tau, sensor parameters, bindings, enabled
+state, and body/meta values introduce no extra terms. Zero distance therefore does
+not imply full genome equality or functional equivalence.
+
+`SimParams.distance` holds finite, nonnegative f32 coefficients
+`disjoint_coefficient: 1.0`, `excess_coefficient: 1.0`, and `weight_coefficient: 0.4`.
+Widen weights before subtraction and evaluate the mean and weighted sum in f64,
+so all finite f32 weights and coefficients produce finite results. Expose raw
+components alongside the weighted value for later calibration. The comparison is
+allocation-free, deterministic, and consumes no RNG.
+
+This first slice supplies measurement only: it does not assign species, introduce
+a threshold, or change trajectories. Coefficients may be supplied through existing
+JSON configuration and retuned while classification is absent; classification-time
+retuning policy, thresholds, representative storage, and extinction/overflow
+semantics remain separate approval gates. The provisional threshold in §5.5 is not
+yet implemented or calibrated.
+
 This measures retained innovation history, not functional wiring equality. Physical
 deletion discards an ancestry marker: independently recreating the same connection
 with a fresh ID increases disjoint/excess distance against a retained-ID counterpart,
@@ -591,7 +618,7 @@ the absolutes are the **relationships**, which are stated alongside.
 | `chemo_decay` | 0.98 /tick per channel | Trails persist ~50 ticks; **make this per-channel** |
 | `chemo_diffuse` | 0.1 | Too high and every gradient flattens to zero |
 | `mutation_rate_init` | see §3.3 | Evolvable — this is only the seed value |
-| `speciation_threshold` | 3.0 | Tune until species count lands in the tens, not thousands |
+| `speciation_threshold` | 3.0 | Provisional; calibrate distance interpretation before species assignment, not toward a target species count |
 
 All of these live in a single `SimParams` struct, serde-serializable, settable at runtime from JS (§7.6). None are compile-time constants.
 

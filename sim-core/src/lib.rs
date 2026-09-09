@@ -15,6 +15,7 @@ pub mod chemo;
 pub mod command;
 pub mod control;
 pub mod crossover;
+pub mod distance;
 pub mod effectors;
 mod energy;
 pub mod feeding;

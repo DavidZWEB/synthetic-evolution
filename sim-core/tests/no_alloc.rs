@@ -84,6 +84,27 @@ fn the_counter_actually_counts() {
 }
 
 #[test]
+fn genetic_distance_never_allocates_or_changes_a_world() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 4;
+    params.plants.max_plants = 8;
+    let mut world = World::new(42, params).unwrap();
+    world.seed_founders(2);
+    let before = world.state_hash();
+    let observed = count_allocations(|| {
+        for _ in 0..100 {
+            std::hint::black_box(sim_core::distance::between(
+                world.genome(AgentId::new(0)),
+                world.genome(AgentId::new(1)),
+                &world.params().distance,
+            ));
+        }
+    });
+    assert_eq!(observed, 0, "distance allocated {observed} times");
+    assert_eq!(world.state_hash(), before);
+}
+
+#[test]
 fn variable_arena_churn_and_refusals_never_allocate() {
     let mut arena = VariableArena::<u32>::try_with_capacity(96, 8).unwrap();
     let mut limited = VariableArena::<u32>::try_with_capacity(8, 1).unwrap();

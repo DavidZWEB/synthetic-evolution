@@ -32,9 +32,51 @@ pub struct SimParams {
     pub brain: BrainParams,
     pub reproduction: ReproductionParams,
     pub mutation: MutationParams,
+    pub distance: DistanceParams,
     pub feeding: FeedingParams,
     pub plants: PlantParams,
     pub chemo: ChemoParams,
+}
+
+/// Typed-gene distance coefficients (spec §3.4), not a species or fitness policy.
+///
+/// M4's distance foundation can compare genomes but does not yet assign species.
+/// Thresholds and classification-time retuning rules belong to the later species slice.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DistanceParams {
+    pub disjoint_coefficient: f32,
+    pub excess_coefficient: f32,
+    pub weight_coefficient: f32,
+}
+
+impl Default for DistanceParams {
+    fn default() -> Self {
+        Self {
+            disjoint_coefficient: 1.0,
+            excess_coefficient: 1.0,
+            weight_coefficient: 0.4,
+        }
+    }
+}
+
+impl DistanceParams {
+    /// Also usable at boundaries that compare genomes without constructing a world.
+    pub fn validate(&self) -> Result<(), ParamError> {
+        if [
+            self.disjoint_coefficient,
+            self.excess_coefficient,
+            self.weight_coefficient,
+        ]
+        .iter()
+        .any(|&coefficient| !coefficient.is_finite() || coefficient < 0.0)
+        {
+            return Err(ParamError(
+                "distance coefficients must be finite and non-negative",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Construction-time storage policy (spec §2.2a).
@@ -569,6 +611,7 @@ impl SimParams {
     /// `chemo.diffuse`, `world.dt`, `world.founder_spread`, `plants` other than the two
     /// below, `sensing` ranges within the limit below, and the `brain` fields that are
     /// not topology (`tau_min`, `tau_max`, the oscillator periods, `weight_init_scale`).
+    /// `distance` coefficients are also editable while species classification is absent.
     /// That is the whole point of spec §7.6: tuning happens in the browser against a
     /// running population, not in the compiler.
     ///
@@ -668,6 +711,7 @@ impl SimParams {
     /// NaN, which is the shape a bad value arrives in from JSON.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn validate_values(&self) -> Result<(), ParamError> {
+        self.distance.validate()?;
         if !(self.world.size > 0.0) || !self.world.size.is_finite() {
             return Err(ParamError("world.size must be finite and positive"));
         }
@@ -1069,6 +1113,48 @@ impl Default for ChemoParams {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn distance_coefficients_validate_at_construction_and_retune_boundaries() {
+        type Change = fn(&mut DistanceParams, f32);
+        let fields: [Change; 3] = [
+            |p, v| p.disjoint_coefficient = v,
+            |p, v| p.excess_coefficient = v,
+            |p, v| p.weight_coefficient = v,
+        ];
+        let current = SimParams::default();
+        for change in fields {
+            for value in [-1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut next = current.clone();
+                change(&mut next.distance, value);
+                assert!(next.distance.validate().is_err());
+                assert!(next.validate().is_err());
+                assert!(current.check_retune(&next, 62.5).is_err());
+            }
+            for value in [0.0, f32::MAX] {
+                let mut next = current.clone();
+                change(&mut next.distance, value);
+                next.validate().unwrap();
+                current.check_retune(&next, 62.5).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn distance_coefficients_default_and_round_trip_in_partial_params() {
+        let legacy: SimParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(legacy.distance, DistanceParams::default());
+        let params: SimParams =
+            serde_json::from_str(r#"{"distance":{"weight_coefficient":0.75}}"#).unwrap();
+        assert_eq!(params.distance.disjoint_coefficient, 1.0);
+        assert_eq!(params.distance.excess_coefficient, 1.0);
+        assert_eq!(params.distance.weight_coefficient, 0.75);
+        assert_eq!(
+            serde_json::from_str::<SimParams>(&serde_json::to_string(&params).unwrap()).unwrap(),
+            params
+        );
+        assert!(serde_json::from_str::<SimParams>(r#"{"distance":{"threshold":1}}"#).is_err());
+    }
+
     /// Retuning policy, exercised without building a world — which is why it lives on
     /// `SimParams` rather than on `World`.
     mod retune {

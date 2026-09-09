@@ -347,6 +347,41 @@ construction-time frozen: changing them requires a new world/reseed, not
 genomes must fit the configured per-genome caps and construction budget. No full
 parameter editor or preset selector is introduced.
 
+### Genetic-distance foundation (M4)
+
+`sim_core::distance::between(a, b, &params.distance)` compares two validated,
+canonically sorted genomes without allocating or consuming RNG. Its result exposes
+the raw components and weighted value. It does not yet assign species or change
+reproduction, energy, or simulation trajectories.
+
+The existing native/WASM parameter JSON accepts:
+
+```json
+{
+  "distance": {
+    "disjoint_coefficient": 1.0,
+    "excess_coefficient": 1.0,
+    "weight_coefficient": 0.4
+  }
+}
+```
+
+Coefficients must be finite and nonnegative. Omitted values retain these defaults;
+there is no `threshold` field yet. They may be retuned while classification is absent;
+the species slice must establish its own historical-consistency policy. Standalone
+Rust callers validate genomes with `genome::validate` and coefficients with
+`DistanceParams::validate` before calling `between`.
+
+Distance aligns innovation-bearing genes within each kind and excludes body/meta
+traits from normalization. Matching disabled connections still contribute weights.
+Other scalar/binding differences add no terms. For a two-neuron, one-connection
+example at the starting coefficients, toggling that connection measures 0, deleting
+it measures 1/3, and recreating the identical wiring with a fresh ID measures 2/3
+against the retained original. These are historical-marker effects, not evidence of
+new species or useful divergence. Thresholds and deletion-default calibration remain
+pending. Telemetry schema/control identities are unchanged: no species or distance
+observations are being claimed by this foundation.
+
 ### Telemetry protocol and observations
 
 New output uses metrics schema **5**, `phase: 2`, and
