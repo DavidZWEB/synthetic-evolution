@@ -7,6 +7,7 @@
 use std::io;
 
 use serde::Serialize;
+use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOperator};
 
 use crate::Result;
 use crate::cli::DiagnoseArgs;
@@ -108,18 +109,19 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
                 cohort.name()
             ));
         }
-        for operator in ["remove_sensor", "add_sensor"] {
+        for operator in [
+            StructuralOperator::RemoveSensor,
+            StructuralOperator::AddSensor,
+        ] {
             if samples.is_empty()
                 || samples.iter().any(|sample| {
                     select(sample, cohort)
                         .structural_mutations
-                        .and_then(|counts| match operator {
-                            "remove_sensor" => counts.remove_sensor,
-                            _ => counts.add_sensor,
-                        })
+                        .and_then(|counts| operator_counts(operator, &counts))
                         .is_none()
                 })
             {
+                let operator = operator_name(operator);
                 unavailable.push(format!(
                     "complete {operator} sensor-mutation counts for {} are unavailable: legacy or unobserved sampling does not establish zero edits",
                     cohort.name()
@@ -404,40 +406,67 @@ fn diagnose_storage(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding
     }
 }
 
+fn operator_name(operator: StructuralOperator) -> &'static str {
+    match operator {
+        StructuralOperator::RemoveSensor => "remove_sensor",
+        StructuralOperator::AddSensor => "add_sensor",
+        StructuralOperator::RemoveConnection => "remove_connection",
+        StructuralOperator::RemoveNeuron => "remove_neuron",
+        StructuralOperator::ToggleConnection => "toggle_connection",
+        StructuralOperator::AddConnection => "add_connection",
+        StructuralOperator::AddNeuron => "add_neuron",
+    }
+}
+
+fn operator_counts(
+    operator: StructuralOperator,
+    counts: &StructuralMutationCounts,
+) -> Option<OperatorCounts> {
+    match operator {
+        StructuralOperator::RemoveSensor => counts.remove_sensor,
+        StructuralOperator::AddSensor => counts.add_sensor,
+        StructuralOperator::RemoveConnection => Some(counts.remove_connection),
+        StructuralOperator::RemoveNeuron => Some(counts.remove_neuron),
+        StructuralOperator::ToggleConnection => Some(counts.toggle_connection),
+        StructuralOperator::AddConnection => Some(counts.add_connection),
+        StructuralOperator::AddNeuron => Some(counts.add_neuron),
+    }
+}
+
 fn diagnose_structural_mutations(metrics: &[(u64, &WorldMetrics)], findings: &mut Vec<Finding>) {
-    let mut observed = [false; 7];
+    let mut operators = [
+        (StructuralOperator::RemoveSensor, false),
+        (StructuralOperator::AddSensor, false),
+        (StructuralOperator::RemoveConnection, false),
+        (StructuralOperator::RemoveNeuron, false),
+        (StructuralOperator::ToggleConnection, false),
+        (StructuralOperator::AddConnection, false),
+        (StructuralOperator::AddNeuron, false),
+    ];
     for &(tick, sample) in metrics.iter().rev() {
         let Some(counts) = sample.structural_mutations else {
             continue;
         };
-        for (index, (operator, counts)) in [
-            ("remove_sensor", counts.remove_sensor),
-            ("add_sensor", counts.add_sensor),
-            ("remove_connection", Some(counts.remove_connection)),
-            ("remove_neuron", Some(counts.remove_neuron)),
-            ("toggle_connection", Some(counts.toggle_connection)),
-            ("add_connection", Some(counts.add_connection)),
-            ("add_neuron", Some(counts.add_neuron)),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let Some(counts) = counts else { continue };
-            if observed[index] {
+        for (operator, observed) in &mut operators {
+            if *observed {
                 continue;
             }
-            observed[index] = true;
-            diagnose_mutation_limits(tick, operator, counts, findings);
+            let Some(counts) = operator_counts(*operator, &counts) else {
+                continue;
+            };
+            *observed = true;
+            diagnose_mutation_limits(tick, *operator, counts, findings);
         }
     }
 }
 
 fn diagnose_mutation_limits(
     tick: u64,
-    operator: &str,
-    counts: sim_core::mutate::OperatorCounts,
+    operator: StructuralOperator,
+    counts: OperatorCounts,
     findings: &mut Vec<Finding>,
 ) {
+    let operator = operator_name(operator);
     for (code, count, cause) in [
         (
             "structural_genome_limit",
@@ -865,6 +894,51 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("add_sensor sensor-mutation counts for evolving"))
         );
+    }
+
+    #[test]
+    fn all_mutation_operators_report_their_own_latest_observation() {
+        let pressure = |count| OperatorCounts {
+            attempted: count,
+            genome_limit: count,
+            ..Default::default()
+        };
+        let mut samples = [sample(0, 1, 1), sample(1_000, 1, 1)];
+        for (sample, offset) in samples.iter_mut().zip([0, 10]) {
+            sample.evolving.structural_mutations = Some(StructuralMutationCounts {
+                remove_sensor: Some(pressure(offset + 1)),
+                add_sensor: Some(pressure(offset + 2)),
+                remove_connection: pressure(offset + 3),
+                remove_neuron: pressure(offset + 4),
+                toggle_connection: pressure(offset + 5),
+                add_connection: pressure(offset + 6),
+                add_neuron: pressure(offset + 7),
+            });
+        }
+        let mut findings = Vec::new();
+        diagnose_structural_mutations(
+            &[(0, &samples[0].evolving), (1_000, &samples[1].evolving)],
+            &mut findings,
+        );
+        let expected = [
+            ("remove_sensor", 11),
+            ("add_sensor", 12),
+            ("remove_connection", 13),
+            ("remove_neuron", 14),
+            ("toggle_connection", 15),
+            ("add_connection", 16),
+            ("add_neuron", 17),
+        ];
+        assert_eq!(findings.len(), expected.len());
+        for (finding, (operator, count)) in findings.iter().zip(expected) {
+            assert_eq!(finding.code, "structural_genome_limit");
+            assert_eq!(
+                finding.signal,
+                format!(
+                    "{operator}: {count} cumulative refused candidate edits through tick 1000; these are not spawn refusals"
+                )
+            );
+        }
     }
 
     #[test]

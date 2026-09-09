@@ -85,6 +85,9 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         "legacy randomized_at_birth protocol cannot have nonzero structural mutation rates",
                     ).into());
                 }
+                // These are Phase 1's historical counts, not today's defaults.
+                // Changing serde's founder defaults will also require legacy decoding
+                // to restore these values for omitted fields; leave this guard fixed.
                 if next.schema_version < SCHEMA_VERSION
                     && (next.params.mutation.organs.remove_sensor_rate != 0.0
                         || next.params.mutation.organs.add_sensor_rate != 0.0
