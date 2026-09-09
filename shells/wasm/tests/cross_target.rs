@@ -39,6 +39,14 @@ mod species_case;
 #[path = "../../../sim-core/tests/common/species_world_case.rs"]
 mod species_world_case;
 
+#[path = "../../../sim-core/tests/common/birth_case.rs"]
+mod birth_case;
+
+#[wasm_bindgen_test]
+fn birth_identities_agree_with_native_in_both_modes() {
+    birth_case::check_birth_identity_runs();
+}
+
 #[wasm_bindgen_test]
 fn classified_world_agrees_with_native_in_both_modes() {
     species_world_case::check_classified_world_runs();

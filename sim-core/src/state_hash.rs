@@ -180,13 +180,13 @@ impl World {
         self.hash_state(true)
     }
 
-    /// Test-only legacy fingerprint: mask classification, not ecological state or RNG.
+    /// Test-only legacy fingerprint: mask classification/identity, not ecology or RNG.
     #[cfg(test)]
     pub(crate) fn ecology_hash(&self) -> u64 {
         self.hash_state(false)
     }
 
-    fn hash_state(&self, include_classification: bool) -> u64 {
+    fn hash_state(&self, include_metadata: bool) -> u64 {
         let mut h = Fnv1a::new();
 
         h.u64(self.tick_count());
@@ -208,6 +208,9 @@ impl World {
         // draw, and a hash that missed that would certify a run that was already wrong.
         h.u64(self.rng.state_fingerprint());
         h.u32(self.next_innovation);
+        if include_metadata {
+            h.u64(self.next_birth);
+        }
 
         let ledger = self.ledger();
         h.f64(ledger.input());
@@ -237,11 +240,16 @@ impl World {
             h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.age[i]);
-            h.u32(if include_classification {
+            h.u32(if include_metadata {
                 agents.species_id[i]
             } else {
                 0
             });
+            if include_metadata {
+                h.u64(agents.birth_id[i].raw());
+                h.u64(agents.parent_birth_a[i].raw());
+                h.u64(agents.parent_birth_b[i].raw());
+            }
             h.f32(agents.size[i]);
             h.u32(agents.parent_a[i]);
             h.u32(agents.parent_b[i]);
@@ -321,7 +329,7 @@ impl World {
             fold_gene(&mut h, gene);
         }
 
-        if include_classification {
+        if include_metadata {
             self.classifier.fold_state(&mut h);
             h.u32(self.unclassified);
         }
@@ -356,6 +364,37 @@ mod tests {
     use super::*;
     use crate::params::SimParams;
     use glam::Vec3;
+
+    #[test]
+    fn birth_counter_and_all_three_identity_fields_are_authoritative() {
+        use crate::ids::BirthId;
+        let mut params = SimParams::default();
+        params.world.max_agents = 3;
+        params.plants.max_plants = 0;
+        let mut world = World::new(42, params).unwrap();
+        world.seed_founders(3);
+        let before = world.state_hash();
+        let ecology = world.ecology_hash();
+        world.next_birth += 1;
+        assert_ne!(world.state_hash(), before);
+        assert_eq!(world.ecology_hash(), ecology);
+        world.next_birth -= 1;
+        let third = 2;
+        world.agents.birth_id[third] = BirthId::NULL;
+        assert_ne!(world.state_hash(), before);
+        assert_eq!(world.ecology_hash(), ecology);
+        world.agents.birth_id[third] = BirthId::new(2);
+        world.agents.parent_birth_a[third] = BirthId::new(0);
+        let one_parent = world.state_hash();
+        assert_ne!(one_parent, before);
+        world.agents.parent_birth_b[third] = BirthId::new(1);
+        assert_ne!(
+            world.state_hash(),
+            one_parent,
+            "two-parent representation must survive hashing"
+        );
+        assert_eq!(world.ecology_hash(), ecology);
+    }
 
     #[test]
     fn cached_founder_wiring_is_hashed_independently_of_the_rng_position() {

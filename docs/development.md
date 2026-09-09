@@ -452,9 +452,9 @@ stepping for 120 ticks:
 cargo test -p sim-core classification_and_observation_leave_ecology_unchanged_across_seeds_and_modes
 ```
 
-The test-only `ecology_hash` masks classification while retaining ecological state
+The test-only `ecology_hash` masks classification and lifetime identities while retaining ecological state
 and RNG, and must agree after seeding and every step. Full state hashes need not agree:
-they include the now-live per-agent species IDs. The integration's organ-control
+they include per-agent species IDs and persistent birth/parent identities. The integration's organ-control
 golden change reflects those labels, not changed heredity or ecology; expanding
 classifier-state hash coverage is a separate change with its own reference updates.
 Shell event counters are observations and are not hashed. This regression establishes

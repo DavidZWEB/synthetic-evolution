@@ -8,9 +8,9 @@ use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
-// M4 coverage-only refresh: include full classifier state (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x8a77_e1a1_a349_c18c;
-pub const CONTROL_GOLDEN: u64 = 0x316d_e52d_50fb_c09c;
+// M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
+pub const EVOLVING_GOLDEN: u64 = 0x2660_3990_31f1_6fa5;
+pub const CONTROL_GOLDEN: u64 = 0x2aeb_1b57_a4f9_75dd;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();

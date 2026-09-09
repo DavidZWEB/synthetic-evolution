@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M4 is implemented; M5's approved birth-identity foundation is in progress.**
+**Status: M4 and M5's approved birth-identity foundation are implemented.**
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -26,7 +26,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
-| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | birth identities in progress; retained history not started |
+| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | birth identities implemented; retained history not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
@@ -550,12 +550,17 @@ the resulting genomes validate.
 
 ## M5 - Stable ancestry and retained history
 
-**Identity foundation in progress:** monotonic world-owned IDs, parent capture at
+**Identity foundation delivered:** monotonic world-owned IDs, parent capture at
 admission, explicit exhaustion, persistent references across slot reuse, and exact
 inspection values. No history retention or ancestry graph is being claimed yet.
 Native schema 7 distinguishes the new construction footprint while preserving
 historical schemas 3-6 without charging their runtimes for nonexistent identity
 arrays. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
+
+Identity integration retains all ten previous reference values. A separate coverage
+commit then hashes the birth counter and each live individual's ID and two parent
+references, with a shared native/WASM continuation case. This is a coverage-only
+refresh, not ecological or heredity change.
 
 Implement D6's identities, species-origin events, history retention, and shell-side
 archival. Link births using persistent parent identities at birth time, never by

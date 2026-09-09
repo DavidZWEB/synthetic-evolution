@@ -18,15 +18,18 @@
 //! M4's classifier-state coverage refresh follows a separate species-label metadata
 //! integration commit. It adds frozen policy, future IDs, representatives, membership,
 //! and allocation state without changing ecological dynamics.
+//!
+//! M5 refreshes coverage for the birth counter and lifetime/parent identities.
+//! The preceding identity-integration commit retains the M4 references unchanged.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x5b95_e09e_d104_4881;
+pub const SHIPPED_GOLDEN: u64 = 0x1ccd_9c63_8d6b_e4ee;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0xdbda_c853_7193_5d24;
+pub const BREEDING_GOLDEN: u64 = 0xac54_aeba_db7e_ecb3;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;

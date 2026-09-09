@@ -985,6 +985,15 @@ changes ecology or RNG. A test-only ecological fingerprint masks classification
 metadata while retaining every ecological field and RNG position; several seeds
 and both heredity modes must agree with classification enabled or disabled.
 
+M5's separate coverage refresh adds the world-owned birth counter and each live
+agent's lifetime ID plus both captured parent IDs. Dead-slot payload remains
+irrelevant. The preceding identity-integration commit retains the earlier references;
+this refresh records extra authoritative state, not a change to ecology or RNG.
+The test-only ecological fingerprint also excludes these lifetime identities.
+[`birth_case.rs`](../sim-core/tests/common/birth_case.rs) is shared by native and WASM,
+covering plant-funded reproduction, parent death/reuse, failed admission, and continued
+stepping with persistent parent references.
+
 Stale free-space payload and
 optional observer counters are not authoritative. A behavior-changing refactor
 must not silently move the reference; an intended behavior change requires a deliberate,
