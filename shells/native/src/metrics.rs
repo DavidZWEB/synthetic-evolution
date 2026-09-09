@@ -10,13 +10,13 @@ use std::io;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use sim_core::genome::Gene;
-use sim_core::mutate::structural::StructuralMutationCounts;
+use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -90,7 +90,8 @@ pub struct WorldMetrics {
     /// Cumulative shell observations, or unavailable when stepping was not observed.
     pub spawn_failures: Option<SpawnFailureCounts>,
     /// Cumulative candidate-edit observations, not a count of successful births.
-    /// Schema 3 and unobserved runs have no structural observations.
+    /// Schema 3 and unobserved runs have no structural observations; schema 4 has
+    /// neural counts but no organ observations.
     #[serde(default)]
     pub structural_mutations: Option<StructuralMutationCounts>,
 }

@@ -159,8 +159,12 @@ impl World {
         let layout = StorageLayout::new(&params)?;
         let capacity = params.world.max_agents;
         let mut next_innovation = 0u32;
+        // Plant geography precedes optional sparse-template draws, so changing
+        // founder connectivity does not move the food sites (spec section 3.3).
+        let mut rng = Rng::from_seed(seed);
+        let plants = Plants::new(&params, &mut rng);
         // The plan draws the world's first innovation ids, before any agent exists.
-        let plan = FounderPlan::new(&params, || {
+        let plan = FounderPlan::new(&params, &mut rng, || {
             let id = InnovationId::new(next_innovation);
             next_innovation += 1;
             id
@@ -172,9 +176,6 @@ impl World {
         // continue after them. A second `Rng::from_seed(seed)` would be the *same*
         // stream, making every plant coordinate bit-identical to the genome scalar
         // drawn at the same position — two processes that look independent and are not.
-        let mut rng = Rng::from_seed(seed);
-        let plants = Plants::new(&params, &mut rng);
-
         Ok(Self {
             brain_inheritance,
             rng,

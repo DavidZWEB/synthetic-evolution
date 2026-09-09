@@ -256,6 +256,8 @@ impl AllocationRequests {
         self.buffer::<Gene>(genes)?;
         self.buffer::<f32>(u64::from(counts.synapses))?;
         // Constructor-only neuron IDs, source/sink slots, fan-in counts and targets.
+        // Sparse wiring shuffles the same source-slot buffer; it neither reserves
+        // dense edges nor adds per-target selection scratch (spec §3.3).
         self.buffer::<InnovationId>(neurons)?;
         // Charge usize source/sink/target indices at 8 bytes on both native and
         // WASM32, so pointer width alone cannot change budget acceptance (spec §2.2a).
@@ -311,19 +313,67 @@ mod tests {
 
     #[test]
     fn founder_index_buffers_have_the_same_budget_on_native_and_wasm() {
-        let params = SimParams::default();
-        let counts = FounderPlan::checked_counts(&params).unwrap();
-        let mut requests = AllocationRequests::default();
-        requests.founder_plan(&params, &counts).unwrap();
-        let genes = u64::from(counts.genes);
-        let neurons = u64::from(counts.neurons);
-        let source_indices = neurons - u64::from(counts.effectors);
-        let sink_indices = u64::from(params.brain.hidden_neurons) + u64::from(counts.effectors);
-        let expected = 2 * genes * size_of::<Gene>() as u64
-            + u64::from(counts.synapses) * size_of::<f32>() as u64
-            + neurons * (size_of::<InnovationId>() + size_of::<u32>()) as u64
-            + (source_indices + sink_indices + genes) * size_of::<u64>() as u64;
-        assert_eq!(requests.bytes, expected);
+        for fan_in in [None, Some(0), Some(1), Some(24), Some(u32::MAX)] {
+            for (rays, chemo, energy) in [(3, 1, 1), (0, 0, 0), (0, 2, 3)] {
+                let mut params = SimParams::default();
+                params.brain.connections_per_target = fan_in;
+                params.sensing.vision_rays = rays;
+                params.sensing.chemo_sensors = chemo;
+                params.sensing.energy_sensors = energy;
+                let counts = FounderPlan::checked_counts(&params).unwrap();
+                let mut requests = AllocationRequests::default();
+                requests.founder_plan(&params, &counts).unwrap();
+                let genes = u64::from(counts.genes);
+                let neurons = u64::from(counts.neurons);
+                let source_indices = neurons - u64::from(counts.effectors);
+                let sink_indices =
+                    u64::from(params.brain.hidden_neurons) + u64::from(counts.effectors);
+                let expected = 2 * genes * size_of::<Gene>() as u64
+                    + u64::from(counts.synapses) * size_of::<f32>() as u64
+                    + neurons * (size_of::<InnovationId>() + size_of::<u32>()) as u64
+                    + (source_indices + sink_indices + genes) * size_of::<u64>() as u64;
+                assert_eq!(requests.bytes, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_templates_charge_only_their_actual_connections() {
+        let mut params = SimParams::default();
+        let dense = StorageLayout::new(&params).unwrap().construction_bytes;
+        let dense_connections = FounderPlan::checked_counts(&params).unwrap().synapses;
+        for fan_in in [0, 1, 2, 24, u32::MAX] {
+            params.brain.connections_per_target = Some(fan_in);
+            let counts = FounderPlan::checked_counts(&params).unwrap();
+            let sparse = StorageLayout::new(&params).unwrap().construction_bytes;
+            let removed = u64::from(dense_connections - counts.synapses);
+            // Template + possible sort scratch, cached scale, and the constructor's
+            // gene-capacity target-index buffer. All other allocations stay fixed.
+            let bytes_per_connection =
+                (2 * size_of::<Gene>() + size_of::<f32>() + size_of::<u64>()) as u64;
+            assert_eq!(dense - sparse, removed * bytes_per_connection);
+        }
+    }
+
+    #[test]
+    fn sparse_limits_do_not_require_space_for_a_dense_counterpart() {
+        let mut params = SimParams::default();
+        params.brain.hidden_neurons = 64;
+        assert_eq!(
+            params.validate().unwrap_err(),
+            ParamError("founder exceeds storage.max_genes")
+        );
+        params.brain.connections_per_target = Some(1);
+        params.storage.max_connections = 68;
+        params.storage.max_genes = 170;
+        params.storage.max_neurons = 86;
+        params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap();
+        params.validate().unwrap();
+        params.storage.max_connections -= 1;
+        assert_eq!(
+            params.validate().unwrap_err(),
+            ParamError("founder exceeds storage.max_connections")
+        );
     }
 
     #[test]
@@ -332,6 +382,8 @@ mod tests {
         let before = StorageLayout::new(&params).unwrap();
         let mut changed = params.clone();
         changed.sensing.vision_rays += 1;
+        changed.sensing.chemo_sensors += 1;
+        changed.sensing.energy_sensors += 1;
         changed.brain.hidden_neurons += 1;
         let after = StorageLayout::new(&changed).unwrap();
         assert_eq!(
@@ -369,6 +421,25 @@ mod tests {
         );
         params.storage.max_memory_bytes = bytes * 2;
         params.world.max_agents *= 2;
+        params.validate().unwrap();
+    }
+
+    #[test]
+    fn zero_sensor_and_connection_arenas_fit_an_empty_source_template() {
+        let mut params = SimParams::default();
+        params.sensing.vision_rays = 0;
+        params.sensing.chemo_sensors = 0;
+        params.sensing.energy_sensors = 0;
+        params.brain.hidden_neurons = 0;
+        params.brain.oscillators = 0;
+        params.storage.sensors_per_slot = 0;
+        params.storage.synapses_per_slot = 0;
+        params.storage.max_sensors = 0;
+        params.storage.max_vision_rays = 0;
+        params.storage.max_connections = 0;
+        let layout = StorageLayout::new(&params).unwrap();
+        assert_eq!(layout.sensors, 0);
+        assert_eq!(layout.synapses, 0);
         params.validate().unwrap();
     }
 

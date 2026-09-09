@@ -256,13 +256,57 @@ fn neural_structural_births_and_observers_never_allocate() {
 }
 
 #[test]
+fn sensor_edits_and_combined_mutation_observers_never_allocate() {
+    use sim_core::mutate::StructuralMutationCounts;
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    params.mutation.organs.remove_sensor_rate = 1.0;
+    params.mutation.organs.add_sensor_rate = 1.0;
+    let rates = &mut params.mutation.structural;
+    rates.remove_connection_rate = 1.0;
+    rates.remove_neuron_rate = 1.0;
+    rates.toggle_connection_rate = 1.0;
+    rates.add_connection_rate = 1.0;
+    rates.add_neuron_rate = 1.0;
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+    ] {
+        let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
+        let parent = world.spawn_founder(Vec3::ZERO).unwrap();
+        let mut counts = StructuralMutationCounts::default();
+        let observed = count_allocations(|| {
+            for _ in 0..20 {
+                world.agents_mut().energy[parent.index()] = 300.0;
+                world.intents_mut().reproduce[parent.index()] = 1.0;
+                assert_eq!(
+                    world.resolve_births_with_observers(
+                        |_| panic!("birth refused"),
+                        |event| counts.record(event),
+                    ),
+                    1
+                );
+                let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
+                world.despawn(child);
+            }
+        });
+        assert_eq!(observed, 0);
+        assert_eq!(counts.add_sensor.unwrap().applied, 20);
+        assert_eq!(counts.remove_sensor.unwrap().applied, 20);
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;
     let observed = count_allocations(|| {
-        let result = sim_core::founder::FounderPlan::new(&params, || {
-            panic!("invalid params must not request innovation ids")
-        });
+        let result =
+            sim_core::founder::FounderPlan::new(&params, &mut sim_core::Rng::from_seed(0), || {
+                panic!("invalid params must not request innovation ids")
+            });
         assert!(result.is_err());
     });
     assert_eq!(observed, 0, "invalid params allocated a founder plan");

@@ -13,7 +13,7 @@
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use sim_core::genome::Gene;
-use sim_core::mutate::structural::StructuralMutationCounts;
+use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use wasm::{Sim, random_control, validate_params};
 

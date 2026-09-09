@@ -269,26 +269,100 @@ remove neuron, toggle connection, add connection, then split an enabled connecti
 to add a neuron. Initializers must be finite; when splitting is enabled,
 `abs(split_input_weight)` cannot exceed `mutation.weight_limit`. Rates and
 initializers can be retuned without resizing a world. Founders are not structurally
-mutated. M2 does not enable sensor mutation (M3), body mutation, or sexual reproduction.
+mutated. Sensor operators are separately opt-in below; body mutation and sexual
+reproduction remain unavailable.
 
-Evolving offspring receive legacy neural-scalar mutation followed by structural
-edits. Scalar-control offspring receive structural edits followed by a full
-neural-scalar redraw on the resulting topology, retaining topology and non-neural
-genes. This control **can inherit and evolve topology**: it is neither a no-evolution
+Evolving offspring receive legacy neural-scalar mutation followed by sensor edits
+and then the five neural structural edits. Scalar-control offspring receive those
+same sensor and neural structural edits followed by a full neural-scalar redraw on
+the resulting topology, retaining sensors and other non-neural genes. This control
+**can inherit and evolve topology and sensors**: it is neither a no-evolution
 control nor the separate structural-null comparison planned for M8. Report both
 cohorts' metric vectors across multiple seeds, not a ranking or a claim of useful
 structure based only on gene counts.
 
+### Opt-in sensors and founder composition (M3)
+
+Both shipped rates under **`SimParams.mutation.organs` are zero**. Missing fields in
+older params documents or URLs retain those defaults. For example:
+
+```json
+{
+  "mutation": {
+    "organs": {
+      "remove_sensor_rate": 0.001,
+      "add_sensor_rate": 0.001,
+      "vision_weight": 1.0,
+      "chemo_weight": 1.0,
+      "energy_weight": 1.0,
+      "neuron_bias": 0.0
+    }
+  }
+}
+```
+
+These are protocol examples, not recommended rates. Removal runs before addition,
+and both run before the five neural structural operators. Removing a sensor keeps
+its target neurons and connections. Addition chooses among current vision,
+food-chemo, and energy-interoception modalities, adding one fresh target neuron per
+channel and one sensor, **without automatic wiring**. Neural operators can subsequently
+wire those neurons. Rates must be in `[0, 1]`, modality weights finite and nonnegative,
+and `neuron_bias` finite. Enabled addition requires a positive total modality weight.
+These rates, weights, and bias may be retuned on a running world.
+
+Founder composition is separately configurable at construction. The following opt-in
+partial JSON works with `--params params.json`, the WASM constructor, or the existing
+shared URL `params` fragment:
+
+```json
+{
+  "sensing": {
+    "vision_rays": 0,
+    "chemo_sensors": 1,
+    "energy_sensors": 0
+  },
+  "brain": {
+    "hidden_neurons": 0,
+    "oscillators": 0,
+    "connections_per_target": 1
+  }
+}
+```
+
+This has **seven neurons and four connections**: three chemo inputs and the four
+required effector outputs (thrust, turn, ingest, reproduce). It retains four body and
+three meta genes, for 23 total genes including the sensor and effectors. It is a
+minimal candidate to investigate, **not evidence of viability or a new shipped
+founder**. Dense defaults remain unchanged: `vision_rays: 3`, `chemo_sensors: 1`,
+`energy_sensors: 1`, six hidden neurons, two oscillators, and
+`connections_per_target: null`.
+
+`null` or an omitted connectivity field means the original full dense topology.
+An integer `k` chooses `min(k, sources)` distinct inputs per hidden/output target;
+`0` creates no connections. The sparse template is chosen once per world after plants
+are seeded and shared by every founder, while founder neural scalars are still
+drawn individually. Sensor counts, hidden/oscillator counts, and connectivity are
+construction-time frozen: changing them requires a new world/reseed, not
+`Sim.set_params`. Counts and connectivity must be unsigned integers; resulting
+genomes must fit the configured per-genome caps and construction budget. No full
+parameter editor or preset selector is introduced.
+
 ### Telemetry protocol and observations
 
-New output uses metrics schema **4**, `phase: 2`, and
-`control: "randomized_at_birth_v2"` (the shared core protocol constant).
-The reader explicitly supports legacy **schema 3 / phase 1 /
-`control: "randomized_at_birth"`** records, without relabeling them as v2; legacy
-records claiming any nonzero structural rate are rejected. Schemas 1 and 2, unknown
-schemas, and other schema/phase/control combinations are rejected.
+New output uses metrics schema **5**, `phase: 2`, and
+`control: "randomized_at_birth_v3"` (the shared core protocol constant).
+The reader explicitly supports **schema 4 / phase 2 /
+`control: "randomized_at_birth_v2"`** and **schema 3 / phase 1 /
+`control: "randomized_at_birth"`** (v1), without relabeling them as v3.
+Both legacy schemas reject nonzero organ mutation rates or nondefault M3 founder
+fields (`chemo_sensors != 1`, `energy_sensors != 1`, or non-null
+`connections_per_target`). Schema 3 also rejects every nonzero neural structural
+rate and any claimed structural observations. Schema 4 may carry the five neural
+operator observations but cannot claim measured sensor counts, even zeros.
+Schemas 1 and 2, unknown schemas, and all other schema/phase/control combinations
+are rejected.
 
-Schema 4 retains the earlier metric fields. `arena_usage` contains current element
+Schema 5 retains the earlier metric fields. `arena_usage` contains current element
 counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
 `largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
 `u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,
@@ -296,7 +370,8 @@ counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity
 refused spawn attempts, not founder requests clamped to pool capacity.
 
 Each cohort also has **`structural_mutations`**, with separate `remove_connection`,
-`remove_neuron`, `toggle_connection`, `add_connection`, and `add_neuron` counters.
+`remove_neuron`, `toggle_connection`, `add_connection`, and `add_neuron` counters,
+plus nullable **`remove_sensor`** and **`add_sensor`** counters.
 Each operator records cumulative saturating `u64` values for `attempted`, `applied`,
 `no_candidate`, `genome_limit`, `scratch_limit`, and `innovation_exhausted`.
 An attempt is counted only after a positive-rate Bernoulli gate succeeds. An applied
@@ -309,7 +384,12 @@ path observes seeding, command spawns, and natural births, collecting structural
 separately in both cohorts; plain runs use the unobserved stepping path.
 Samples created outside a collected run encode unavailable observations as `null`,
 not invented zeroes. Schema 3's absent `structural_mutations` fields likewise decode
-to `null`. `diagnose` reports availability and mutation caps, scratch limits, and
+to `null`. Schema 4's missing sensor-counter fields decode individually to `null`;
+they are not inferred from neural counts, zero configured rates, or later samples.
+Unknown historical sensor totals stay unknown even if later edits are observed.
+Current shell observers instead begin with measured zeroes for all seven operators.
+`diagnose` reports availability separately for each organ operator and cohort, and
+reports mutation caps (including sensor and vision-ray caps), scratch limits, and
 innovation exhaustion separately from spawn pressure, and distinguishes arena capacity
 from fragmentation; more energy does not resolve these limits. Exact `genome_variants`
 remain distinct from species: species-cluster diagnostics await M4 clustering.
@@ -323,8 +403,9 @@ RSS: a paired run owns two separately budgeted worlds, with allocator/OS overhea
 metrics, and any shell snapshots/transports additional. The WASM shell similarly
 exposes `Sim.storage_diagnostics()` JSON on demand with `arena_usage` and cumulative
 `spawn_failures`; that envelope is unchanged. The separate
-`Sim.structural_mutation_diagnostics()` method returns the five operator-counter
-objects on demand. Both kinds of counters start at zero on world construction,
+`Sim.structural_mutation_diagnostics()` method returns the same counter object,
+extended with nullable `remove_sensor` and `add_sensor` fields. Both kinds of current
+shell counters start at zero on world construction,
 are isolated per world, and survive retuning. JSON requests can grow WASM memory,
 so clients must refresh detached snapshot views. Snapshots and browser transports
 are outside the core budget. This is not a browser resident-memory safety guarantee.
@@ -335,8 +416,10 @@ all five structural operators for shell integration checks. These test telemetry
 diagnostics; they are not candidate simulation defaults.
 
 For visual control checks, the web app's **heredity** selector labels the alternatives
-**evolving** and **scalar control**, explaining that topology is inherited and may evolve
-while neural scalars are redrawn. The JS `random_control` constructor and browser/URL
+**evolving** and **scalar control**, explaining that topology and sensors are inherited
+and may evolve while neural scalars are redrawn, including newly added sensor-target
+neurons. Inspector activation and genome lengths can therefore differ between parent
+and child. The JS `random_control` constructor and browser/URL
 mode ID `randomized_at_birth` remain compatible; this mode ID is not the versioned
 telemetry protocol. Changing heredity takes effect on
 **reseed** because heredity mode is construction-time experiment configuration, not a

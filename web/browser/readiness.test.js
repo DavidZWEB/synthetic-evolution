@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
+import { readRunUrl, writeRunUrl } from '../src/sim/seed-url.js';
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const founders = 128;
 
@@ -21,7 +23,7 @@ async function waitForTransport(page, mode) {
   assert.equal(await page.evaluate(() => crossOriginIsolated), mode !== 'transferable');
 }
 
-async function withClient(mode, run, { beforeLoad, ready = true } = {}) {
+async function withClient(mode, run, { beforeLoad, ready = true, params = {}, brainInheritance } = {}) {
   const server = await createServer({
     root,
     mode,
@@ -36,17 +38,18 @@ async function withClient(mode, run, { beforeLoad, ready = true } = {}) {
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
     await beforeLoad?.(page);
-    const url = new URL(server.resolvedUrls.local[0]);
-    url.hash = new URLSearchParams({
+    const url = writeRunUrl(server.resolvedUrls.local[0], {
       seed: '42',
-      founders: String(founders),
+      founders,
+      brainInheritance,
       params: JSON.stringify({
         world: { max_agents: 128 },
         plants: { max_plants: 64 },
         chemo: { cells: [8, 8, 1] },
+        ...params,
       }),
-    }).toString();
-    await page.goto(url.href);
+    });
+    await page.goto(url);
     if (ready) await waitForTransport(page, mode);
     await run(page);
     assert.deepEqual(errors, [], 'the browser raised an application error');
@@ -83,7 +86,7 @@ for (const mode of ['development', 'transferable']) {
   test(`scalar control explains heredity and preserves the shared mode ID (${mode})`, async () => {
     await withClient(mode, async (page) => {
       const heredity = page.getByRole('combobox', { name: 'heredity', exact: true });
-      const explanation = /inherits topology, which may evolve when structural mutation is enabled; neural scalars are redrawn at birth/;
+      const explanation = /inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth/;
       assert.match(await heredity.getAttribute('title'), explanation);
       assert.match(await heredity.getAttribute('aria-description'), explanation);
       assert.equal(
@@ -103,6 +106,52 @@ for (const mode of ['development', 'transferable']) {
         [...document.querySelectorAll('header dt')].find((el) => el.textContent === 'tick')
           ?.nextElementSibling?.textContent === '1');
     });
+  });
+
+  test(`sparse no-eye founders survive URL reload, heredity selection and inspection (${mode})`, async () => {
+    const params = {
+      sensing: { vision_rays: 0, chemo_sensors: 1, energy_sensors: 0 },
+      brain: { hidden_neurons: 0, oscillators: 0, connections_per_target: 1 },
+    };
+    await withClient(mode, async (page) => {
+      async function readGenome() {
+        const inspector = await selectFirstFounder(page);
+        await page.waitForFunction(() => document.querySelectorAll('aside .neuron').length === 7);
+        assert.equal(await inspector.locator('.neuron').count(), 7);
+        await inspector.locator('summary').click();
+        await page.waitForFunction(() => (document.querySelector('pre')?.textContent.length ?? 0) > 0);
+        const genome = JSON.parse(await inspector.locator('pre').innerText());
+        const sensors = genome.filter((gene) => gene.Sensor).map((gene) => gene.Sensor);
+        assert.equal(sensors.length, 1);
+        assert.equal(sensors[0].modality, 'Chemo');
+        assert.equal(genome.filter((gene) => gene.Neuron).length, 7);
+        assert.equal(genome.filter((gene) => gene.Connection).length, 4);
+        assert.equal(genome.filter((gene) => gene.Effector).length, 4);
+        assert.equal(genome.filter((gene) => gene.Body).length, 4);
+        assert.equal(genome.filter((gene) => gene.Meta).length, 3);
+        return genome;
+      }
+      const original = await readGenome();
+      const run = readRunUrl(page.url(), founders);
+      const canonical = JSON.parse(run.params);
+      assert.equal(canonical.sensing.vision_rays, 0);
+      assert.equal(canonical.sensing.chemo_sensors, 1);
+      assert.equal(canonical.sensing.energy_sensors, 0);
+      assert.equal(canonical.brain.connections_per_target, 1);
+      assert.equal(run.brainInheritance, 'randomized_at_birth');
+      await page.reload();
+      await waitForTransport(page, mode);
+      assert.deepEqual(await readGenome(), original, 'shared URL did not reproduce the founder');
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() =>
+        document.querySelector('aside dt')?.nextElementSibling?.textContent === '1');
+      assert.equal(await page.locator('aside .neuron').count(), 7);
+      await page.getByRole('combobox', { name: 'heredity', exact: true }).selectOption('evolving');
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await page.waitForFunction(() => !new URLSearchParams(location.hash.slice(1)).has('inheritance'));
+      await waitForTransport(page, mode);
+      assert.deepEqual(await readGenome(), original, 'heredity changed the founding template');
+    }, { params, brainInheritance: 'randomized_at_birth' });
   });
 
   test(`paused inspection catches a manual step (${mode})`, async () => {

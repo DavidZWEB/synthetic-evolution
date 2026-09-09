@@ -7,12 +7,12 @@
 
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
-use crate::mutate::{self, MutationState, structural};
+use crate::mutate::{self, MutationState, organs, structural};
 use crate::params::SimParams;
 use structural::StructuralMutationEvent;
 
 /// Telemetry distinguishes topology-aware controls from Phase 1's fixed-topology run.
-pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v2";
+pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v3";
 
 /// How neural scalars are assigned to offspring.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,11 +32,12 @@ impl BrainInheritance {
         genes: &mut Vec<Gene>,
         params: &SimParams,
         state: &mut MutationState<'_>,
-        on_event: impl FnMut(StructuralMutationEvent),
+        mut on_event: impl FnMut(StructuralMutationEvent),
     ) {
         if self == Self::Evolving {
             mutate::mutate(genes, state.rng, &params.mutation);
         }
+        organs::apply(genes, params, state, &mut on_event);
         structural::apply(genes, params, state, on_event);
         if self == Self::RandomizedAtBirth {
             plan.randomize_brain(state.rng, params, genes, state.neuron_scratch);
@@ -50,10 +51,67 @@ mod tests {
     use crate::{InnovationId, Rng};
 
     #[test]
+    fn scalar_redraw_preserves_new_organ_parameters_and_bindings_exactly() {
+        let mut params = SimParams::default();
+        params.mutation.organs.add_sensor_rate = 1.0;
+        params.mutation.organs.chemo_weight = 0.0;
+        params.mutation.organs.energy_weight = 0.0;
+        let mut plan_id = 100;
+        let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
+            let id = InnovationId::new(plan_id);
+            plan_id += 1;
+            id
+        })
+        .unwrap();
+        let initial = crate::genome::fixtures::tiny();
+        let mut expected = Vec::with_capacity(params.storage.max_genes as usize);
+        let mut actual = Vec::with_capacity(params.storage.max_genes as usize);
+        expected.extend_from_slice(&initial);
+        actual.extend_from_slice(&initial);
+        let mut a = Rng::from_seed(17);
+        let mut b = Rng::from_seed(17);
+        let mut a_next = 10;
+        let mut b_next = 10;
+        let mut a_scratch = vec![0; params.storage.max_neurons as usize];
+        let mut b_scratch = a_scratch.clone();
+        organs::apply(
+            &mut expected,
+            &params,
+            &mut MutationState {
+                rng: &mut a,
+                next_innovation: &mut a_next,
+                neuron_scratch: &mut a_scratch,
+            },
+            |_| {},
+        );
+        BrainInheritance::RandomizedAtBirth.prepare_offspring(
+            &plan,
+            &mut actual,
+            &params,
+            &mut MutationState {
+                rng: &mut b,
+                next_innovation: &mut b_next,
+                neuron_scratch: &mut b_scratch,
+            },
+            |_| {},
+        );
+        let non_neural = |genes: &[Gene]| {
+            genes
+                .iter()
+                .copied()
+                .filter(|gene| !matches!(gene, Gene::Neuron(_) | Gene::Connection(_)))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(non_neural(&actual), non_neural(&expected));
+        assert_ne!(actual, expected);
+        assert_eq!(a_next, b_next);
+    }
+
+    #[test]
     fn disabled_structure_preserves_each_legacy_scalar_path_and_rng() {
         let params = SimParams::default();
         let mut next = 0;
-        let plan = FounderPlan::new(&params, || {
+        let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             let id = InnovationId::new(next);
             next += 1;
             id

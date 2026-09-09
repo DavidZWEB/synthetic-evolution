@@ -8,8 +8,11 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
+use sim_core::founder::FounderPlan;
 use sim_core::genome::Gene;
+use sim_core::ids::InnovationId;
 use sim_core::params::SimParams;
+use sim_core::rng::Rng;
 use sim_core::world::World;
 
 // Per-thread, not global: tests in this binary run in parallel, and a shared counter
@@ -95,13 +98,15 @@ fn a_default_world_stays_inside_its_declared_core_budget() {
 #[test]
 fn estimate_covers_nondefault_constructor_shapes() {
     type Profile = fn(&mut SimParams);
-    let profiles: [Profile; 5] = [
+    let profiles: [Profile; 11] = [
         |p| p.world.max_agents = 2_000,
         |p| {
             p.world.max_agents = 1;
             p.plants.max_plants = 0;
             p.chemo.cells = [1, 1, 1];
             p.sensing.vision_rays = 0;
+            p.sensing.chemo_sensors = 0;
+            p.sensing.energy_sensors = 0;
             p.brain.hidden_neurons = 0;
             p.brain.oscillators = 0;
         },
@@ -126,6 +131,43 @@ fn estimate_covers_nondefault_constructor_shapes() {
             p.sensing.vision_range = 30.0;
             p.sensing.chemo_radius = 20.0;
         },
+        |p| p.brain.connections_per_target = Some(1),
+        |p| {
+            p.brain.connections_per_target = Some(0);
+            p.storage.synapses_per_slot = 0;
+            p.storage.max_connections = 0;
+        },
+        |p| {
+            p.sensing.vision_rays = 0;
+            p.sensing.energy_sensors = 0;
+            p.brain.hidden_neurons = 0;
+            p.brain.oscillators = 0;
+            p.brain.connections_per_target = Some(1);
+        },
+        |p| {
+            p.sensing.vision_rays = 0;
+            p.sensing.chemo_sensors = 0;
+            p.sensing.energy_sensors = 0;
+            p.brain.hidden_neurons = 0;
+            p.brain.oscillators = 0;
+            p.storage.sensors_per_slot = 0;
+            p.storage.synapses_per_slot = 0;
+            p.storage.max_sensors = 0;
+            p.storage.max_connections = 0;
+        },
+        |p| {
+            p.sensing.vision_rays = 2;
+            p.sensing.chemo_sensors = 3;
+            p.sensing.energy_sensors = 2;
+            p.brain.hidden_neurons = 3;
+            p.brain.oscillators = 1;
+            p.brain.connections_per_target = Some(2);
+        },
+        |p| {
+            p.brain.hidden_neurons = 64;
+            p.brain.connections_per_target = Some(1);
+            p.chemo.decay.reserve_exact(15);
+        },
     ];
     for profile in profiles {
         let mut params = SimParams::default();
@@ -133,6 +175,56 @@ fn estimate_covers_nondefault_constructor_shapes() {
         let (world, used, estimate) = measure(params);
         assert_estimate_covers_requests(&world, used, estimate);
     }
+}
+
+#[test]
+fn explicit_full_connectivity_has_the_dense_constructor_footprint() {
+    let params = SimParams::default();
+    let (world, dense_used, dense_estimate) = measure(params.clone());
+    assert_estimate_covers_requests(&world, dense_used, dense_estimate);
+    drop(world);
+    for fan_in in [24, u32::MAX] {
+        let mut explicit = params.clone();
+        explicit.brain.connections_per_target = Some(fan_in);
+        let (world, used, estimate) = measure(explicit);
+        assert_estimate_covers_requests(&world, used, estimate);
+        assert_eq!(used, dense_used);
+        assert_eq!(estimate, dense_estimate);
+    }
+}
+
+#[test]
+fn sparse_constructor_fits_its_own_budget_without_charging_dense_edges() {
+    let mut params = SimParams::default();
+    let dense_estimate = params.estimated_construction_bytes().unwrap();
+    params.brain.connections_per_target = Some(1);
+    let sparse_estimate = params.estimated_construction_bytes().unwrap();
+    assert!(sparse_estimate < dense_estimate);
+    params.storage.max_memory_bytes = sparse_estimate;
+    let (world, used, estimate) = measure(params);
+    assert_eq!(estimate, sparse_estimate);
+    assert_estimate_covers_requests(&world, used, estimate);
+}
+
+#[test]
+fn invalid_sparse_template_is_rejected_without_allocation_ids_or_rng() {
+    let mut params = SimParams::default();
+    params.brain.connections_per_target = Some(1);
+    params.storage.max_connections = 9;
+    let mut rng = Rng::from_seed(42);
+    let before = rng.clone();
+    let mut requested = 0;
+    take();
+    let result = FounderPlan::new(&params, &mut rng, || {
+        let id = InnovationId::new(requested);
+        requested += 1;
+        id
+    });
+    let used = take();
+    assert!(result.is_err());
+    assert_eq!(used, 0);
+    assert_eq!(requested, 0);
+    assert_eq!(rng, before);
 }
 
 #[test]

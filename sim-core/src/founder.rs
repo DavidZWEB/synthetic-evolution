@@ -1,8 +1,7 @@
-//! The Phase 1 founding genome: one fixed topology, instantiated with random weights.
+//! Configurable founding genomes: one shared topology, instantiated with random weights.
 //!
-//! Phase 1 hardcodes the sensor and effector set and the neuron count. What is *not*
-//! hardcoded is the representation — a founder is an ordinary gene list. Phase 2
-//! revisits founder composition alongside its structural mutation operators.
+//! Sensor and neuron counts and optional sparse wiring define the world's template.
+//! Shipped defaults retain Phase 1's dense topology and random-draw sequence (spec §3.3).
 //!
 //! Every founder in a world shares **one set of innovation ids**, drawn once into a
 //! [`FounderPlan`]. That is what makes shared ancestry real: two genomes that match on
@@ -19,10 +18,9 @@ use crate::genome::{
 };
 use crate::ids::InnovationId;
 use crate::math;
-use crate::params::{ParamError, SimParams};
+use crate::params::{ParamError, SensingParams, SimParams};
 use crate::rng::Rng;
 
-const BASE_SENSORS: [Modality; 2] = [Modality::Chemo, Modality::Interoception];
 const EFFECTORS: [Action; 4] = [
     Action::Thrust,
     Action::Turn,
@@ -40,6 +38,25 @@ const META_TRAITS: [MetaTrait; 3] = [
     MetaTrait::WeightSigma,
     MetaTrait::CrossoverRate,
 ];
+
+/// Initializes an organ; mutation selection and refusal policy live elsewhere.
+pub(crate) fn sensor_parameters(
+    modality: Modality,
+    params: &SensingParams,
+    rng: &mut Rng,
+) -> [f32; 4] {
+    match modality {
+        // Retain the elevation slot, clamped on the simulation plane (spec §4.1, §9.1).
+        Modality::VisionRay => [
+            rng.range(-core::f32::consts::PI, core::f32::consts::PI),
+            0.0,
+            params.vision_range,
+            params.vision_fov,
+        ],
+        Modality::Chemo => [0.0, params.chemo_radius, 0.0, 0.0],
+        Modality::Interoception => [0.0; 4],
+    }
+}
 
 pub(crate) struct FounderCounts {
     pub sensor_channels: u32,
@@ -71,37 +88,46 @@ impl FounderPlan {
     /// Allocation-free sizing shared by boundary validation and construction.
     pub(crate) fn checked_counts(params: &SimParams) -> Option<FounderCounts> {
         let rays = u64::from(params.sensing.vision_rays);
-        let sensor_channels = rays * Modality::VisionRay.channels() as u64
-            + BASE_SENSORS
-                .iter()
-                .map(|m| m.channels() as u64)
-                .sum::<u64>();
+        let chemo = u64::from(params.sensing.chemo_sensors);
+        let energy = u64::from(params.sensing.energy_sensors);
+        let sensors = rays.checked_add(chemo)?.checked_add(energy)?;
+        let sensor_channels = rays
+            .checked_mul(Modality::VisionRay.channels() as u64)?
+            .checked_add(chemo.checked_mul(Modality::Chemo.channels() as u64)?)?
+            .checked_add(energy.checked_mul(Modality::Interoception.channels() as u64)?)?;
         let sources = sensor_channels
-            + u64::from(params.brain.hidden_neurons)
-            + u64::from(params.brain.oscillators);
-        let sinks = EFFECTORS.len() as u64 + u64::from(params.brain.hidden_neurons);
-        let neurons = sources + EFFECTORS.len() as u64;
-        let connections = sources.checked_mul(sinks)?;
-        let other_genes = rays
-            + (BASE_SENSORS.len() + EFFECTORS.len() + BODY_TRAITS.len() + META_TRAITS.len()) as u64;
+            .checked_add(u64::from(params.brain.hidden_neurons))?
+            .checked_add(u64::from(params.brain.oscillators))?;
+        let sinks = (EFFECTORS.len() as u64).checked_add(u64::from(params.brain.hidden_neurons))?;
+        let neurons = sources.checked_add(EFFECTORS.len() as u64)?;
+        let fan_in = params
+            .brain
+            .connections_per_target
+            .map_or(sources, |count| u64::from(count).min(sources));
+        let connections = fan_in.checked_mul(sinks)?;
+        let other_genes = sensors
+            .checked_add((EFFECTORS.len() + BODY_TRAITS.len() + META_TRAITS.len()) as u64)?;
         let genes = neurons.checked_add(connections)?.checked_add(other_genes)?;
         Some(FounderCounts {
             sensor_channels: u32::try_from(sensor_channels).ok()?,
             neurons: u32::try_from(neurons).ok()?,
             genes: u32::try_from(genes).ok()?,
-            sensors: u32::try_from(rays + BASE_SENSORS.len() as u64).ok()?,
+            sensors: u32::try_from(sensors).ok()?,
             synapses: u32::try_from(connections).ok()?,
             effectors: EFFECTORS.len() as u32,
         })
     }
 
-    /// Draws the ids for one world's founding topology.
+    /// Chooses one world's founding topology and issues its innovation IDs.
     ///
     /// `next_id` is the world's innovation counter — a closure rather than a `&mut
     /// World`, so this is testable without one and cannot reach anything else.
-    /// Invalid params are rejected before allocating a plan or requesting any ids.
+    /// The caller seeds plants first, using this same world RNG (spec §3.3).
+    /// Dense topology consumes no draws. Invalid params are rejected before
+    /// allocating a plan, drawing randomness, or requesting any IDs.
     pub fn new(
         params: &SimParams,
+        rng: &mut Rng,
         mut next_id: impl FnMut() -> InnovationId,
     ) -> Result<Self, ParamError> {
         params.validate()?;
@@ -163,28 +189,52 @@ impl FounderPlan {
             }));
         }
 
-        // Every input, hidden neuron and oscillator connects to every output and
-        // hidden neuron. Phase 1 has no operator to add a missing connection (spec §3.3).
+        // Inputs, hidden neurons and oscillators can source connections; only outputs
+        // and hidden neurons receive them in the founding template (spec §3.3).
         let input_end = sensor_channels;
         let output_end = input_end + EFFECTORS.len();
         let hidden_range = output_end..output_end + hidden;
         let oscillator_range = output_end + hidden..neurons;
 
-        let sources: Vec<usize> = (0..input_end)
+        let mut sources: Vec<usize> = (0..input_end)
             .chain(hidden_range.clone())
             .chain(oscillator_range)
             .collect();
         let sinks: Vec<usize> = (input_end..output_end).chain(hidden_range).collect();
 
-        for &from in &sources {
+        let fan_in = params
+            .brain
+            .connections_per_target
+            .map_or(sources.len(), |count| (count as usize).min(sources.len()));
+        if fan_in == sources.len() {
+            // Keep source-major IDs and consume no topology RNG for dense requests,
+            // including explicitly saturated fan-in, preserving prior runs (spec §3.3).
+            for &from in &sources {
+                for &to in &sinks {
+                    genes.push(Gene::Connection(ConnectionGene {
+                        id: next_id(),
+                        from: neuron_ids[from],
+                        to: neuron_ids[to],
+                        weight: 0.0,
+                        enabled: true,
+                    }));
+                }
+            }
+        } else {
             for &to in &sinks {
-                genes.push(Gene::Connection(ConnectionGene {
-                    id: next_id(),
-                    from: neuron_ids[from],
-                    to: neuron_ids[to],
-                    weight: 0.0,
-                    enabled: true,
-                }));
+                // A partial shuffle samples without replacement. Reuse its permutation
+                // for the next target so sparse selection needs no additional buffer.
+                for index in 0..fan_in {
+                    let selected = index + rng.below((sources.len() - index) as u32) as usize;
+                    sources.swap(index, selected);
+                    genes.push(Gene::Connection(ConnectionGene {
+                        id: next_id(),
+                        from: neuron_ids[sources[index]],
+                        to: neuron_ids[to],
+                        weight: 0.0,
+                        enabled: true,
+                    }));
+                }
             }
         }
 
@@ -223,11 +273,17 @@ impl FounderPlan {
         })
     }
 
-    /// Phase 1's hardcoded sensor set: `vision_rays` eyes, a nose, and one
-    /// interoceptor for the agent's own energy (spec §4.1).
+    /// Preserve the original vision/chemo/energy gene and scalar-draw order.
     fn sensor_layout(params: &SimParams) -> impl Iterator<Item = Modality> {
         core::iter::repeat_n(Modality::VisionRay, params.sensing.vision_rays as usize)
-            .chain(BASE_SENSORS)
+            .chain(core::iter::repeat_n(
+                Modality::Chemo,
+                params.sensing.chemo_sensors as usize,
+            ))
+            .chain(core::iter::repeat_n(
+                Modality::Interoception,
+                params.sensing.energy_sensors as usize,
+            ))
     }
 
     pub fn len(&self) -> usize {
@@ -336,18 +392,7 @@ impl FounderPlan {
                     if !include_non_neural {
                         continue;
                     }
-                    if s.modality == Modality::VisionRay {
-                        // Azimuth spread around the facing direction; elevation stays
-                        // clamped at 0 for all of V1 (spec §4.1, §9.1).
-                        s.params = [
-                            rng.range(-core::f32::consts::PI, core::f32::consts::PI),
-                            0.0,
-                            params.sensing.vision_range,
-                            params.sensing.vision_fov,
-                        ];
-                    } else if s.modality == Modality::Chemo {
-                        s.params = [0.0, params.sensing.chemo_radius, 0.0, 0.0];
-                    }
+                    s.params = sensor_parameters(s.modality, &params.sensing, rng);
                 }
                 Gene::Body(b) => {
                     if !include_non_neural {
@@ -386,8 +431,12 @@ mod tests {
     use crate::genome::{Activation, BodyTrait, Gene, Modality, validate};
 
     fn plan(params: &SimParams) -> FounderPlan {
+        plan_with_rng(params, &mut Rng::from_seed(0))
+    }
+
+    fn plan_with_rng(params: &SimParams, rng: &mut Rng) -> FounderPlan {
         let mut next = 0u32;
-        FounderPlan::new(params, || {
+        FounderPlan::new(params, rng, || {
             next += 1;
             InnovationId::new(next - 1)
         })
@@ -408,53 +457,379 @@ mod tests {
     }
 
     #[test]
-    fn invalid_params_are_rejected_before_issuing_innovations() {
+    fn invalid_params_are_rejected_before_issuing_innovations_or_drawing_randomness() {
         type InvalidParams = (&'static str, fn(&mut SimParams));
-        let cases: [InvalidParams; 3] = [
+        let cases: [InvalidParams; 8] = [
             ("unrepresentable topology", |p| {
                 p.brain.hidden_neurons = u32::MAX
             }),
             ("oversized arena", |p| p.brain.hidden_neurons = 200),
             ("invalid timestep", |p| p.world.dt = 0.0),
+            ("unrepresentable chemo channels", |p| {
+                p.sensing.chemo_sensors = u32::MAX;
+                p.brain.connections_per_target = Some(0);
+            }),
+            ("unrepresentable energy inputs", |p| {
+                p.sensing.energy_sensors = u32::MAX;
+                p.brain.connections_per_target = Some(0);
+            }),
+            ("too many sensors", |p| p.sensing.chemo_sensors = 33),
+            ("sparse connections exceed limit", |p| {
+                p.brain.connections_per_target = Some(1);
+                p.storage.max_connections = 9;
+            }),
+            ("sparse plan exceeds budget", |p| {
+                p.brain.connections_per_target = Some(1);
+                p.storage.max_memory_bytes = 1;
+            }),
         ];
         for (name, invalidate) in cases {
             let mut params = SimParams::default();
             invalidate(&mut params);
             let mut requested = 0;
-            let result = FounderPlan::new(&params, || {
+            let mut rng = Rng::from_seed(42);
+            let before = rng.clone();
+            let result = FounderPlan::new(&params, &mut rng, || {
                 let id = InnovationId::new(requested);
                 requested += 1;
                 id
             });
             assert!(result.is_err(), "{name} was accepted");
             assert_eq!(requested, 0, "{name} consumed innovation ids");
+            assert_eq!(rng, before, "{name} consumed RNG");
         }
     }
 
     #[test]
     fn checked_counts_match_constructed_topologies() {
-        for (rays, hidden, oscillators) in [(0, 0, 0), (1, 3, 0), (3, 6, 2), (12, 32, 4)] {
+        for (rays, chemo, energy, hidden, oscillators) in [
+            (0, 0, 0, 0, 0),
+            (0, 1, 0, 0, 0),
+            (0, 0, 2, 0, 0),
+            (0, 0, 0, 3, 2),
+            (0, 1, 1, 0, 0),
+            (1, 1, 1, 3, 0),
+            (3, 1, 1, 6, 2),
+            (2, 3, 2, 2, 1),
+            (12, 1, 1, 32, 4),
+        ] {
+            for fan_in in [None, Some(0), Some(1), Some(2), Some(u32::MAX)] {
+                let mut params = SimParams::default();
+                params.storage.max_genes = 4_096;
+                params.storage.max_connections = 4_096;
+                params.sensing.vision_rays = rays;
+                params.sensing.chemo_sensors = chemo;
+                params.sensing.energy_sensors = energy;
+                params.brain.hidden_neurons = hidden;
+                params.brain.oscillators = oscillators;
+                params.brain.connections_per_target = fan_in;
+                assert_counts_and_wiring(&params, 42);
+            }
+        }
+    }
+
+    fn assert_counts_and_wiring(params: &SimParams, seed: u64) {
+        let counts = FounderPlan::checked_counts(params).expect("counts fit");
+        let plan = plan_with_rng(params, &mut Rng::from_seed(seed));
+        let genes = instantiate(&plan, params, seed);
+        assert_eq!(genome::validate_architecture(&genes), Ok(()));
+        assert_eq!(counts.genes as usize, plan.len());
+        assert_eq!(counts.neurons as usize, plan.neuron_count());
+
+        let mut channels = Vec::new();
+        let mut sensors = Vec::new();
+        let mut effectors = Vec::new();
+        let mut pairs = Vec::new();
+        for gene in &genes {
+            match gene {
+                Gene::Sensor(sensor) => {
+                    sensors.push(sensor.modality);
+                    channels.extend_from_slice(&sensor.targets[..sensor.modality.channels()]);
+                    assert!(
+                        sensor.targets[sensor.modality.channels()..]
+                            .iter()
+                            .all(|target| target.is_null())
+                    );
+                }
+                Gene::Effector(effector) => effectors.push(effector.action),
+                Gene::Connection(connection) => {
+                    assert!(connection.enabled);
+                    pairs.push((connection.from, connection.to));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(counts.sensor_channels as usize, channels.len());
+        channels.sort();
+        channels.dedup();
+        assert_eq!(counts.sensor_channels as usize, channels.len());
+        assert_eq!(counts.sensors as usize, sensors.len());
+        assert_eq!(
+            sensors,
+            [
+                vec![Modality::VisionRay; params.sensing.vision_rays as usize],
+                vec![Modality::Chemo; params.sensing.chemo_sensors as usize],
+                vec![Modality::Interoception; params.sensing.energy_sensors as usize],
+            ]
+            .concat()
+        );
+        assert_eq!(counts.effectors as usize, effectors.len());
+        assert_eq!(effectors, EFFECTORS);
+        assert_eq!(counts.synapses as usize, pairs.len());
+        pairs.sort();
+        pairs.dedup();
+        assert_eq!(counts.synapses as usize, pairs.len(), "duplicate edge");
+
+        let inputs = channels.len();
+        let output_end = inputs + EFFECTORS.len();
+        let hidden_end = output_end + params.brain.hidden_neurons as usize;
+        let sources = plan.neuron_count() - EFFECTORS.len();
+        let fan_in = params
+            .brain
+            .connections_per_target
+            .map_or(sources, |count| (count as usize).min(sources));
+        for (slot, neuron) in genes[..plan.neuron_count()].iter().enumerate() {
+            let incoming = pairs
+                .iter()
+                .filter(|(_, to)| Some(*to) == neuron.innovation())
+                .count();
+            assert_eq!(
+                incoming,
+                if (inputs..hidden_end).contains(&slot) {
+                    fan_in
+                } else {
+                    0
+                },
+                "wrong fan-in at neuron {slot}"
+            );
+        }
+        for (from, to) in pairs {
+            let source = genome::neuron_index(&genes, from).unwrap();
+            let target = genome::neuron_index(&genes, to).unwrap();
+            assert!(source < inputs || source >= output_end);
+            assert!((inputs..hidden_end).contains(&target));
+        }
+        assert_eq!(plan.fan_in_scale.len(), counts.synapses as usize);
+        assert!(
+            plan.fan_in_scale
+                .iter()
+                .all(|&scale| scale == 1.0 / math::sqrt(fan_in as f32))
+        );
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn varied_founder_topologies_have_exact_distinct_fan_in(
+            rays in 0u32..6,
+            chemo in 0u32..4,
+            energy in 0u32..4,
+            hidden in 0u32..8,
+            oscillators in 0u32..4,
+            fan_in in proptest::option::of(0u32..50),
+            seed in proptest::prelude::any::<u64>(),
+        ) {
             let mut params = SimParams::default();
-            params.storage.max_genes = 4_096;
-            params.storage.max_connections = 4_096;
             params.sensing.vision_rays = rays;
+            params.sensing.chemo_sensors = chemo;
+            params.sensing.energy_sensors = energy;
             params.brain.hidden_neurons = hidden;
             params.brain.oscillators = oscillators;
-            params.validate().expect("valid topology");
-            let counts = FounderPlan::checked_counts(&params).expect("counts fit");
-            let plan = plan(&params);
-            assert_eq!(counts.genes as usize, plan.len());
-            assert_eq!(counts.neurons as usize, plan.neuron_count());
-            let channels: usize = plan
-                .genes()
+            params.brain.connections_per_target = fan_in;
+            assert_counts_and_wiring(&params, seed);
+        }
+    }
+
+    #[test]
+    fn full_connectivity_is_dense_with_identical_ids_scalars_and_rng() {
+        let params = SimParams::default();
+        let sources =
+            FounderPlan::checked_counts(&params).unwrap().neurons - EFFECTORS.len() as u32;
+        for seed in [0, 1, 42] {
+            let mut dense_rng = Rng::from_seed(seed);
+            let before = dense_rng.clone();
+            let dense = plan_with_rng(&params, &mut dense_rng);
+            assert_eq!(dense_rng, before, "dense construction consumed RNG");
+            let mut dense_genes = vec![Gene::default(); dense.len()];
+            dense.instantiate(&mut dense_rng, &params, &mut dense_genes);
+            for fan_in in [sources, sources + 1, u32::MAX] {
+                let mut explicit = params.clone();
+                explicit.brain.connections_per_target = Some(fan_in);
+                let mut rng = Rng::from_seed(seed);
+                let full = plan_with_rng(&explicit, &mut rng);
+                assert_eq!(rng, before, "full construction consumed RNG");
+                assert_eq!(full.genes(), dense.genes());
+                assert_eq!(full.fan_in_scale, dense.fan_in_scale);
+                let mut genes = vec![Gene::default(); full.len()];
+                full.instantiate(&mut rng, &explicit, &mut genes);
+                assert_eq!(genes, dense_genes);
+                assert_eq!(rng, dense_rng);
+            }
+        }
+    }
+
+    #[test]
+    fn default_dense_connections_keep_source_major_innovation_order() {
+        let params = SimParams::default();
+        let plan = plan(&params);
+        assert_eq!(plan.len(), 284);
+        assert_eq!(plan.neuron_count(), 28);
+        let expected: Vec<_> = (0..16)
+            .chain(20..28)
+            .flat_map(|from| (16..26).map(move |to| (from, to)))
+            .enumerate()
+            .map(|(offset, (from, to))| (37 + offset as u32, from, to))
+            .collect();
+        let actual: Vec<_> = plan
+            .genes()
+            .iter()
+            .filter_map(|gene| match gene {
+                Gene::Connection(connection) => Some((
+                    connection.id.raw(),
+                    connection.from.raw(),
+                    connection.to.raw(),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn sparse_template_is_deterministic_and_shared_across_founders() {
+        let mut params = SimParams::default();
+        params.brain.connections_per_target = Some(2);
+        let mut rng = Rng::from_seed(42);
+        let before = rng.clone();
+        let first = plan_with_rng(&params, &mut rng);
+        let mut repeated_rng = Rng::from_seed(42);
+        let repeated = plan_with_rng(&params, &mut repeated_rng);
+        assert_ne!(
+            rng, before,
+            "sparse wiring must sample its source membership"
+        );
+        assert_eq!(rng, repeated_rng);
+        assert_eq!(first.genes(), repeated.genes());
+        assert_eq!(first.fan_in_scale, repeated.fan_in_scale);
+        assert_ne!(first.genes(), plan(&params).genes());
+
+        let mut a = vec![Gene::default(); first.len()];
+        let mut b = a.clone();
+        first.instantiate(&mut rng, &params, &mut a);
+        first.instantiate(&mut rng, &params, &mut b);
+        assert_ne!(a, b);
+        let topology = |genes: &[Gene]| {
+            genes
                 .iter()
                 .filter_map(|gene| match gene {
-                    Gene::Sensor(sensor) => Some(sensor.modality.channels()),
+                    Gene::Connection(c) => Some((c.id, c.from, c.to)),
                     _ => None,
                 })
-                .sum();
-            assert_eq!(counts.sensor_channels as usize, channels);
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(topology(&a), topology(first.genes()));
+        assert_eq!(topology(&b), topology(first.genes()));
+    }
+
+    #[test]
+    fn zero_connectivity_and_empty_source_sets_consume_no_topology_rng() {
+        for sensors in [false, true] {
+            for fan_in in [None, Some(0), Some(1), Some(u32::MAX)] {
+                if sensors && fan_in != Some(0) {
+                    continue;
+                }
+                let mut params = SimParams::default();
+                if !sensors {
+                    params.sensing.vision_rays = 0;
+                    params.sensing.chemo_sensors = 0;
+                    params.sensing.energy_sensors = 0;
+                    params.brain.hidden_neurons = 0;
+                    params.brain.oscillators = 0;
+                }
+                params.brain.connections_per_target = fan_in;
+                let mut rng = Rng::from_seed(42);
+                let before = rng.clone();
+                let plan = plan_with_rng(&params, &mut rng);
+                assert_eq!(rng, before);
+                assert!(plan.fan_in_scale.is_empty());
+                assert_eq!(crate::brain::synapse_count(plan.genes()), 0);
+                assert_eq!(validate(&instantiate(&plan, &params, 7)), Ok(()));
+            }
         }
+    }
+
+    #[test]
+    fn chemo_led_minimal_candidate_retains_effectors_body_and_compatibility_fields() {
+        let mut params = SimParams::default();
+        params.sensing.vision_rays = 0;
+        params.sensing.energy_sensors = 0;
+        params.brain.hidden_neurons = 0;
+        params.brain.oscillators = 0;
+        params.brain.connections_per_target = Some(1);
+        let plan = plan(&params);
+        assert_eq!(plan.neuron_count(), 7);
+        assert_eq!(plan.len(), 23);
+        assert_counts_and_wiring(&params, 42);
+        let genes = instantiate(&plan, &params, 42);
+        for trait_ in BODY_TRAITS {
+            assert!(
+                genes
+                    .iter()
+                    .any(|gene| matches!(gene, Gene::Body(b) if b.trait_ == trait_))
+            );
+        }
+        for trait_ in META_TRAITS {
+            assert!(
+                genes
+                    .iter()
+                    .any(|gene| matches!(gene, Gene::Meta(m) if m.trait_ == trait_))
+            );
+        }
+        for gene in genes {
+            match gene {
+                Gene::Sensor(sensor) => {
+                    assert_eq!(sensor.modality, Modality::Chemo);
+                    assert_eq!(sensor.params, [0.0, params.sensing.chemo_radius, 0.0, 0.0]);
+                    assert_eq!(sensor.targets[3], InnovationId::NULL);
+                }
+                Gene::Effector(e) if e.action == Action::Turn => {
+                    assert_eq!(e.params, [0.0, 0.0, 1.0, 0.0]);
+                }
+                Gene::Meta(m) if m.trait_ == MetaTrait::CrossoverRate => {
+                    assert_eq!(m.value, 0.0);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn sensor_initialization_uses_live_parameters_and_only_vision_draws() {
+        let params = SensingParams {
+            vision_range: 7.0,
+            vision_fov: 0.75,
+            chemo_radius: 3.0,
+            ..SensingParams::default()
+        };
+        let mut rng = Rng::from_seed(42);
+        let mut expected = rng.clone();
+        assert_eq!(
+            sensor_parameters(Modality::VisionRay, &params, &mut rng),
+            [
+                expected.range(-core::f32::consts::PI, core::f32::consts::PI),
+                0.0,
+                7.0,
+                0.75,
+            ]
+        );
+        assert_eq!(
+            sensor_parameters(Modality::Chemo, &params, &mut rng),
+            [0.0, 3.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            sensor_parameters(Modality::Interoception, &params, &mut rng),
+            [0.0; 4]
+        );
+        assert_eq!(rng, expected);
     }
 
     #[test]
@@ -503,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hardcoded_sensor_and_effector_set_is_present() {
+    fn the_shipped_sensor_and_effector_set_is_present() {
         let params = SimParams::default();
         let p = plan(&params);
         let sensors: Vec<Modality> = p

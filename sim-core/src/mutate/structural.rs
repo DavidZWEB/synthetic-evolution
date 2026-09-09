@@ -1,80 +1,20 @@
 //! Bounded, deterministic neural topology edits on caller-owned genome storage.
 //! This module preserves architecture and reports attempted edits; scalar mutation,
 //! birth admission, world-owned resources, and heredity policy live elsewhere.
-//! M3 sensor/organ operators belong in `mutate/organs.rs`; this module stays neural-only.
+//! Sensor/organ operators live in `mutate/organs.rs`; this module stays neural-only.
 
-use serde::{Deserialize, Serialize};
-
+use super::edit::{Growth, insert_gene, preflight_growth, select_index};
 use crate::genome::{self, Activation, ConnectionGene, Gene, NeuronGene};
 use crate::ids::{InnovationId, reserve_innovations};
 use crate::math;
-use crate::params::{SimParams, StorageParams};
+use crate::params::SimParams;
 use crate::rng::Rng;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StructuralOperator {
-    RemoveConnection,
-    RemoveNeuron,
-    ToggleConnection,
-    AddConnection,
-    AddNeuron,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StructuralMutationResult {
-    Applied,
-    NoCandidate,
-    GenomeLimit,
-    ScratchLimit,
-    InnovationExhausted,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StructuralMutationEvent {
-    pub operator: StructuralOperator,
-    pub outcome: StructuralMutationResult,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OperatorCounts {
-    pub attempted: u64,
-    pub applied: u64,
-    pub no_candidate: u64,
-    pub genome_limit: u64,
-    pub scratch_limit: u64,
-    pub innovation_exhausted: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StructuralMutationCounts {
-    pub remove_connection: OperatorCounts,
-    pub remove_neuron: OperatorCounts,
-    pub toggle_connection: OperatorCounts,
-    pub add_connection: OperatorCounts,
-    pub add_neuron: OperatorCounts,
-}
-
-impl StructuralMutationCounts {
-    /// Counts candidate edits, including ones whose eventual birth fails (spec §3.3).
-    pub fn record(&mut self, event: StructuralMutationEvent) {
-        let counts = match event.operator {
-            StructuralOperator::RemoveConnection => &mut self.remove_connection,
-            StructuralOperator::RemoveNeuron => &mut self.remove_neuron,
-            StructuralOperator::ToggleConnection => &mut self.toggle_connection,
-            StructuralOperator::AddConnection => &mut self.add_connection,
-            StructuralOperator::AddNeuron => &mut self.add_neuron,
-        };
-        counts.attempted = counts.attempted.saturating_add(1);
-        let outcome = match event.outcome {
-            StructuralMutationResult::Applied => &mut counts.applied,
-            StructuralMutationResult::NoCandidate => &mut counts.no_candidate,
-            StructuralMutationResult::GenomeLimit => &mut counts.genome_limit,
-            StructuralMutationResult::ScratchLimit => &mut counts.scratch_limit,
-            StructuralMutationResult::InnovationExhausted => &mut counts.innovation_exhausted,
-        };
-        *outcome = outcome.saturating_add(1);
-    }
-}
+// Preserve the M2 observation paths while both operator families share their types.
+pub use super::{
+    OperatorCounts, StructuralMutationCounts, StructuralMutationEvent, StructuralMutationResult,
+    StructuralOperator,
+};
 
 pub(crate) fn apply(
     genes: &mut Vec<Gene>,
@@ -109,24 +49,13 @@ pub(crate) fn apply(
             StructuralOperator::ToggleConnection => toggle_connection(genes, state.rng),
             StructuralOperator::AddConnection => add_connection(genes, params, state),
             StructuralOperator::AddNeuron => add_neuron(genes, params, state),
+            StructuralOperator::RemoveSensor | StructuralOperator::AddSensor => {
+                unreachable!("organ operators have their own pass")
+            }
         };
         debug_assert!(genome::validate_architecture(genes).is_ok());
         on_event(StructuralMutationEvent { operator, outcome });
     }
-}
-
-fn select_index<T>(items: &[T], rng: &mut Rng, eligible: impl Fn(&T) -> bool) -> Option<usize> {
-    let count = items.iter().filter(|item| eligible(item)).count();
-    if count == 0 {
-        return None;
-    }
-    let rank = rng.below(count as u32) as usize;
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| eligible(item))
-        .nth(rank)
-        .map(|(index, _)| index)
 }
 
 fn remove_connection(genes: &mut Vec<Gene>, rng: &mut Rng) -> StructuralMutationResult {
@@ -277,7 +206,15 @@ fn add_connection(
         }
         return StructuralMutationResult::Applied;
     }
-    if let Err(outcome) = preflight_growth(genes, &params.storage, state.neuron_scratch, 0, 1) {
+    if let Err(outcome) = preflight_growth(
+        genes,
+        &params.storage,
+        state.neuron_scratch,
+        Growth {
+            connections: 1,
+            ..Growth::default()
+        },
+    ) {
         return outcome;
     }
     let Ok(id) = reserve_innovations(state.next_innovation, 1) else {
@@ -314,7 +251,16 @@ fn add_neuron(
     ) else {
         return StructuralMutationResult::NoCandidate;
     };
-    if let Err(outcome) = preflight_growth(genes, &params.storage, state.neuron_scratch, 1, 2) {
+    if let Err(outcome) = preflight_growth(
+        genes,
+        &params.storage,
+        state.neuron_scratch,
+        Growth {
+            neurons: 1,
+            connections: 2,
+            ..Growth::default()
+        },
+    ) {
         return outcome;
     }
     let Ok(id) = reserve_innovations(state.next_innovation, 3) else {
@@ -354,49 +300,6 @@ fn add_neuron(
         }),
     );
     StructuralMutationResult::Applied
-}
-
-fn fits(current: usize, extra: usize, limit: usize) -> bool {
-    current
-        .checked_add(extra)
-        .is_some_and(|total| total <= limit)
-}
-
-fn preflight_growth(
-    genes: &Vec<Gene>,
-    limits: &StorageParams,
-    neuron_scratch: &[u32],
-    extra_neurons: usize,
-    extra_connections: usize,
-) -> Result<(), StructuralMutationResult> {
-    let neurons = genome::neuron_count(genes);
-    let connections = genes
-        .iter()
-        .filter(|gene| matches!(gene, Gene::Connection(_)))
-        .count();
-    let extra_genes = extra_neurons + extra_connections;
-    if !fits(genes.len(), extra_genes, limits.max_genes as usize)
-        || !fits(neurons, extra_neurons, limits.max_neurons as usize)
-        || !fits(
-            connections,
-            extra_connections,
-            limits.max_connections as usize,
-        )
-    {
-        return Err(StructuralMutationResult::GenomeLimit);
-    }
-    if !fits(genes.len(), extra_genes, genes.capacity())
-        || !fits(neurons, extra_neurons, neuron_scratch.len())
-    {
-        return Err(StructuralMutationResult::ScratchLimit);
-    }
-    Ok(())
-}
-
-fn insert_gene(genes: &mut Vec<Gene>, gene: Gene) {
-    debug_assert!(genes.len() < genes.capacity());
-    let index = genes.partition_point(|existing| existing.sort_key() < gene.sort_key());
-    genes.insert(index, gene);
 }
 
 #[cfg(test)]
@@ -465,6 +368,9 @@ mod tests {
             StructuralOperator::ToggleConnection => structural.toggle_connection_rate = rate,
             StructuralOperator::AddConnection => structural.add_connection_rate = rate,
             StructuralOperator::AddNeuron => structural.add_neuron_rate = rate,
+            StructuralOperator::RemoveSensor | StructuralOperator::AddSensor => {
+                unreachable!("neural test helper")
+            }
         }
     }
 
@@ -1172,8 +1078,6 @@ mod tests {
             }
             assert_eq!(rng, expected_rng);
         }
-        assert!(!fits(usize::MAX, 1, usize::MAX));
-        assert!(fits(usize::MAX - 1, 1, usize::MAX));
     }
 
     #[test]
@@ -1208,6 +1112,7 @@ mod tests {
                 toggle_connection: expected,
                 add_connection: expected,
                 add_neuron: expected,
+                ..StructuralMutationCounts::default()
             }
         );
         assert_eq!(
@@ -1220,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn all_observer_counters_saturate() {
+    fn neural_observer_counters_saturate() {
         let almost = OperatorCounts {
             attempted: u64::MAX - 1,
             applied: u64::MAX - 1,
@@ -1235,6 +1140,7 @@ mod tests {
             toggle_connection: almost,
             add_connection: almost,
             add_neuron: almost,
+            ..StructuralMutationCounts::default()
         };
         for _ in 0..2 {
             for operator in OPERATORS {
@@ -1259,6 +1165,7 @@ mod tests {
                 toggle_connection: saturated,
                 add_connection: saturated,
                 add_neuron: saturated,
+                ..StructuralMutationCounts::default()
             }
         );
     }
