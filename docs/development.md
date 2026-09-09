@@ -367,8 +367,8 @@ The existing native/WASM parameter JSON accepts:
 ```
 
 Coefficients must be finite and nonnegative. Omitted values retain these defaults;
-there is no `threshold` field yet. They may be retuned while classification is absent;
-the species slice must establish its own historical-consistency policy. Standalone
+there is no `threshold` field yet. They may be retuned while World classification is absent;
+the standalone classifier freezes its own copy at construction. Standalone
 Rust callers validate genomes with `genome::validate` and coefficients with
 `DistanceParams::validate` before calling `between`.
 
@@ -381,6 +381,47 @@ against the retained original. These are historical-marker effects, not evidence
 new species or useful divergence. Thresholds and deletion-default calibration remain
 pending. Telemetry schema/control identities are unchanged: no species or distance
 observations are being claimed by this foundation.
+
+### Standalone species classifier (M4)
+
+`sim_core::species::Classifier::try_new(capacity, max_genes, threshold, coefficients,
+max_memory_bytes)` constructs the approved classifier independently of World.
+There is intentionally no shipped threshold or species configuration in `SimParams`
+yet. Threshold must be finite and positive; coefficients use `DistanceParams`
+validation. Configuration is owned and immutable after construction.
+
+`classify` takes a coherent genome and counts one admitted member, returning a
+typed species ID and whether the species was created. Hosts must call it once per
+successful birth/founder, record the assignment, and call `remove_member` exactly
+once for each classified death. Failed classification returns an explicit
+`Unclassified` reason without consuming an ID or member. It must not be used to
+deny reproduction. Unclassified individuals stay unclassified, while their
+descendants can be independently assigned.
+
+Representatives are immutable copies. They survive the original agent and are
+released only when membership reaches zero; that departure returns `Extinct`
+once. Retired IDs never return, even if a storage slot is reused. Active iteration
+is in ascending historical-ID order. There is no retained history buffer.
+
+`estimated_construction_bytes` includes full per-slot gene reservations plus all
+metadata. The approved 256-slot / 1,024-gene policy requests **10,492,936 bytes**
+with the current layouts. This is separate from World today; the integration must
+charge it to World's existing core budget before allocation rather than silently
+increase that budget. Zero capacity requests no buffers and reports unclassified
+capacity outcomes. The constructor validates portable buffer limits and propagates
+host reservation failures.
+
+To reproduce the bounded high-churn exercise:
+
+```bash
+cargo test --release -p sim-core --test species full_capacity_churn_reuses_storage_without_reusing_ids -- --nocapture
+```
+
+It retires and recreates 2,048 representatives at 256 active species, checking IDs
+and membership totals and reporting time/reserved memory without a timing threshold.
+Its three-gene inputs exercise infrastructure, not worst-case genome comparison cost
+or ecological adaptation. World admission/death wiring, unclassified telemetry,
+classifier-state hashing, and a chosen default threshold remain the next slice.
 
 ### Telemetry protocol and observations
 

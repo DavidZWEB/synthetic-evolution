@@ -33,6 +33,15 @@ mod organs_case;
 #[path = "../../../sim-core/tests/common/distance_case.rs"]
 mod distance_case;
 
+#[path = "../../../sim-core/tests/common/species_case.rs"]
+mod species_case;
+
+#[wasm_bindgen_test]
+fn standalone_species_agree_with_native() {
+    species_case::check_species_cases();
+    species_case::check_marker_turnover();
+}
+
 #[wasm_bindgen_test]
 fn genetic_distance_agrees_with_native() {
     distance_case::check_distance_cases();

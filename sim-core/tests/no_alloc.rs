@@ -105,6 +105,34 @@ fn genetic_distance_never_allocates_or_changes_a_world() {
 }
 
 #[test]
+fn species_assignment_refusal_and_retirement_never_allocate() {
+    use sim_core::species::{Classifier, Departure, Unclassified};
+    let params = SimParams::default();
+    let mut world_params = params.clone();
+    world_params.world.max_agents = 4;
+    world_params.plants.max_plants = 8;
+    let mut world = World::new(42, world_params).unwrap();
+    world.seed_founders(2);
+    let genes = world.genome(AgentId::new(0));
+    let other = world.genome(AgentId::new(1));
+    let before = world.state_hash();
+    let mut classifier =
+        Classifier::try_new(1, 1024, f64::MIN_POSITIVE, params.distance, 65536).unwrap();
+    let observed = count_allocations(|| {
+        for _ in 0..100 {
+            let id = classifier.classify(genes).unwrap().species;
+            assert_eq!(classifier.classify(other), Err(Unclassified::Capacity));
+            assert_eq!(classifier.classify(genes).unwrap().species, id);
+            assert_eq!(classifier.remove_member(id), Ok(Departure::MemberRemoved));
+            assert_eq!(classifier.remove_member(id), Ok(Departure::Extinct));
+            assert!(classifier.remove_member(id).is_err());
+        }
+    });
+    assert_eq!(observed, 0, "species operations allocated {observed} times");
+    assert_eq!(world.state_hash(), before);
+}
+
+#[test]
 fn variable_arena_churn_and_refusals_never_allocate() {
     let mut arena = VariableArena::<u32>::try_with_capacity(96, 8).unwrap();
     let mut limited = VariableArena::<u32>::try_with_capacity(8, 1).unwrap();
