@@ -190,11 +190,36 @@ mod tests {
             Modality::Chemo,
             Modality::Interoception,
         ] {
-            let params = params_for(modality);
+            let mut params = params_for(modality);
+            params.brain.tau_min = 0.375;
+            params.brain.tau_max = 1.625;
+            params.sensing.vision_range = 37.0;
+            params.sensing.vision_fov = 0.375;
+            params.sensing.chemo_radius = 23.0;
             let mut genes = prepared(32);
+            let original = genes[0];
+            let pointer = genes.as_ptr();
             let mut next = 10;
             let mut rng = Rng::from_seed(42);
-            let events = run(&mut genes, &params, &mut rng, &mut next, &mut [0; 16]);
+            let mut reference = rng.clone();
+            reference.chance(1.0);
+            reference.unit();
+            let taus: Vec<_> = (0..modality.channels())
+                .map(|_| reference.range(params.brain.tau_min, params.brain.tau_max))
+                .collect();
+            let expected_params = match modality {
+                Modality::VisionRay => [
+                    reference.range(-core::f32::consts::PI, core::f32::consts::PI),
+                    0.0,
+                    params.sensing.vision_range,
+                    params.sensing.vision_fov,
+                ],
+                Modality::Chemo => [0.0, params.sensing.chemo_radius, 0.0, 0.0],
+                Modality::Interoception => [0.0; 4],
+            };
+            let mut scratch = [91; 16];
+            let events = run(&mut genes, &params, &mut rng, &mut next, &mut scratch);
+            assert_eq!(events.len(), 1);
             assert_eq!(events[0].outcome, StructuralMutationResult::Applied);
             assert_eq!(genes.len(), modality.channels() + 2);
             assert_eq!(genome::neuron_count(&genes), modality.channels() + 1);
@@ -207,6 +232,8 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(sensor.modality, modality);
+            assert_eq!(sensor.id.raw(), 10 + modality.channels() as u32);
+            assert_eq!(sensor.params, expected_params);
             for (channel, &target) in sensor.targets.iter().enumerate() {
                 if channel < modality.channels() {
                     assert_eq!(target.raw(), 10 + channel as u32);
@@ -214,6 +241,9 @@ mod tests {
                         .as_neuron()
                         .unwrap();
                     assert_eq!(n.bias, params.mutation.organs.neuron_bias);
+                    assert_eq!(n.tau, taus[channel]);
+                    assert_eq!(n.activation, Activation::Sigmoid);
+                    assert_eq!(n.period, 0.0);
                     assert!((params.brain.tau_min..=params.brain.tau_max).contains(&n.tau));
                 } else {
                     assert!(target.is_null());
@@ -231,6 +261,10 @@ mod tests {
                 Modality::Interoception => assert_eq!(sensor.params, [0.0; 4]),
             }
             assert_eq!(next, 11 + modality.channels() as u32);
+            assert_eq!(rng, reference);
+            assert_eq!(scratch, [91; 16]);
+            assert_eq!(genes[0], original);
+            assert_eq!(genes.as_ptr(), pointer);
             genome::validate_architecture(&genes).unwrap();
         }
     }
@@ -264,7 +298,7 @@ mod tests {
         let before = genes.clone();
         let mut rng = Rng::from_seed(7);
         let original = rng.clone();
-        let mut next = 10;
+        let mut next = NULL_ID;
         let mut scratch = [91; 8];
         assert!(
             run(
@@ -278,20 +312,37 @@ mod tests {
         );
         assert_eq!(genes, before);
         assert_eq!(rng, original);
-        assert_eq!(next, 10);
+        assert_eq!(next, NULL_ID);
         assert_eq!(scratch, [91; 8]);
     }
 
     #[test]
     fn refusal_is_atomic_and_consumes_no_initialization_draws() {
-        for case in 0..7 {
-            let mut params = params_for(Modality::VisionRay);
-            let mut genes = prepared(if case == 5 { 5 } else { 32 });
-            let mut scratch = vec![0; if case == 4 { 4 } else { 16 }];
-            let mut next = if case == 6 { NULL_ID - 4 } else { 10 };
+        for (modality, case) in [
+            Modality::VisionRay,
+            Modality::Chemo,
+            Modality::Interoception,
+        ]
+        .into_iter()
+        .flat_map(|modality| (0..8).map(move |case| (modality, case)))
+        {
+            if case == 3 && modality != Modality::VisionRay {
+                continue;
+            }
+            let channels = modality.channels();
+            let mut params = params_for(modality);
+            let mut genes = prepared(if case == 5 { channels + 1 } else { 32 });
+            let pointer = genes.as_ptr();
+            let mut scratch = vec![91; if case == 4 { channels } else { 16 }];
+            let original_scratch = scratch.clone();
+            let mut next = match case {
+                6 => NULL_ID - channels as u32,
+                7 => NULL_ID,
+                _ => 10,
+            };
             match case {
-                0 => params.storage.max_genes = 5,
-                1 => params.storage.max_neurons = 4,
+                0 => params.storage.max_genes = channels as u32 + 1,
+                1 => params.storage.max_neurons = channels as u32,
                 2 => params.storage.max_sensors = 0,
                 3 => params.storage.max_vision_rays = 0,
                 _ => {}
@@ -308,33 +359,52 @@ mod tests {
                 4..=5 => StructuralMutationResult::ScratchLimit,
                 _ => StructuralMutationResult::InnovationExhausted,
             };
+            assert_eq!(events.len(), 1);
             assert_eq!(events[0].outcome, expected);
             assert_eq!(genes, original);
             assert_eq!(next, original_id);
             assert_eq!(rng, reference);
+            assert_eq!(scratch, original_scratch);
+            assert_eq!(genes.as_ptr(), pointer);
         }
     }
 
     #[test]
-    fn final_id_range_can_create_a_whole_eye_without_null_ids() {
-        let mut genes = prepared(32);
-        let mut next = NULL_ID - 5;
-        let events = run(
-            &mut genes,
-            &params_for(Modality::VisionRay),
-            &mut Rng::from_seed(1),
-            &mut next,
-            &mut [0; 16],
-        );
-        assert_eq!(events[0].outcome, StructuralMutationResult::Applied);
-        assert_eq!(next, NULL_ID);
-        assert!(
-            genes
-                .iter()
-                .filter_map(Gene::innovation)
-                .all(|id| !id.is_null())
-        );
-        genome::validate_architecture(&genes).unwrap();
+    fn final_id_range_can_create_every_modality_without_null_ids() {
+        for modality in [
+            Modality::VisionRay,
+            Modality::Chemo,
+            Modality::Interoception,
+        ] {
+            let mut genes = prepared(32);
+            let first = NULL_ID - modality.channels() as u32 - 1;
+            let mut next = first;
+            let params = params_for(modality);
+            let mut rng = Rng::from_seed(1);
+            let events = run(&mut genes, &params, &mut rng, &mut next, &mut [0; 16]);
+            assert_eq!(events[0].outcome, StructuralMutationResult::Applied);
+            assert_eq!(next, NULL_ID);
+            let Gene::Sensor(sensor) = genes.last().unwrap() else {
+                panic!("sensor sorts after the neurons");
+            };
+            assert_eq!(sensor.id.raw(), NULL_ID - 1);
+            for (channel, target) in sensor.targets[..modality.channels()].iter().enumerate() {
+                assert_eq!(target.raw(), first + channel as u32);
+            }
+            genome::validate_architecture(&genes).unwrap();
+            let original = genes.clone();
+            let mut reference = rng.clone();
+            reference.chance(1.0);
+            reference.unit();
+            let events = run(&mut genes, &params, &mut rng, &mut next, &mut [0; 16]);
+            assert_eq!(
+                events[0].outcome,
+                StructuralMutationResult::InnovationExhausted
+            );
+            assert_eq!(genes, original);
+            assert_eq!(rng, reference);
+            assert_eq!(next, NULL_ID);
+        }
     }
 
     #[test]
@@ -343,6 +413,8 @@ mod tests {
         genes.extend_from_slice(&tiny());
         let mut params = params_for(Modality::VisionRay);
         params.mutation.organs.remove_sensor_rate = 1.0;
+        params.storage.max_sensors = 1;
+        params.storage.max_genes = genes.len() as u32 + 4;
         let events = run(
             &mut genes,
             &params,
