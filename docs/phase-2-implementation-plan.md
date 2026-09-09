@@ -5,8 +5,8 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M3 sensor mutation and configurable founders are implemented under their
-approved contract.** Distance/deletion-default calibration, the actual
+**Status: M3 is complete; M4's approved genetic-distance foundation is implemented.**
+Species policy and distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -21,11 +21,11 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1 and M2-M3 operator/founder/control contracts approved; later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3 contracts, and D4 distance foundation approved; species/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
-| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | not started |
+| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | distance foundation implemented; classification policy still pending |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
@@ -232,18 +232,25 @@ the interpretation of Phase 1's `randomized_at_birth` records.
 
 ### D4 - Genetic distance over typed genes
 
-**Recommendation:** retain spec section 3.4's formula, counting disjoint/excess genes over
+**Approved for the first M4 slice:** retain spec section 3.4's formula, counting disjoint/excess genes over
 innovation-bearing kinds, aligned within each kind. Normalize by the larger total
 number of innovation-bearing genes, with a denominator of at least one. Average
 weight differences over matching connections, including disabled ones; use zero
 when there are no matches. Body/meta genes have no innovation ID and do not
 participate in that structural term.
 
-Approve this interpretation and the coefficients/threshold before implementation:
-connection-only distance is another reasonable choice, but it under-reports organ
-gain/loss. This proposal does not add bias, tau, sensor-parameter, or enabled-state
-distance terms. Similarity by this formula is not full genome equality. Avoid an
-implicit small-genome normalization heuristic; any such policy must be explicit.
+The approved starting coefficients are 1.0 / 1.0 / 0.4 for disjoint, excess, and
+matching-weight terms, respectively. This deliberately counts organ gain/loss rather
+than measuring connections alone. Bias, tau, sensor-parameter, binding, enabled-state,
+and body/meta differences add no terms. Similarity by this formula is not full genome
+equality. There is no implicit small-genome normalization heuristic.
+
+**Approved staging:** implement the allocation-free distance components and weighted
+comparison first, without species assignment or changed trajectories. Coefficients
+are runtime JSON configuration; the threshold and D5 classification/storage policies
+remain gated for the subsequent slice. The provisional §5.5 threshold is not a
+calibrated default. Use f64 arithmetic on finite f32 weights/coefficients to avoid
+overflow at valid representation extremes.
 
 **D2's physical deletion changes how this distance should be interpreted.** Matching
 surviving IDs still marks shared origin, but a deleted then independently recreated
@@ -461,6 +468,13 @@ sensor scenario pins sparse founders, eye acquisition, removal, bounded refusal,
 and slot reuse in both modes.
 
 ## M4 - Genetic distance and species assignment
+
+**First slice delivered:** `distance::between` exposes raw disjoint/excess counts,
+normalization, matching-connection count, mean weight difference, and the weighted
+value. `SimParams.distance` admits configurable coefficients without a species
+threshold or changes to world dynamics. Hand-worked and native/WASM comparisons
+separate deletion/recreation history from retained-ID toggling; classification and
+the remaining acceptance criteria below are not delivered by that measurement alone.
 
 Implement D4/D5 as separate systems with world-owned state. Reuse innovation
 alignment conventions without coupling classification to crossover. No mating,
