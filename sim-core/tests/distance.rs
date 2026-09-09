@@ -3,8 +3,11 @@
 //! Classification and threshold policy are deliberately outside this first M4 slice.
 
 use proptest::prelude::*;
+use sim_core::InnovationId;
 use sim_core::distance::{self, Distance};
-use sim_core::genome::{self, BodyGene, BodyTrait, Gene, MetaGene, MetaTrait};
+use sim_core::genome::{
+    self, BodyGene, BodyTrait, EffectorGene, Gene, MetaGene, MetaTrait, Modality, SensorGene,
+};
 use sim_core::params::DistanceParams;
 
 #[path = "common/distance_case.rs"]
@@ -192,10 +195,34 @@ fn generated_genome() -> impl Strategy<Value = Vec<Gene>> {
     (
         prop::collection::btree_set(2u32..10, 0..8),
         prop::collection::btree_map(10u32..14, (-1000i32..1000, any::<bool>()), 0..4),
+        prop::collection::btree_set(20u32..24, 0..4),
+        prop::collection::btree_set(30u32..34, 0..4),
+        prop::option::of(0.0f32..4.0),
+        prop::option::of(0.0f32..1.0),
     )
-        .prop_map(|(neurons, connections)| {
+        .prop_map(|(neurons, connections, sensors, effectors, body, meta)| {
             let mut genes = vec![neuron(0), neuron(1)];
             genes.extend(neurons.into_iter().map(neuron));
+            genes.extend(sensors.into_iter().map(|id| {
+                Gene::Sensor(SensorGene {
+                    id: InnovationId::new(id),
+                    modality: Modality::Interoception,
+                    targets: [
+                        InnovationId::new(id % 2),
+                        InnovationId::NULL,
+                        InnovationId::NULL,
+                        InnovationId::NULL,
+                    ],
+                    ..Default::default()
+                })
+            }));
+            genes.extend(effectors.into_iter().map(|id| {
+                Gene::Effector(EffectorGene {
+                    id: InnovationId::new(id),
+                    source: InnovationId::new(id % 2),
+                    ..Default::default()
+                })
+            }));
             genes.extend(connections.into_iter().map(|(id, (weight, enabled))| {
                 connection(
                     id,
@@ -204,6 +231,18 @@ fn generated_genome() -> impl Strategy<Value = Vec<Gene>> {
                     weight as f32 / 8.0,
                     enabled,
                 )
+            }));
+            genes.extend(body.map(|value| {
+                Gene::Body(BodyGene {
+                    trait_: BodyTrait::Size,
+                    value,
+                })
+            }));
+            genes.extend(meta.map(|value| {
+                Gene::Meta(MetaGene {
+                    trait_: MetaTrait::MutationRate,
+                    value,
+                })
             }));
             genes
         })
@@ -220,6 +259,8 @@ proptest! {
             excess_coefficient: excess,
             weight_coefficient: weight,
         };
+        prop_assert_eq!(genome::validate(&a), Ok(()));
+        prop_assert_eq!(genome::validate(&b), Ok(()));
         let measured = distance::between(&a, &b, &params);
         prop_assert_eq!(measured, reference(&a, &b, &params));
         prop_assert_eq!(measured, distance::between(&b, &a, &params));
