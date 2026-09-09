@@ -116,6 +116,10 @@ impl Classifier {
     /// Reserves `max_genes` for every representative, even a short or empty genome.
     /// Includes the arena's span metadata and the active-entry buffer.
     pub fn estimated_construction_bytes(capacity: u32, max_genes: u32) -> Result<u64, ParamError> {
+        Self::construction_layout(capacity, max_genes).map(|(_, bytes)| bytes)
+    }
+
+    fn construction_layout(capacity: u32, max_genes: u32) -> Result<(u32, u64), ParamError> {
         if max_genes == 0 {
             return Err(ParamError("species max_genes must be positive"));
         }
@@ -143,7 +147,7 @@ impl Classifier {
             }
             total += bytes;
         }
-        Ok(total)
+        Ok((genes, total))
     }
 
     /// Copies and freezes the coefficients and explicit threshold at construction.
@@ -163,15 +167,15 @@ impl Classifier {
                 "species threshold must be finite and positive",
             )));
         }
-        let bytes = Self::estimated_construction_bytes(capacity, max_genes)
-            .map_err(BuildError::Parameters)?;
+        let (gene_capacity, bytes) =
+            Self::construction_layout(capacity, max_genes).map_err(BuildError::Parameters)?;
         if bytes > max_memory_bytes {
             return Err(BuildError::Parameters(ParamError(
                 "species construction exceeds the supplied memory budget",
             )));
         }
-        let representatives = VariableArena::try_with_capacity(capacity * max_genes, capacity)
-            .map_err(BuildError::Arena)?;
+        let representatives =
+            VariableArena::try_with_capacity(gene_capacity, capacity).map_err(BuildError::Arena)?;
         let mut entries = Vec::new();
         entries
             .try_reserve_exact(capacity as usize)
