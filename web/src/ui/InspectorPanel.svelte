@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Inspection } from '../inspect/model';
-  import { summarizeGenes } from '../inspect/model';
+  import { speciesLabel, summarizeGenes } from '../inspect/model';
 
   let {
     selectedIndex,
@@ -59,7 +59,7 @@
       <div><dt>slot incarnation</dt><dd>{inspection.incarnation}</dd></div>
       <div><dt>energy</dt><dd>{inspection.energy.toFixed(2)}</dd></div>
       <div><dt>age</dt><dd>{inspection.age}</dd></div>
-      <div><dt>species</dt><dd>{inspection.species_id} (Phase 2 placeholder)</dd></div>
+      <div><dt>species</dt><dd>{speciesLabel(inspection.species_id)}</dd></div>
       <div><dt>size</dt><dd>{inspection.size.toFixed(2)}</dd></div>
       <div><dt>brain units</dt><dd>{inspection.brain_units}</dd></div>
       <div><dt>sensor load</dt><dd>{inspection.sensor_load.toFixed(1)}</dd></div>

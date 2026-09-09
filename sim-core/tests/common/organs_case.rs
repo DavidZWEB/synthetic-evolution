@@ -10,7 +10,9 @@ use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
 pub const EVOLVING_GOLDEN: u64 = 0x6716_4974_c6e4_26cb;
-pub const CONTROL_GOLDEN: u64 = 0x48e7_c54a_b9dd_b1ed;
+// M4 integration: real species labels change this control scenario's metadata.
+// Ecology and RNG are unchanged; full classifier-state coverage lands separately.
+pub const CONTROL_GOLDEN: u64 = 0x3dcf_8860_8b54_8d0e;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();

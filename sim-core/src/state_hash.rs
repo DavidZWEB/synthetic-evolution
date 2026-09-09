@@ -177,6 +177,16 @@ impl World {
     /// and params must agree on this exactly; if they do not, something in the tick is
     /// reading an order it should not be.
     pub fn state_hash(&self) -> u64 {
+        self.hash_state(true)
+    }
+
+    /// Test-only legacy fingerprint: mask classification, not ecological state or RNG.
+    #[cfg(test)]
+    pub(crate) fn ecology_hash(&self) -> u64 {
+        self.hash_state(false)
+    }
+
+    fn hash_state(&self, include_classification: bool) -> u64 {
         let mut h = Fnv1a::new();
 
         h.u64(self.tick_count());
@@ -227,7 +237,11 @@ impl World {
             h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.age[i]);
-            h.u32(agents.species_id[i]);
+            h.u32(if include_classification {
+                agents.species_id[i]
+            } else {
+                0
+            });
             h.f32(agents.size[i]);
             h.u32(agents.parent_a[i]);
             h.u32(agents.parent_b[i]);

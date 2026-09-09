@@ -16,6 +16,24 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
     writeln!(output, "samples: {}", report.samples)?;
     write_findings(output, "evolving", &report.evolving)?;
     write_findings(output, "scalar control", &report.random_control)?;
+    writeln!(
+        output,
+        "species (observational labels, not adaptive success; monoculture uses exact genomes):"
+    )?;
+    for (name, summary) in [
+        ("evolving", &report.species.evolving),
+        ("scalar control", &report.species.random_control),
+    ] {
+        if let Some(summary) = summary {
+            writeln!(
+                output,
+                "  - {name} at tick {}: active_species={}, unclassified_population={}",
+                summary.tick, summary.active_species, summary.unclassified_population
+            )?;
+        } else {
+            writeln!(output, "  - {name}: unavailable")?;
+        }
+    }
     writeln!(output, "comparison:")?;
     if let Some(reason) = &report.comparison.unavailable {
         writeln!(output, "  - not run: {reason}")?;

@@ -4,6 +4,8 @@ export interface MetricSample {
   tick: bigint;
   population: number;
   descendants: number;
+  speciesCount: number;
+  unclassifiedPopulation: number;
   meanEnergy: number;
 }
 
@@ -11,6 +13,8 @@ interface MetricMessage {
   tick: string;
   population: number;
   descendants: number;
+  speciesCount: number;
+  unclassifiedPopulation: number;
   meanEnergy: number;
 }
 
@@ -23,6 +27,13 @@ export function metricFromMessage(message: MetricMessage): MetricSample {
     !Number.isSafeInteger(message.descendants) ||
     message.descendants < 0 ||
     message.descendants > message.population ||
+    !Number.isSafeInteger(message.speciesCount) ||
+    message.speciesCount < 0 ||
+    !Number.isSafeInteger(message.unclassifiedPopulation) ||
+    message.unclassifiedPopulation < 0 ||
+    message.unclassifiedPopulation > message.population ||
+    message.speciesCount > message.population - message.unclassifiedPopulation ||
+    (message.speciesCount === 0) !== (message.population === message.unclassifiedPopulation) ||
     !Number.isFinite(message.meanEnergy) ||
     message.meanEnergy < 0
   ) {
@@ -32,6 +43,8 @@ export function metricFromMessage(message: MetricMessage): MetricSample {
     tick,
     population: message.population,
     descendants: message.descendants,
+    speciesCount: message.speciesCount,
+    unclassifiedPopulation: message.unclassifiedPopulation,
     meanEnergy: message.meanEnergy,
   };
 }

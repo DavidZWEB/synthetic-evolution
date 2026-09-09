@@ -80,9 +80,25 @@ test('sparse no-eye founder and organ config round-trips in both heredity modes'
         brain: { hidden_neurons: 0, oscillators: 0, connections_per_target: connectionsPerTarget },
         mutation: { organs: { remove_sensor_rate: 0.001, add_sensor_rate: 0.001 } },
       });
+
       const config = { seed: '9007199254740993', founders: 2, brainInheritance, params };
       const href = writeRunUrl('https://example.test/', config);
       assert.deepEqual(readRunUrl(href, 2000), config);
+      assert.equal(writeRunUrl(href, readRunUrl(href, 2000)), href);
+    }
+  }
+});
+
+test('species policy and frozen distance coefficients survive sharing in both heredity modes', () => {
+  for (const brainInheritance of [EVOLVING, RANDOMIZED_AT_BIRTH]) {
+    for (const capacity of [0, 4, 256]) {
+      const params = JSON.stringify({
+        species: { capacity, threshold: 1e-12 },
+        distance: { disjoint_coefficient: 0, excess_coefficient: 2, weight_coefficient: 0.25 },
+      });
+      const run = { seed: '42', founders: 4, params, brainInheritance };
+      const href = writeRunUrl('https://example.test/', run);
+      assert.deepEqual(readRunUrl(href, 2000), run);
       assert.equal(writeRunUrl(href, readRunUrl(href, 2000)), href);
     }
   }

@@ -15,10 +15,11 @@ use crate::arena::{AllocationFailure, Block, VariableArena};
 use crate::brain;
 use crate::effectors;
 use crate::genome::{self, BodyTrait, Gene};
-use crate::ids::AgentId;
+use crate::ids::{AgentId, SpeciesId};
 use crate::math;
 use crate::perceive;
 use crate::spawn::{self, ArenaKind, SpawnError};
+use crate::species::{Departure, SpeciesEvent};
 
 impl World {
     /// Claims a slot and its arena blocks, and compiles the genome into a runnable
@@ -32,9 +33,18 @@ impl World {
     /// recorded at all. Getting this wrong is invisible until the conservation test
     /// runs, which is exactly why that test exists (spec §5.1).
     pub fn spawn(&mut self, spec: &SpawnSpec, genes: &[Gene]) -> Result<AgentId, SpawnError> {
+        self.spawn_with_species_observer(spec, genes, |_| {})
+    }
+
+    pub fn spawn_with_species_observer(
+        &mut self,
+        spec: &SpawnSpec,
+        genes: &[Gene],
+        on_species: impl FnMut(SpeciesEvent),
+    ) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
-        let id = self.spawn_validated(spec, genes)?;
+        let id = self.spawn_validated(spec, genes, on_species)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep
         // subsequent structural edits from reusing them (spec section 3.1).
         if let Some(last) = genes.iter().filter_map(Gene::innovation).max() {
@@ -52,6 +62,7 @@ impl World {
         &mut self,
         spec: &SpawnSpec,
         genes: &[Gene],
+        mut on_species: impl FnMut(SpeciesEvent),
     ) -> Result<AgentId, SpawnError> {
         if self.pool.live_count() == self.pool.capacity() {
             return Err(SpawnError::PoolFull);
@@ -84,6 +95,19 @@ impl World {
         // charges for them every tick and they cannot change while the agent lives.
         self.agents.brain_units[id.index()] = genome::brain_complexity(genes);
         self.agents.sensor_load[id.index()] = genome::sensor_load(genes);
+        // Classification follows ecological admission and cannot refuse it (spec §3.4).
+        match self.classifier.classify(genes) {
+            Ok(assignment) => {
+                self.agents.species_id[id.index()] = assignment.species.raw();
+                if assignment.created {
+                    on_species(SpeciesEvent::Created(assignment.species));
+                }
+            }
+            Err(reason) => {
+                self.unclassified += 1;
+                on_species(SpeciesEvent::Unclassified(reason));
+            }
+        }
         Ok(id)
     }
 
@@ -152,6 +176,14 @@ impl World {
     /// point of carrying them genetically — an offspring inherits its parent's size
     /// and colour without anything else having to remember to copy them.
     pub fn spawn_founder(&mut self, position: Vec3) -> Result<AgentId, SpawnError> {
+        self.spawn_founder_with_species_observer(position, |_| {})
+    }
+
+    pub fn spawn_founder_with_species_observer(
+        &mut self,
+        position: Vec3,
+        on_species: impl FnMut(SpeciesEvent),
+    ) -> Result<AgentId, SpawnError> {
         // Taken out of `self` so the borrow checker sees the buffer and the world as
         // separate; put back before returning.
         let mut scratch = core::mem::take(&mut self.genome_scratch);
@@ -174,7 +206,7 @@ impl World {
             ),
             parent_a: AgentId::NULL,
         };
-        let spawned = self.spawn_validated(&spec, &scratch);
+        let spawned = self.spawn_validated(&spec, &scratch, on_species);
         self.genome_scratch = scratch;
         if spawned.is_ok() {
             // A founder's tank is the one energy source that is not a plant. It is a
@@ -206,10 +238,34 @@ impl World {
     /// Unlike [`Self::spawn`], this can own its accounting: creation genuinely differs
     /// between a founder and an offspring, while removal has one correct rule.
     pub fn despawn(&mut self, id: AgentId) -> bool {
+        self.despawn_with_species_observer(id, |_| {})
+    }
+
+    pub fn despawn_with_species_observer(
+        &mut self,
+        id: AgentId,
+        mut on_species: impl FnMut(SpeciesEvent),
+    ) -> bool {
         if !self.pool.is_alive(id) {
             return false;
         }
         let i = id.index();
+        let species = SpeciesId::new(self.agents.species_id[i]);
+        let extinct = if species.is_null() {
+            debug_assert!(
+                self.unclassified > 0,
+                "unclassified membership must be counted"
+            );
+            self.unclassified -= 1;
+            false
+        } else {
+            let departure = self.classifier.remove_member(species);
+            debug_assert!(
+                departure.is_ok(),
+                "live species must have counted membership"
+            );
+            departure == Ok(Departure::Extinct)
+        };
         let remaining = crate::energy::take_amount(
             &mut self.agents.energy[i],
             &mut self.agents.energy_reserve[i],
@@ -223,7 +279,11 @@ impl World {
         self.genes.free(self.agents.genome[i]);
         self.parts.free(self.agents.parts[i]);
         self.agents.clear(id);
-        self.pool.free(id)
+        let removed = self.pool.free(id);
+        if extinct {
+            on_species(SpeciesEvent::Extinct(species));
+        }
+        removed
     }
 
     /// Places `count` founders on a golden-angle spiral around the centre, and reports
@@ -248,6 +308,15 @@ impl World {
         count: u32,
         mut on_refusal: impl FnMut(SpawnError),
     ) -> u32 {
+        self.seed_founders_with_observers(count, &mut on_refusal, |_| {})
+    }
+
+    pub fn seed_founders_with_observers(
+        &mut self,
+        count: u32,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_species: impl FnMut(SpeciesEvent),
+    ) -> u32 {
         /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
         /// sunflower seeds pack without lining up.
         const GOLDEN_ANGLE: f32 = 2.399_963_2;
@@ -269,7 +338,7 @@ impl World {
                 size * 0.5 + r * math::sin(angle),
                 0.0,
             );
-            match self.spawn_founder(position) {
+            match self.spawn_founder_with_species_observer(position, &mut on_species) {
                 Ok(_) => placed += 1,
                 Err(error) => {
                     on_refusal(error);

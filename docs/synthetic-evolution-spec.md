@@ -124,6 +124,11 @@ to prepare an attempted birth/founder remain consumed; no RNG rewind or retry is
 introduced. Seeding stops at the first storage refusal and reports the placed count.
 This storage work introduces no new structural mutations or innovation-ID policy.
 
+M4 additionally charges the world-owned species classifier's full representative
+reservations and metadata to this same construction budget (§3.4). The default
+256-slot classifier at the 1,024-gene cap requests 10,492,936 bytes; it does not
+increase the 96 MiB ceiling or reduce ecological pool allowances to make room.
+
 Refusals are explicit results at spawn boundaries and optional monomorphic callbacks
 for tick/command spawns. Shells can count them without allocating in a tick; ordinary
 headless stepping uses a no-op observer. Arena usage is sampled on demand. Observer
@@ -400,9 +405,9 @@ allocation-free, deterministic, and consumes no RNG.
 
 This first slice supplies measurement only: it does not assign species, introduce
 a threshold, or change trajectories. Coefficients may be supplied through existing
-JSON configuration and retuned while World classification is absent. The standalone
-classifier follows the approved policy below; World integration and a shipped
-threshold remain pending. The provisional threshold in §5.5 is not calibrated.
+JSON configuration. With World classification integrated, distance and species
+configuration are frozen for the life of the world, including when capacity is zero.
+The threshold chosen below is provisional, not ecological calibration.
 
 This measures retained innovation history, not functional wiring equality. Physical
 deletion discards an ancestry marker: independently recreating the same connection
@@ -443,13 +448,27 @@ and unrepresentable membership counts also have explicit, atomic refusal outcome
 
 Freeze distance coefficients, threshold, capacity, and representative gene limit for
 the life of a classifier. Thresholds must be finite and positive; no automatic
-threshold adjustment or target species count is introduced. **Approved staging:**
-the first classifier slice accepts explicit constructor configuration and a supplied
-memory budget, but does not modify World, telemetry, or hashes. A later integration
-slice will put classification configuration in `SimParams`, freeze its live retunes,
-wire birth/death and unclassified accounting, and cover authoritative classifier
-state in hashing. A shipped threshold still requires approval; the provisional 3.0
-is above the structural-only maximum of 2 under the current coefficients.
+threshold adjustment or target species count is introduced. **DECIDED for World
+integration:** `SimParams.species` starts with `capacity: 256` and `threshold: 0.5`.
+This replaces the earlier provisional 3.0, which is above the structural-only maximum
+of 2 at the starting coefficients. The approved 0.5 is a provisional measurement
+scale, not a calibrated biological boundary or an optimization toward species count.
+
+The standalone classifier was delivered separately. World now owns its classifier
+and current unclassified population. Classification happens only after ecological
+admission succeeds, across external spawns, founders, commands, and births; removal
+updates the corresponding classification count exactly once. Live agent
+`species_id == NULL_ID` explicitly means unclassified. Optional synchronous callbacks
+report creation, extinction, and unclassified admissions; shell-owned cumulative
+counters never affect RNG or authoritative state. Existing methods use no-op
+observers unless a caller opts in.
+
+Native schema 6 and WASM/browser status distinguish active populations, unclassified
+population, and optional event observations. Legacy schemas 3/4/5 retain unavailable
+species observations and are validated without charging nonexistent historical
+classifier buffers. Scalar-control protocol remains `randomized_at_birth_v3` because
+heredity is unchanged. World integration and subsequent full classifier hash coverage
+are separate attributable commits; neither changes ecological dynamics.
 Retained ancestry/history remains M5 work; this component returns synchronous
 assignment and departure outcomes rather than owning an event archive.
 
@@ -657,7 +676,7 @@ the absolutes are the **relationships**, which are stated alongside.
 | `chemo_decay` | 0.98 /tick per channel | Trails persist ~50 ticks; **make this per-channel** |
 | `chemo_diffuse` | 0.1 | Too high and every gradient flattens to zero |
 | `mutation_rate_init` | see §3.3 | Evolvable — this is only the seed value |
-| `speciation_threshold` | 3.0 | Provisional; calibrate distance interpretation before species assignment, not toward a target species count |
+| `speciation_threshold` | 0.5 | Approved provisional M4 scale; calibrate interpretation, not toward a target species count |
 
 All of these live in a single `SimParams` struct, serde-serializable, settable at runtime from JS (§7.6). None are compile-time constants.
 

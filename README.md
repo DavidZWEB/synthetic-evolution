@@ -12,8 +12,9 @@ now has pooled variable-length world storage, explicit memory budgets, and
 runtime-tunable neural and sensor structural mutation, and configurable sparse
 founders. New structural rates default to zero and dense founders remain the shipped
 default; simpler-founder viability is still an experiment, not an assumption.
-M4's typed-gene distance and standalone classifier are implemented; species assignment
-in the running world remains pending. The
+M4 now assigns species in the running world, with explicit unclassified population
+when representative resources are exhausted. Its 0.5 threshold is provisional, not
+a calibrated biological species boundary. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

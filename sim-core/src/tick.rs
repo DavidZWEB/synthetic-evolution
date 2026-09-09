@@ -38,6 +38,7 @@ use crate::mutate::{MutationState, structural::StructuralMutationEvent};
 use crate::perceive::{self, SelfView, WorldView};
 use crate::reproduction;
 use crate::spawn::SpawnError;
+use crate::species::SpeciesEvent;
 use crate::world::World;
 
 impl World {
@@ -64,8 +65,17 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_mutation: impl FnMut(StructuralMutationEvent),
     ) {
+        self.step_with_all_observers(&mut on_refusal, &mut on_mutation, |_| {});
+    }
+
+    pub fn step_with_all_observers(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+        mut on_species: impl FnMut(SpeciesEvent),
+    ) {
         // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
-        self.apply_commands_with_observer(&mut on_refusal);
+        self.apply_commands_with_observers(&mut on_refusal, &mut on_species);
         self.rebuild_spatial_hash(); // 1
         self.perceive_all(); // 2
         self.step_brains(); // 3
@@ -75,8 +85,8 @@ impl World {
         self.grow_plants(); // 8, deposit
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
-        self.resolve_deaths(); // 10
-        self.resolve_births_with_observers(&mut on_refusal, &mut on_mutation); // 10
+        self.resolve_deaths_with_observer(&mut on_species); // 10
+        self.resolve_births_with_all_observers(&mut on_refusal, &mut on_mutation, &mut on_species); // 10
         self.advance_tick(); // 11
     }
 
@@ -257,6 +267,13 @@ impl World {
     /// to removal safe too. Corpses that return part of an agent to the world arrive
     /// with predation in Phase 3.
     pub fn resolve_deaths(&mut self) -> usize {
+        self.resolve_deaths_with_observer(|_| {})
+    }
+
+    pub fn resolve_deaths_with_observer(
+        &mut self,
+        mut on_species: impl FnMut(SpeciesEvent),
+    ) -> usize {
         let dying = core::mem::take(&mut self.dying);
         let mut removed = 0;
         for &id in &dying {
@@ -264,7 +281,7 @@ impl World {
                 self.agents.energy[id.index()] <= 0.0,
                 "starvation should have drained this agent before step 10"
             );
-            if self.despawn(id) {
+            if self.despawn_with_species_observer(id, &mut on_species) {
                 removed += 1;
             }
         }
@@ -349,6 +366,15 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_mutation: impl FnMut(StructuralMutationEvent),
     ) -> usize {
+        self.resolve_births_with_all_observers(&mut on_refusal, &mut on_mutation, |_| {})
+    }
+
+    pub fn resolve_births_with_all_observers(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+        mut on_species: impl FnMut(SpeciesEvent),
+    ) -> usize {
         self.note_breeders();
         let breeding = core::mem::take(&mut self.breeding);
         let mut born = 0;
@@ -402,7 +428,7 @@ impl World {
             };
             // Structural edits enforce coherence and per-genome bounds atomically
             // before the validated spawn fast path (spec section 3.3).
-            let spawned = self.spawn_validated(&spec, &scratch);
+            let spawned = self.spawn_validated(&spec, &scratch, &mut on_species);
             self.genome_scratch = scratch;
 
             if let Ok(child) = spawned {

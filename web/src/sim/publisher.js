@@ -14,6 +14,8 @@ export function createSnapshotPublisher({
   tick,
   population,
   descendants,
+  speciesCount,
+  unclassifiedPopulation,
   meanEnergy,
   send,
   now = () => performance.now(),
@@ -61,6 +63,8 @@ export function createSnapshotPublisher({
         tick: currentTick.toString(),
         population: currentPopulation,
         descendants: descendants(),
+        speciesCount: speciesCount(),
+        unclassifiedPopulation: unclassifiedPopulation(),
         meanEnergy: meanEnergy(),
       });
     }

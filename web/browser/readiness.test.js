@@ -83,6 +83,69 @@ async function selectFirstFounder(page) {
 }
 
 for (const mode of ['development', 'transferable']) {
+  test(`species status and inspection reflect real classification through reseed and stepping (${mode})`, async () => {
+    for (const capacity of [0, 4]) {
+      await withClient(mode, async (page) => {
+        async function assertSpeciesStatus(expectedTick) {
+          await page.waitForFunction(
+            ({ capacity, founders, expectedTick }) => {
+              const status = Object.fromEntries(
+                [...document.querySelectorAll('header dt')]
+                  .map((dt) => [dt.textContent, dt.nextElementSibling.textContent]),
+              );
+              return status.tick === expectedTick
+                && status.agents === String(founders)
+                && status.species === String(capacity)
+                && status.unclassified === String(founders - capacity);
+            },
+            { capacity, founders, expectedTick },
+          );
+          assert.equal(await page.getByRole('alert').count(), 0);
+        }
+        async function assertInspectorSpecies() {
+          const inspector = await selectFirstFounder(page);
+          const expected = capacity === 0 ? 'unclassified' : '#0 (this world)';
+          await page.waitForFunction(
+            (expected) => [...document.querySelectorAll('aside dt')]
+              .find((dt) => dt.textContent === 'species')?.nextElementSibling?.textContent === expected,
+            expected,
+          );
+          assert.doesNotMatch(await inspector.innerText(), /placeholder|4294967295/);
+        }
+        await assertSpeciesStatus('0');
+        await assertInspectorSpecies();
+        const run = readRunUrl(page.url(), founders);
+        assert.deepEqual(JSON.parse(run.params).species, { capacity, threshold: 1e-12 });
+        await page.reload();
+        await waitForTransport(page, mode);
+        await assertSpeciesStatus('0');
+        await assertInspectorSpecies();
+        await page.getByRole('button', { name: 'step', exact: true }).click();
+        await assertSpeciesStatus('1');
+        await page.waitForFunction(() =>
+          document.querySelector('aside dt')?.nextElementSibling?.textContent === '1');
+        await page.getByRole('combobox', { name: 'heredity', exact: true })
+          .selectOption('randomized_at_birth');
+        await page.getByRole('button', { name: 'reseed', exact: true }).click();
+        await page.waitForFunction(() =>
+          new URLSearchParams(location.hash.slice(1)).get('inheritance') === 'randomized_at_birth');
+        await waitForTransport(page, mode);
+        await assertSpeciesStatus('0');
+        await assertInspectorSpecies();
+        await page.getByRole('button', { name: 'step', exact: true }).click();
+        await assertSpeciesStatus('1');
+        assert.deepEqual(JSON.parse(readRunUrl(page.url(), founders).params).species, {
+          capacity, threshold: 1e-12,
+        });
+      }, {
+        params: {
+          species: { capacity, threshold: 1e-12 },
+          brain: { connections_per_target: 1 },
+        },
+      });
+    }
+  });
+
   test(`scalar control explains heredity and preserves the shared mode ID (${mode})`, async () => {
     await withClient(mode, async (page) => {
       const heredity = page.getByRole('combobox', { name: 'heredity', exact: true });
@@ -243,6 +306,10 @@ for (const mode of ['development', 'transferable']) {
             scrollWidth: document.documentElement.scrollWidth,
             inspector: bounds(inspector),
             inspectorOverflows: inspector.scrollWidth > inspector.clientWidth,
+            status: [...document.querySelectorAll('header dl div')].map((el) => ({
+              name: el.querySelector('dt').textContent,
+              ...bounds(el),
+            })),
             controls: [...document.querySelectorAll('button,input,select')].map((el) => ({
               name: el.textContent || el.getAttribute('type'),
               ...bounds(el),
@@ -251,7 +318,9 @@ for (const mode of ['development', 'transferable']) {
         });
         assert.ok(layout.scrollWidth <= layout.width, `horizontal overflow: ${JSON.stringify(layout)}`);
         assert.equal(layout.inspectorOverflows, false, 'inspector contents overflow horizontally');
-        for (const element of [layout.inspector, ...layout.controls]) {
+        assert.ok(layout.status.some((field) => field.name === 'species'));
+        assert.ok(layout.status.some((field) => field.name === 'unclassified'));
+        for (const element of [layout.inspector, ...layout.controls, ...layout.status]) {
           assert.ok(
             element.left >= 0 && element.right <= layout.width
               && element.top >= 0 && element.bottom <= layout.height,

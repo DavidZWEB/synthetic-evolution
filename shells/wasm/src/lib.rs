@@ -30,6 +30,7 @@ use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
+use sim_core::species::SpeciesEventCounts;
 use sim_core::world::World;
 
 /// Crate version, so the worker can assert it matches the JS bundle it shipped with.
@@ -170,12 +171,26 @@ pub struct Sim {
     snapshot: Snapshot,
     spawn_failures: SpawnFailureCounts,
     structural_mutations: StructuralMutationCounts,
+    species_events: SpeciesEventCounts,
 }
 
 #[derive(Serialize)]
 struct StorageDiagnostics {
     arena_usage: [ArenaUsage; 5],
     spawn_failures: SpawnFailureCounts,
+}
+
+#[derive(Serialize)]
+struct SpeciesPopulation {
+    species_id: u32,
+    population: u32,
+}
+
+#[derive(Serialize)]
+struct SpeciesDiagnostics {
+    populations: Vec<SpeciesPopulation>,
+    unclassified_population: u32,
+    events: SpeciesEventCounts,
 }
 
 impl Sim {
@@ -193,6 +208,7 @@ impl Sim {
             snapshot,
             spawn_failures: SpawnFailureCounts::default(),
             structural_mutations: StructuralMutationCounts::default(),
+            species_events: SpeciesEventCounts::default(),
         })
     }
 }
@@ -218,9 +234,12 @@ impl Sim {
     /// seeding is a boundary condition: there is no tick to stamp it for yet.
     pub fn seed_founders(&mut self, count: u32) -> u32 {
         let counts = &mut self.spawn_failures;
-        let placed = self
-            .world
-            .seed_founders_with_observer(count, |error| counts.record(error));
+        let species = &mut self.species_events;
+        let placed = self.world.seed_founders_with_observers(
+            count,
+            |error| counts.record(error),
+            |event| species.record(event),
+        );
         self.refresh();
         placed
     }
@@ -229,10 +248,12 @@ impl Sim {
     pub fn step_many(&mut self, ticks: u32) {
         let counts = &mut self.spawn_failures;
         let mutations = &mut self.structural_mutations;
+        let species = &mut self.species_events;
         for _ in 0..ticks {
-            self.world.step_with_observers(
+            self.world.step_with_all_observers(
                 |error| counts.record(error),
                 |event| mutations.record(event),
+                |event| species.record(event),
             );
         }
         self.refresh();
@@ -291,6 +312,14 @@ impl Sim {
         self.world.population()
     }
 
+    pub fn species_count(&self) -> u32 {
+        self.world.species_count()
+    }
+
+    pub fn unclassified_population(&self) -> u32 {
+        self.world.unclassified_population()
+    }
+
     /// Living agents born in this world; persistent founders are deliberately excluded.
     pub fn descendants(&self) -> u32 {
         self.world.living_descendants()
@@ -333,6 +362,27 @@ impl Sim {
     pub fn structural_mutation_diagnostics(&self) -> Result<String, JsError> {
         serde_json::to_string(&self.structural_mutations)
             .map_err(|e| js_error("structural mutation diagnostics", e))
+    }
+
+    /// On-demand populations in historical ID order and lifecycle counts since construction.
+    ///
+    /// IDs identify species only within this world (spec §3.4). Unclassified agents
+    /// are separate, not a species. This allocating request can detach snapshot views.
+    pub fn species_diagnostics(&self) -> Result<String, JsError> {
+        let diagnostics = SpeciesDiagnostics {
+            populations: self
+                .world
+                .species()
+                .active()
+                .map(|(id, population)| SpeciesPopulation {
+                    species_id: id.raw(),
+                    population,
+                })
+                .collect(),
+            unclassified_population: self.world.unclassified_population(),
+            events: self.species_events,
+        };
+        serde_json::to_string(&diagnostics).map_err(|e| js_error("species diagnostics", e))
     }
 
     /// Retunes the world. Errors on anything that would resize what is already

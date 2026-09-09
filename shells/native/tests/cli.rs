@@ -86,8 +86,10 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
     assert_eq!(header["data"]["phase"], 2);
-    assert_eq!(header["data"]["schema_version"], 5);
+    assert_eq!(header["data"]["schema_version"], 6);
     assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
+    assert_eq!(header["data"]["params"]["species"]["capacity"], 256);
+    assert_eq!(header["data"]["params"]["species"]["threshold"], 0.5);
     assert!(
         header["data"]["source_revision"]
             .as_str()
@@ -125,8 +127,28 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
                 assert_eq!(counts.len(), 6);
                 assert!(counts.values().all(|count| count.as_u64() == Some(0)));
             }
+            let species = &sample["data"][cohort]["species"];
+            let rows = species["populations"].as_array().unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["population"], sample["data"][cohort]["population"]);
+            assert_eq!(species["unclassified_population"], 0);
+            assert_eq!(
+                species["events"]["created"], 1,
+                "founder classification was observed"
+            );
+            assert_eq!(species["events"]["extinct"], 0);
+            assert_eq!(species["events"]["unclassified_capacity"], 0);
+            assert_eq!(report["species"][cohort]["active_species"], 1);
+            assert_eq!(report["species"][cohort]["unclassified_population"], 0);
         }
     }
+    assert!(
+        !report["unavailable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("species"))
+    );
     assert!(
         !report["evolving"]
             .as_array()
@@ -140,7 +162,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
 
 #[test]
 fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
-    let (_, report) = run_and_diagnose(include_str!("fixtures/extinction.json"), 7, 20, 5, 4);
+    let (lines, report) = run_and_diagnose(include_str!("fixtures/extinction.json"), 7, 20, 5, 4);
     assert!(
         report["evolving"]
             .as_array()
@@ -148,6 +170,23 @@ fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
             .iter()
             .any(|finding| finding["code"] == "early_extinction")
     );
+    let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    for cohort in ["evolving", "random_control"] {
+        let species = &final_sample["data"][cohort]["species"];
+        assert_eq!(species["populations"], serde_json::json!([]));
+        assert_eq!(species["unclassified_population"], 0);
+        assert!(species["events"]["created"].as_u64().unwrap() > 0);
+        assert_eq!(species["events"]["created"], species["events"]["extinct"]);
+        assert_eq!(report["species"][cohort]["active_species"], 0);
+        assert_eq!(report["species"][cohort]["unclassified_population"], 0);
+        assert!(
+            !report[cohort]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["code"].as_str().unwrap().starts_with("species_"))
+        );
+    }
 }
 
 #[test]
@@ -252,6 +291,63 @@ fn configured_structural_edits_are_observed_in_each_cohort() {
 }
 
 #[test]
+fn classification_capacity_observes_founders_and_births_without_refusing_either() {
+    for capacity in [0, 1] {
+        let mut params: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/structural.json")).unwrap();
+        params["species"] = serde_json::json!({"capacity": capacity, "threshold": 1e-12});
+        let (lines, report) = run_and_diagnose(&params.to_string(), 7, 1, 1, 1);
+        let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
+        let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        for cohort in ["evolving", "random_control"] {
+            let founder = &initial["data"][cohort]["species"];
+            assert_eq!(founder["events"]["created"], capacity);
+            assert_eq!(founder["events"]["unclassified_capacity"], 1 - capacity);
+            assert_eq!(founder["unclassified_population"], 1 - capacity);
+            let metrics = &final_sample["data"][cohort];
+            assert_eq!(
+                metrics["population"], 2,
+                "classification must not deny births"
+            );
+            assert_eq!(metrics["descendants"], 1);
+            assert_eq!(
+                metrics["species"]["populations"].as_array().unwrap().len(),
+                capacity as usize
+            );
+            assert_eq!(metrics["species"]["events"]["created"], capacity);
+            assert_eq!(
+                metrics["species"]["events"]["unclassified_capacity"],
+                2 - capacity
+            );
+            assert_eq!(metrics["species"]["unclassified_population"], 2 - capacity);
+            assert!(
+                metrics["spawn_failures"]
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .all(|count| count.as_u64() == Some(0))
+            );
+            let findings = report[cohort].as_array().unwrap();
+            let pressure = findings
+                .iter()
+                .find(|finding| finding["code"] == "species_capacity")
+                .unwrap();
+            assert!(
+                pressure["signal"]
+                    .as_str()
+                    .unwrap()
+                    .contains("not spawn refusals")
+            );
+            assert!(
+                !findings
+                    .iter()
+                    .any(|finding| finding["code"] == "storage_capacity")
+            );
+        }
+    }
+}
+
+#[test]
 fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
     let mut params: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/structural.json")).unwrap();
@@ -271,7 +367,7 @@ fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
     });
     let (lines, report) = run_and_diagnose(&params.to_string(), 7, 1, 1, 1);
     let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    assert_eq!(header["data"]["schema_version"], 5);
+    assert_eq!(header["data"]["schema_version"], 6);
     assert_eq!(header["data"]["control"], "randomized_at_birth_v3");
     let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
     let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();

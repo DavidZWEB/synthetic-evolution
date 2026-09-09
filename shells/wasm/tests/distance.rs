@@ -1,6 +1,6 @@
 //! Distance coefficient admission through the existing JSON parameter boundary.
 //!
-//! The distance foundation does not add a species API or alter simulation dynamics.
+//! Coefficients are frozen once a world's classifier is constructed.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -9,9 +9,8 @@ use wasm::{Sim, random_control, validate_params};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
-fn distance_coefficients_round_trip_and_do_not_change_trajectories() {
+fn distance_coefficients_round_trip_and_are_frozen_in_both_heredity_modes() {
     let initial = r#"{"world":{"max_agents":4},"plants":{"max_plants":8}}"#;
-    let mut baseline = Sim::new(42, Some(initial.to_owned())).unwrap();
     let mut params: SimParams = serde_json::from_str(initial).unwrap();
     params.distance.disjoint_coefficient = 0.0;
     params.distance.excess_coefficient = 2.0;
@@ -19,7 +18,7 @@ fn distance_coefficients_round_trip_and_do_not_change_trajectories() {
     let canonical = validate_params(Some(serde_json::to_string(&params).unwrap())).unwrap();
     let mut measured = Sim::new(42, Some(canonical.clone())).unwrap();
     let mut control = random_control(42, Some(canonical)).unwrap();
-    for sim in [&mut baseline, &mut measured, &mut control] {
+    for sim in [&mut measured, &mut control] {
         sim.seed_founders(2);
     }
     assert_eq!(
@@ -28,24 +27,23 @@ fn distance_coefficients_round_trip_and_do_not_change_trajectories() {
             .distance,
         params.distance
     );
-    assert_eq!(measured.state_hash(), control.state_hash());
-    for _ in 0..20 {
-        baseline.step_many(1);
-        measured.step_many(1);
-        assert_eq!(baseline.state_hash(), measured.state_hash());
+    for sim in [&mut measured, &mut control] {
+        let original = sim.params_json().unwrap();
+        let before = sim.state_hash();
+        for field in [
+            "disjoint_coefficient",
+            "excess_coefficient",
+            "weight_coefficient",
+        ] {
+            let mut changed = serde_json::to_value(&params).unwrap();
+            changed["distance"][field] = serde_json::json!(0.75);
+            let changed = changed.to_string();
+            assert!(validate_params(Some(changed.clone())).is_ok());
+            assert!(sim.set_params(&changed).is_err());
+            assert_eq!(sim.state_hash(), before);
+            assert_eq!(sim.params_json().unwrap(), original);
+        }
     }
-    params.distance.weight_coefficient = 0.75;
-    let before = measured.state_hash();
-    measured
-        .set_params(&serde_json::to_string(&params).unwrap())
-        .unwrap();
-    assert_eq!(measured.state_hash(), before);
-    assert_eq!(
-        serde_json::from_str::<SimParams>(&measured.params_json().unwrap())
-            .unwrap()
-            .distance,
-        params.distance
-    );
 }
 
 #[wasm_bindgen_test]

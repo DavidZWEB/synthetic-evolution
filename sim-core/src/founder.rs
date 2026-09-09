@@ -515,6 +515,7 @@ mod tests {
         ] {
             for fan_in in [None, Some(0), Some(1), Some(2), Some(u32::MAX)] {
                 let mut params = SimParams::default();
+                params.species.capacity = 0;
                 params.storage.max_genes = 4_096;
                 params.storage.max_connections = 4_096;
                 params.sensing.vision_rays = rays;
