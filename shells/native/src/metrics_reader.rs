@@ -9,7 +9,7 @@ use std::io::{self, BufRead, BufReader};
 use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 
 use crate::Result;
-use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION};
+use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, WorldMetrics};
 
 pub(crate) struct MetricsData {
     pub header: RunHeader,
@@ -38,7 +38,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         if line.trim().is_empty() {
             continue;
         }
-        let record: MetricsRecord = serde_json::from_str(&line).map_err(|error| {
+        let record = decode_record(&line).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("line {}: {error}", line_number + 1),
@@ -46,7 +46,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         })?;
         match record {
             MetricsRecord::Header(next) if header.is_none() && samples.is_empty() => {
-                if !matches!(next.schema_version, 3 | 4 | SCHEMA_VERSION) {
+                if !matches!(next.schema_version, 3 | 4 | 5 | SCHEMA_VERSION) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unsupported metrics schema {}", next.schema_version),
@@ -88,7 +88,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                 // These are Phase 1's historical counts, not today's defaults.
                 // Changing serde's founder defaults will also require legacy decoding
                 // to restore these values for omitted fields; leave this guard fixed.
-                if next.schema_version < SCHEMA_VERSION
+                if next.schema_version < 5
                     && (next.params.mutation.organs.remove_sensor_rate != 0.0
                         || next.params.mutation.organs.add_sensor_rate != 0.0
                         || next.params.sensing.chemo_sensors != 1
@@ -144,6 +144,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                 })?;
                 for metrics in [&sample.evolving, &sample.random_control] {
+                    validate_species(run, metrics)?;
                     if let Some(counts) = metrics.structural_mutations
                         && (run.schema_version == 3
                             || (run.schema_version == 4
@@ -211,6 +212,107 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
     Ok(MetricsData { header, samples })
 }
 
+fn decode_record(line: &str) -> Result<MetricsRecord> {
+    let mut value: serde_json::Value = serde_json::from_str(line)?;
+    if value["kind"] == "header" {
+        let schema = value["data"]["schema_version"].as_u64();
+        if let Some(params) = value
+            .get_mut("data")
+            .and_then(|data| data.get_mut("params"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            if matches!(schema, Some(3..=5)) {
+                if params.contains_key("species") {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "legacy metrics cannot claim species configuration",
+                    )
+                    .into());
+                }
+                // No historical classifier allocation existed. Inserting a disabled
+                // policy before serde defaults preserves the original memory budget,
+                // without inventing species observations for those runs.
+                params.insert(
+                    "species".to_owned(),
+                    serde_json::json!({"capacity": 0, "threshold": 0.5}),
+                );
+            } else if schema == Some(u64::from(SCHEMA_VERSION)) {
+                for (section, fields) in [
+                    ("species", &["capacity", "threshold"][..]),
+                    (
+                        "distance",
+                        &[
+                            "disjoint_coefficient",
+                            "excess_coefficient",
+                            "weight_coefficient",
+                        ][..],
+                    ),
+                ] {
+                    if fields.iter().any(|field| {
+                        params
+                            .get(section)
+                            .and_then(serde_json::Value::as_object)
+                            .is_none_or(|object| !object.contains_key(*field))
+                    }) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("current metrics require explicit {section} configuration"),
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
+fn validate_species(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
+    let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
+    if header.schema_version < 6 {
+        if metrics.species.is_some() {
+            return Err(invalid(
+                "legacy metrics claim species observations unavailable in their schema",
+            )
+            .into());
+        }
+        return Ok(());
+    }
+    let species = metrics
+        .species
+        .as_ref()
+        .ok_or_else(|| invalid("current metrics require authoritative species populations"))?;
+    if metrics.population > header.params.world.max_agents
+        || species.populations.len() as u64 > u64::from(header.params.species.capacity)
+    {
+        return Err(
+            invalid("species metrics exceed configured population or species capacity").into(),
+        );
+    }
+    let mut previous = None;
+    let mut population = u64::from(species.unclassified_population);
+    for row in &species.populations {
+        if row.species_id.is_null()
+            || previous.is_some_and(|id| row.species_id <= id)
+            || row.population == 0
+        {
+            return Err(invalid(
+                "species populations require ascending unique non-NULL IDs and positive counts",
+            )
+            .into());
+        }
+        previous = Some(row.species_id);
+        population += u64::from(row.population);
+    }
+    if population != u64::from(metrics.population) {
+        return Err(invalid(
+            "species populations plus unclassified population must equal population",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -218,7 +320,14 @@ mod tests {
     use sim_core::params::SimParams;
 
     use super::*;
-    use crate::metrics::{RunSample, StateHashes, WorldMetrics};
+    use crate::metrics::{RunSample, SpeciesMetrics, StateHashes, WorldMetrics};
+
+    fn empty_world_metrics() -> WorldMetrics {
+        WorldMetrics {
+            species: Some(SpeciesMetrics::default()),
+            ..Default::default()
+        }
+    }
 
     fn final_records() -> [serde_json::Value; 2] {
         [
@@ -237,8 +346,8 @@ mod tests {
             .unwrap(),
             serde_json::to_value(MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
-                evolving: WorldMetrics::default(),
-                random_control: WorldMetrics::default(),
+                evolving: empty_world_metrics(),
+                random_control: empty_world_metrics(),
                 final_state_hashes: Some(StateHashes {
                     evolving: "1".to_owned(),
                     random_control: "1".to_owned(),
@@ -260,12 +369,25 @@ mod tests {
     fn set_legacy_header(records: &mut [serde_json::Value], schema: u32) {
         records[0]["data"]["schema_version"] = schema.into();
         records[0]["data"]["phase"] = if schema == 3 { 1 } else { 2 }.into();
-        records[0]["data"]["control"] = if schema == 3 {
-            "randomized_at_birth"
-        } else {
-            "randomized_at_birth_v2"
+        records[0]["data"]["control"] = match schema {
+            3 => "randomized_at_birth",
+            4 => "randomized_at_birth_v2",
+            5 => RANDOMIZED_AT_BIRTH_PROTOCOL,
+            _ => panic!("not a legacy schema"),
         }
         .into();
+        records[0]["data"]["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("species");
+        for record in &mut records[1..] {
+            for cohort in ["evolving", "random_control"] {
+                record["data"][cohort]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("species");
+            }
+        }
     }
 
     #[test]
@@ -273,9 +395,7 @@ mod tests {
         let current = parse_values(&final_records()).unwrap();
         assert_eq!(current.header.control, RANDOMIZED_AT_BIRTH_PROTOCOL);
         let mut records = final_records();
-        records[0]["data"]["schema_version"] = 3.into();
-        records[0]["data"]["phase"] = 1.into();
-        records[0]["data"]["control"] = "randomized_at_birth".into();
+        set_legacy_header(&mut records, 3);
         records[0]["data"]["params"]["mutation"]
             .as_object_mut()
             .unwrap()
@@ -323,7 +443,9 @@ mod tests {
         }
         let legacy = parse_values(&records).unwrap();
         assert_eq!(legacy.header.control, "randomized_at_birth_v2");
-        assert_eq!(legacy.header.params, SimParams::default());
+        let mut expected_params = SimParams::default();
+        expected_params.species.capacity = 0;
+        assert_eq!(legacy.header.params, expected_params);
         for cohort in [
             &legacy.samples[0].evolving,
             &legacy.samples[0].random_control,
@@ -349,15 +471,255 @@ mod tests {
             (5, 2, "randomized_at_birth_v2"),
             (5, 2, "randomized_at_birth"),
             (5, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (6, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (6, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (6, 2, "randomized_at_birth_v2"),
+            (6, 2, "randomized_at_birth"),
+            (6, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (7, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
         ] {
             let mut records = final_records();
+            if matches!(schema, 3..=5) {
+                set_legacy_header(&mut records, schema);
+            }
             records[0]["data"]["schema_version"] = schema.into();
             records[0]["data"]["phase"] = phase.into();
             records[0]["data"]["control"] = control.into();
             assert!(
                 parse_values(&records).is_err(),
                 "accepted {schema}/{phase}/{control}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_historical_schemas_keep_their_tight_preclassification_budget() {
+        for schema in [3, 4, 5] {
+            let mut params = SimParams::default();
+            params.world.max_agents = 2;
+            params.plants.max_plants = 8;
+            params.species.capacity = 0;
+            params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap();
+            let historical_budget = params.storage.max_memory_bytes;
+            let mut records = final_records();
+            records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
+            set_legacy_header(&mut records, schema);
+            let legacy = parse_values(&records).expect("valid historical construction budget");
+            assert_eq!(legacy.header.params.species.capacity, 0);
+            assert_eq!(
+                legacy.header.params.storage.max_memory_bytes,
+                historical_budget
+            );
+            assert_eq!(legacy.samples[0].evolving.species, None);
+            assert_eq!(legacy.samples[0].random_control.species, None);
+
+            params.species.capacity = 256;
+            assert!(
+                params.validate().is_err(),
+                "fixture must reject the false default classifier allocation"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_five_retains_sparse_founders_and_measured_organ_observations() {
+        let mut records = final_records();
+        records[0]["data"]["params"]["sensing"]["vision_rays"] = 0.into();
+        records[0]["data"]["params"]["sensing"]["chemo_sensors"] = 0.into();
+        records[0]["data"]["params"]["sensing"]["energy_sensors"] = 2.into();
+        records[0]["data"]["params"]["brain"]["connections_per_target"] = 1.into();
+        records[0]["data"]["params"]["mutation"]["organs"]["add_sensor_rate"] = 0.1.into();
+        for cohort in ["evolving", "random_control"] {
+            records[1]["data"][cohort]["structural_mutations"] =
+                serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
+                    .unwrap();
+            records[1]["data"][cohort]["structural_mutations"]["add_sensor"]["attempted"] =
+                2.into();
+            records[1]["data"][cohort]["structural_mutations"]["add_sensor"]["applied"] = 2.into();
+        }
+        set_legacy_header(&mut records, 5);
+        let legacy = parse_values(&records).unwrap();
+        assert_eq!(legacy.header.params.sensing.chemo_sensors, 0);
+        assert_eq!(legacy.header.params.sensing.energy_sensors, 2);
+        assert_eq!(legacy.header.params.brain.connections_per_target, Some(1));
+        assert_eq!(legacy.header.params.species.capacity, 0);
+        for metrics in [
+            &legacy.samples[0].evolving,
+            &legacy.samples[0].random_control,
+        ] {
+            assert_eq!(
+                metrics
+                    .structural_mutations
+                    .unwrap()
+                    .add_sensor
+                    .unwrap()
+                    .applied,
+                2
+            );
+            assert_eq!(metrics.species, None);
+        }
+    }
+
+    #[test]
+    fn historical_schemas_reject_species_claims_instead_of_silently_disabling_them() {
+        for schema in [3, 4, 5] {
+            for policy in [
+                serde_json::Value::Null,
+                serde_json::json!({}),
+                serde_json::json!({"capacity": 0, "threshold": 0.5}),
+                serde_json::json!({"capacity": 256, "threshold": 0.5}),
+            ] {
+                let mut records = final_records();
+                set_legacy_header(&mut records, schema);
+                records[0]["data"]["params"]["species"] = policy;
+                let error = parse_values(&records)
+                    .err()
+                    .expect("accepted legacy classification");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("legacy metrics cannot claim species configuration")
+                );
+            }
+            for cohort in ["evolving", "random_control"] {
+                let mut records = final_records();
+                set_legacy_header(&mut records, schema);
+                records[1]["data"][cohort]["species"] = serde_json::Value::Null;
+                parse_values(&records).expect("null means historically unavailable");
+                records[1]["data"][cohort]["species"] =
+                    serde_json::to_value(SpeciesMetrics::default()).unwrap();
+                let error = parse_values(&records)
+                    .err()
+                    .expect("accepted invented measured zeroes");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("species observations unavailable")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn current_schema_requires_explicit_classification_metadata() {
+        for section in ["species", "distance"] {
+            let records = final_records();
+            let fields: Vec<_> = records[0]["data"]["params"][section]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect();
+            for field in fields {
+                let mut records = records.clone();
+                records[0]["data"]["params"][section]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&field);
+                let error = parse_values(&records)
+                    .err()
+                    .expect("accepted defaulted classifier metadata");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("explicit {section} configuration"))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_headers_return_errors_instead_of_panicking_during_version_decoding() {
+        for data in [
+            serde_json::Value::Null,
+            serde_json::json!(1),
+            serde_json::json!("not header data"),
+            serde_json::json!([]),
+            serde_json::json!({"schema_version": 3, "params": null}),
+            serde_json::json!({"schema_version": 6, "params": []}),
+        ] {
+            let record = serde_json::json!({"kind": "header", "data": data});
+            assert!(parse_values(&[record]).is_err());
+        }
+    }
+
+    #[test]
+    fn current_schema_requires_species_state_but_not_event_observations() {
+        for cohort in ["evolving", "random_control"] {
+            let mut records = final_records();
+            records[1]["data"][cohort]["species"]
+                .as_object_mut()
+                .unwrap()
+                .remove("events");
+            let data = parse_values(&records).expect("event observation is optional");
+            assert_eq!(
+                data.samples[0].evolving.species.as_ref().unwrap().events,
+                None
+            );
+            assert_eq!(
+                data.samples[0]
+                    .random_control
+                    .species
+                    .as_ref()
+                    .unwrap()
+                    .events,
+                None
+            );
+            records[1]["data"][cohort]["species"] = serde_json::Value::Null;
+            assert!(parse_values(&records).is_err());
+            records[1]["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("species");
+            assert!(parse_values(&records).is_err());
+        }
+    }
+
+    #[test]
+    fn validates_species_totals_sorted_historical_ids_and_capacity_per_cohort() {
+        for cohort in ["evolving", "random_control"] {
+            let mut valid = final_records();
+            valid[0]["data"]["params"]["species"]["capacity"] = 2.into();
+            valid[1]["data"][cohort]["population"] = 4.into();
+            valid[1]["data"][cohort]["species"] = serde_json::json!({
+                "populations": [
+                    {"species_id": 5, "population": 1},
+                    {"species_id": 19, "population": 2}
+                ],
+                "unclassified_population": 1,
+                "events": null
+            });
+            parse_values(&valid).expect("historical IDs are not bounded by active capacity");
+            for (path, value) in [
+                ("/populations/0/population", serde_json::json!(0)),
+                ("/populations/0/population", serde_json::json!(2)),
+                ("/populations/0/population", serde_json::json!(u32::MAX)),
+                ("/populations/1/species_id", serde_json::json!(5)),
+                ("/populations/1/species_id", serde_json::json!(4)),
+                ("/populations/1/species_id", serde_json::json!(u32::MAX)),
+                ("/unclassified_population", serde_json::json!(0)),
+                ("/unclassified_population", serde_json::json!(u32::MAX)),
+            ] {
+                let mut records = valid.clone();
+                *records[1]["data"][cohort]["species"]
+                    .pointer_mut(path)
+                    .unwrap() = value;
+                assert!(
+                    parse_values(&records).is_err(),
+                    "accepted invalid {cohort}{path}"
+                );
+            }
+            for capacity in [0, 1] {
+                let mut records = valid.clone();
+                records[0]["data"]["params"]["species"]["capacity"] = capacity.into();
+                assert!(
+                    parse_values(&records).is_err(),
+                    "accepted excess active species"
+                );
+            }
+            valid[0]["data"]["params"]["world"]["max_agents"] = 3.into();
+            assert!(
+                parse_values(&valid).is_err(),
+                "accepted population above world capacity"
             );
         }
     }
@@ -407,6 +769,8 @@ mod tests {
             let mut records = final_records();
             *records[0]["data"]["params"].pointer_mut(path).unwrap() = value;
             parse_values(&records).expect("current M3 configuration");
+            set_legacy_header(&mut records, 5);
+            parse_values(&records).expect("schema 5 supports nondefault M3 configuration");
             for schema in [3, 4] {
                 set_legacy_header(&mut records, schema);
                 let error = parse_values(&records)
@@ -468,8 +832,8 @@ mod tests {
             MetricsRecord::Header(Box::new(header)),
             MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
-                evolving: WorldMetrics::default(),
-                random_control: WorldMetrics::default(),
+                evolving: empty_world_metrics(),
+                random_control: empty_world_metrics(),
                 final_state_hashes: None,
             })),
         ];
@@ -500,8 +864,8 @@ mod tests {
         };
         let final_sample = RunSample {
             tick: 0,
-            evolving: WorldMetrics::default(),
-            random_control: WorldMetrics::default(),
+            evolving: empty_world_metrics(),
+            random_control: empty_world_metrics(),
             final_state_hashes: Some(StateHashes {
                 evolving: "1".to_owned(),
                 random_control: "1".to_owned(),
@@ -543,8 +907,8 @@ mod tests {
             })),
             MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
-                evolving: WorldMetrics::default(),
-                random_control: WorldMetrics::default(),
+                evolving: empty_world_metrics(),
+                random_control: empty_world_metrics(),
                 final_state_hashes: Some(StateHashes {
                     evolving: "1".to_owned(),
                     random_control: "1".to_owned(),

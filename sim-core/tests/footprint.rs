@@ -110,6 +110,25 @@ fn standalone_species_estimate_covers_all_requested_buffers_exactly() {
 }
 
 #[test]
+fn world_species_storage_is_charged_without_increasing_the_core_budget() {
+    let mut params = SimParams::default();
+    let classified = params.estimated_construction_bytes().unwrap();
+    let species = sim_core::species::Classifier::estimated_construction_bytes(
+        params.species.capacity,
+        params.storage.max_genes,
+    )
+    .unwrap();
+    assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
+    params.species.capacity = 0;
+    let unclassified = params.estimated_construction_bytes().unwrap();
+    assert_eq!(classified - unclassified, species);
+    params.storage.max_memory_bytes = classified - 1;
+    params.species.capacity = 256;
+    assert!(params.validate().is_err());
+    assert!(World::new(42, params).is_err());
+}
+
+#[test]
 fn estimate_covers_nondefault_constructor_shapes() {
     type Profile = fn(&mut SimParams);
     let profiles: [Profile; 11] = [
@@ -249,9 +268,15 @@ fn footprint_scales_with_the_pool_not_the_population() {
     let requests = |agents: u32| {
         let mut params = SimParams::default();
         params.world.max_agents = agents;
+        let species_bytes = sim_core::species::Classifier::estimated_construction_bytes(
+            params.species.capacity,
+            params.storage.max_genes,
+        )
+        .unwrap();
         let (world, used, estimate) = measure(params);
         assert_estimate_covers_requests(&world, used, estimate);
-        used
+        // Representative capacity is independent of the agent pool.
+        used - species_bytes
     };
 
     let small = requests(1_000);

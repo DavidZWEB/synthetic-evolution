@@ -47,11 +47,26 @@ pub struct ComparisonReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SpeciesSummary {
+    pub tick: u64,
+    pub active_species: u32,
+    pub unclassified_population: u32,
+}
+
+/// Descriptive labels, not evidence of adaptation or a species-based fitness score.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SpeciesReport {
+    pub evolving: Option<SpeciesSummary>,
+    pub random_control: Option<SpeciesSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiagnosisReport {
     pub samples: usize,
     pub evolving: Vec<Finding>,
     pub random_control: Vec<Finding>,
     pub comparison: ComparisonReport,
+    pub species: SpeciesReport,
     pub unavailable: Vec<String>,
 }
 
@@ -88,7 +103,6 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     let (random_control, control_idle_unavailable) =
         diagnose_cohort(header, samples, Cohort::Control);
     let mut unavailable = vec![
-        "species-cluster diagnostics are unavailable until M4 clustering; monoculture uses exact genome variants, not species".to_owned(),
         "predator/prey diagnostics require Phase 3 trophic roles".to_owned(),
         "signal-correlation diagnostics require Phase 4 signaling".to_owned(),
     ];
@@ -99,6 +113,30 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         unavailable.push(reason);
     }
     for cohort in [Cohort::Evolving, Cohort::Control] {
+        if samples.is_empty()
+            || samples
+                .iter()
+                .any(|sample| select(sample, cohort).species.is_none())
+        {
+            unavailable.push(format!(
+                "complete active-species and unclassified populations for {} are unavailable: legacy sampling does not establish zero species",
+                cohort.name()
+            ));
+        }
+        if samples.is_empty()
+            || samples.iter().any(|sample| {
+                select(sample, cohort)
+                    .species
+                    .as_ref()
+                    .and_then(|species| species.events)
+                    .is_none()
+            })
+        {
+            unavailable.push(format!(
+                "complete species-event counts for {} are unavailable: legacy or unobserved sampling does not establish zero transitions",
+                cohort.name()
+            ));
+        }
         if samples.is_empty()
             || samples
                 .iter()
@@ -144,8 +182,22 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         evolving,
         random_control,
         comparison,
+        species: SpeciesReport {
+            evolving: species_summary(samples.last(), Cohort::Evolving),
+            random_control: species_summary(samples.last(), Cohort::Control),
+        },
         unavailable,
     }
+}
+
+fn species_summary(sample: Option<&RunSample>, cohort: Cohort) -> Option<SpeciesSummary> {
+    let sample = sample?;
+    let species = select(sample, cohort).species.as_ref()?;
+    Some(SpeciesSummary {
+        tick: sample.tick,
+        active_species: species.populations.len() as u32,
+        unclassified_population: species.unclassified_population,
+    })
 }
 
 fn diagnose_cohort(
@@ -167,6 +219,7 @@ fn diagnose_cohort(
         diagnose_storage(*tick, sample, &mut findings);
     }
     diagnose_structural_mutations(&metrics, &mut findings);
+    diagnose_species(&metrics, &mut findings);
 
     if let Some((index, (tick, _))) = metrics
         .iter()
@@ -205,6 +258,55 @@ fn diagnose_cohort(
             ),
             likely_causes,
         });
+    }
+
+    fn diagnose_species(metrics: &[(u64, &WorldMetrics)], findings: &mut Vec<Finding>) {
+        let Some((tick, counts)) = metrics.iter().rev().find_map(|(tick, sample)| {
+            sample
+                .species
+                .as_ref()
+                .and_then(|species| species.events)
+                .map(|events| (tick, events))
+        }) else {
+            return;
+        };
+        for (code, count, cause) in [
+            (
+                "species_capacity",
+                counts.unclassified_capacity,
+                "species capacity is disabled or active representative slots are exhausted; review classification capacity, not the energy economy",
+            ),
+            (
+                "species_id_exhausted",
+                counts.unclassified_id_exhausted,
+                "historical species IDs are exhausted and cannot be reused",
+            ),
+            (
+                "species_genome_limit",
+                counts.unclassified_genome_too_large,
+                "an admitted genome exceeded representative storage.max_genes",
+            ),
+            (
+                "species_member_count_exhausted",
+                counts.unclassified_member_count_exhausted,
+                "the matching representative cannot count another member",
+            ),
+            (
+                "species_storage",
+                counts.unclassified_storage,
+                "representative storage could not retain a new species genome",
+            ),
+        ] {
+            if count > 0 {
+                findings.push(Finding {
+                    code,
+                    signal: format!(
+                        "{count} cumulative unclassified admissions through tick {tick}; these are not spawn refusals or evidence of adaptive success"
+                    ),
+                    likely_causes: vec![cause],
+                });
+            }
+        }
     }
 
     if let Some((tick, sample, ratio)) = metrics
@@ -699,6 +801,7 @@ mod tests {
             arena_usage: Vec::new(),
             spawn_failures: None,
             structural_mutations: None,
+            species: None,
         }
     }
 
@@ -709,6 +812,177 @@ mod tests {
             random_control: world(population, variants, 1.0),
             final_state_hashes: None,
         }
+    }
+
+    #[test]
+    fn species_counts_are_available_without_inventing_missing_event_observations() {
+        use crate::metrics::{SpeciesMetrics, SpeciesPopulation};
+        use sim_core::ids::SpeciesId;
+        use sim_core::species::SpeciesEventCounts;
+
+        let mut samples = [sample(0, 3, 3)];
+        samples[0].evolving.species = Some(SpeciesMetrics {
+            populations: vec![SpeciesPopulation {
+                species_id: SpeciesId::new(7),
+                population: 2,
+            }],
+            unclassified_population: 1,
+            events: Some(SpeciesEventCounts::default()),
+        });
+        samples[0].random_control.species = Some(SpeciesMetrics {
+            unclassified_population: 3,
+            ..Default::default()
+        });
+        let report = diagnose(&header(0), &samples);
+        assert_eq!(
+            report.species.evolving,
+            Some(SpeciesSummary {
+                tick: 0,
+                active_species: 1,
+                unclassified_population: 1,
+            })
+        );
+        assert_eq!(
+            report.species.random_control,
+            Some(SpeciesSummary {
+                tick: 0,
+                active_species: 0,
+                unclassified_population: 3,
+            })
+        );
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("active-species"))
+        );
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("species-event counts for evolving"))
+        );
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("species-event counts for scalar control"))
+        );
+        let mut human = Vec::new();
+        crate::diagnose_output::write_human(&mut human, &report).unwrap();
+        let human = String::from_utf8(human).unwrap();
+        assert!(human.contains("evolving at tick 0: active_species=1, unclassified_population=1"));
+        assert!(
+            human.contains("scalar control at tick 0: active_species=0, unclassified_population=3")
+        );
+        assert!(human.contains("not adaptive success; monoculture uses exact genomes"));
+    }
+
+    #[test]
+    fn species_pressure_is_not_spawn_pressure_and_survives_later_unobserved_samples() {
+        use crate::metrics::SpeciesMetrics;
+        use sim_core::species::SpeciesEventCounts;
+
+        let mut samples = [sample(0, 2, 2), sample(1_000, 0, 0)];
+        samples[0].evolving.species = Some(SpeciesMetrics {
+            unclassified_population: 2,
+            events: Some(SpeciesEventCounts {
+                unclassified_capacity: 2,
+                unclassified_id_exhausted: 3,
+                unclassified_genome_too_large: 4,
+                unclassified_member_count_exhausted: 5,
+                unclassified_storage: 6,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        samples[1].evolving.species = Some(SpeciesMetrics::default());
+        let report = diagnose(&header(1_000), &samples);
+        for (code, count) in [
+            ("species_capacity", 2),
+            ("species_id_exhausted", 3),
+            ("species_genome_limit", 4),
+            ("species_member_count_exhausted", 5),
+            ("species_storage", 6),
+        ] {
+            let finding = report
+                .evolving
+                .iter()
+                .find(|finding| finding.code == code)
+                .unwrap();
+            assert!(finding.signal.starts_with(&format!(
+                "{count} cumulative unclassified admissions through tick 0;"
+            )));
+            assert!(finding.signal.contains("not spawn refusals"));
+        }
+        assert!(
+            !report
+                .random_control
+                .iter()
+                .any(|finding| finding.code.starts_with("species_"))
+        );
+        assert!(!report.evolving.iter().any(|finding| finding.code == "storage_capacity" || finding.code == "genome_limit"));
+        assert_eq!(report.species.evolving.as_ref().unwrap().active_species, 0);
+        assert_eq!(
+            report
+                .species
+                .evolving
+                .as_ref()
+                .unwrap()
+                .unclassified_population,
+            0
+        );
+        assert_eq!(report.species.random_control, None);
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("species-event counts for evolving"))
+        );
+    }
+
+    #[test]
+    fn extinctions_and_single_species_are_not_classification_failure_or_monoculture() {
+        use crate::metrics::{SpeciesMetrics, SpeciesPopulation};
+        use sim_core::ids::SpeciesId;
+        use sim_core::species::SpeciesEventCounts;
+
+        let mut samples = [sample(0, 3, 3), sample(1_000, 3, 3), sample(2_000, 3, 3)];
+        for sample in &mut samples {
+            for metrics in [&mut sample.evolving, &mut sample.random_control] {
+                metrics.species = Some(SpeciesMetrics {
+                    populations: vec![SpeciesPopulation {
+                        species_id: SpeciesId::new(2),
+                        population: 3,
+                    }],
+                    unclassified_population: 0,
+                    events: Some(SpeciesEventCounts {
+                        created: 3,
+                        extinct: 2,
+                        ..Default::default()
+                    }),
+                });
+            }
+        }
+        let report = diagnose(&header(2_000), &samples);
+        assert!(
+            !report.evolving.iter().any(
+                |finding| finding.code == "monoculture" || finding.code.starts_with("species_")
+            )
+        );
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("species"))
+        );
+        samples[2].evolving.species = None;
+        let report = diagnose(&header(2_000), &samples);
+        assert_eq!(
+            report.species.evolving, None,
+            "older species state cannot substitute for the final sample"
+        );
+        assert!(report.species.random_control.is_some());
     }
 
     #[test]
@@ -771,7 +1045,7 @@ mod tests {
             report
                 .unavailable
                 .iter()
-                .any(|reason| reason.contains("M4 clustering"))
+                .any(|reason| reason.contains("active-species and unclassified"))
         );
     }
 

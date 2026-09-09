@@ -30,6 +30,7 @@ use crate::pool::SlotPool;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
 use crate::spawn::{ArenaKind, ArenaUsage};
+use crate::species::{self, Classifier};
 use crate::storage::StorageLayout;
 
 mod lifecycle;
@@ -42,6 +43,7 @@ const PARTS_PER_AGENT: u32 = 1;
 pub enum WorldBuildError {
     Params(ParamError),
     Arena(ArenaBuildError),
+    Species(species::BuildError),
 }
 
 impl core::fmt::Display for WorldBuildError {
@@ -49,6 +51,7 @@ impl core::fmt::Display for WorldBuildError {
         match self {
             Self::Params(error) => error.fmt(f),
             Self::Arena(error) => error.fmt(f),
+            Self::Species(error) => error.fmt(f),
         }
     }
 }
@@ -58,6 +61,7 @@ impl core::error::Error for WorldBuildError {
         match self {
             Self::Params(error) => Some(error),
             Self::Arena(error) => Some(error),
+            Self::Species(error) => Some(error),
         }
     }
 }
@@ -71,6 +75,12 @@ impl From<ParamError> for WorldBuildError {
 impl From<ArenaBuildError> for WorldBuildError {
     fn from(error: ArenaBuildError) -> Self {
         Self::Arena(error)
+    }
+}
+
+impl From<species::BuildError> for WorldBuildError {
+    fn from(error: species::BuildError) -> Self {
+        Self::Species(error)
     }
 }
 
@@ -90,6 +100,8 @@ pub struct World {
     pub(crate) next_innovation: u32,
     pub(crate) pool: SlotPool,
     pub(crate) agents: Agents,
+    pub(crate) classifier: Classifier,
+    pub(crate) unclassified: u32,
     /// Compiled neurons, one block per agent.
     pub(crate) brains: VariableArena<Neuron>,
     /// Compiled wiring, one block per agent. Separate from `brains` because a synapse
@@ -183,6 +195,14 @@ impl World {
             next_innovation,
             pool: SlotPool::with_capacity(capacity),
             agents: Agents::with_capacity(capacity),
+            classifier: Classifier::try_new(
+                params.species.capacity,
+                params.storage.max_genes,
+                params.species.threshold,
+                params.distance.clone(),
+                layout.species_bytes,
+            )?,
+            unclassified: 0,
             brains: VariableArena::try_with_capacity(layout.neurons, capacity)?,
             synapses: VariableArena::try_with_capacity(layout.synapses, capacity)?,
             sensors: VariableArena::try_with_capacity(layout.sensors, capacity)?,
@@ -213,6 +233,18 @@ impl World {
             plants,
             params,
         })
+    }
+
+    pub fn species(&self) -> &Classifier {
+        &self.classifier
+    }
+
+    pub fn species_count(&self) -> u32 {
+        self.classifier.active().count() as u32
+    }
+
+    pub fn unclassified_population(&self) -> u32 {
+        self.unclassified
     }
 
     /// One agent's genes.
@@ -436,6 +468,65 @@ mod tests {
     use crate::genome::{self, BodyTrait};
     use crate::spawn::SpawnError;
     use glam::Vec3;
+
+    #[test]
+    fn classification_and_observation_leave_ecology_unchanged_across_seeds_and_modes() {
+        use crate::species::SpeciesEventCounts;
+        for seed in [7, 42, 99] {
+            for mode in [
+                BrainInheritance::Evolving,
+                BrainInheritance::RandomizedAtBirth,
+            ] {
+                let mut params = SimParams::default();
+                params.world.max_agents = 32;
+                params.world.size = 100.0;
+                params.sensing.vision_range = 20.0;
+                params.sensing.chemo_radius = 20.0;
+                params.plants.max_plants = 64;
+                params.plants.max_energy = 100.0;
+                params.feeding.rate = 100.0;
+                params.feeding.reach = 20.0;
+                params.feeding.gate = 0.0;
+                params.reproduction.start_energy = 1.0;
+                params.reproduction.threshold = 1.1;
+                params.reproduction.maturity_ticks = 0;
+                params.reproduction.gate = 0.0;
+                params.mutation.organs.add_sensor_rate = 0.5;
+                params.mutation.organs.remove_sensor_rate = 0.5;
+                params.mutation.structural.add_connection_rate = 0.5;
+                params.species.capacity = 1;
+                let mut classified =
+                    World::new_with_brain_inheritance(seed, params.clone(), mode).unwrap();
+                params.species.capacity = 0;
+                let mut unclassified =
+                    World::new_with_brain_inheritance(seed, params, mode).unwrap();
+                let mut events = SpeciesEventCounts::default();
+                classified.seed_founders_with_observers(16, |_| {}, |event| events.record(event));
+                unclassified.seed_founders(16);
+                assert_ne!(classified.state_hash(), unclassified.state_hash());
+                assert_eq!(classified.ecology_hash(), unclassified.ecology_hash());
+                for _ in 0..120 {
+                    classified.step_with_all_observers(
+                        |_| {},
+                        |_| {},
+                        |event| events.record(event),
+                    );
+                    unclassified.step();
+                    assert_eq!(
+                        classified.ecology_hash(),
+                        unclassified.ecology_hash(),
+                        "seed {seed}, mode {mode:?}"
+                    );
+                }
+                assert!(
+                    classified.living_descendants() > 0,
+                    "scenario must exercise births"
+                );
+                assert!(events.created > 0);
+                assert!(unclassified.unclassified_population() > 0);
+            }
+        }
+    }
 
     fn small_world() -> World {
         let mut params = SimParams::default();

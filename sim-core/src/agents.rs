@@ -146,7 +146,7 @@ impl Agents {
             energy_reserve: vec![0.0; n],
             health: vec![0.0; n],
             age: vec![0; n],
-            species_id: vec![0; n],
+            species_id: vec![NULL_ID; n],
             signature: vec![Vec3::ZERO; n],
             size: vec![0.0; n],
             parent_a: vec![NULL_ID; n],
@@ -180,7 +180,7 @@ impl Agents {
         self.energy_reserve[i] = 0.0;
         self.health[i] = 1.0;
         self.age[i] = 0;
-        self.species_id[i] = 0;
+        self.species_id[i] = NULL_ID;
         self.signature[i] = spec.signature;
         self.size[i] = spec.size;
         self.parent_a[i] = spec.parent_a.raw();
@@ -203,6 +203,7 @@ impl Agents {
     /// never be freed twice through a dead agent.
     pub fn clear(&mut self, id: AgentId) {
         let i = id.index();
+        self.species_id[i] = NULL_ID;
         self.brain[i] = Block::EMPTY;
         self.synapses[i] = Block::EMPTY;
         self.sensors[i] = Block::EMPTY;

@@ -32,6 +32,8 @@
   let tick = $state(0n);
   let population = $state(0);
   let descendants = $state(0);
+  let speciesCount = $state(0);
+  let unclassifiedPopulation = $state(0);
   let meanEnergy = $state(0);
   let metricSamples = $state([]);
   let transport = $state(null);
@@ -120,6 +122,8 @@
     tick = 0n;
     population = 0;
     descendants = 0;
+    speciesCount = 0;
+    unclassifiedPopulation = 0;
     meanEnergy = 0;
     metricSamples = [];
     inspector.select(null);
@@ -233,6 +237,8 @@
       try {
         const sample = metricFromMessage(message);
         descendants = sample.descendants;
+        speciesCount = sample.speciesCount;
+        unclassifiedPopulation = sample.unclassifiedPopulation;
         meanEnergy = sample.meanEnergy;
         metricSamples = appendMetric(metricSamples, sample, MAX_CHART_SAMPLES);
       } catch (error) {
@@ -353,7 +359,7 @@
 </script>
 
 <main>
-  <StatusBar {tick} {population} {descendants} {meanEnergy} {fps} {zoom} {transport} />
+  <StatusBar {tick} {population} {descendants} {speciesCount} {unclassifiedPopulation} {meanEnergy} {fps} {zoom} {transport} />
 
   <div class="stage">
     <canvas

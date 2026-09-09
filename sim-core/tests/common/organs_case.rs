@@ -2,6 +2,9 @@
 //!
 //! Plant-funded births exercise new organs, removal, limits, and slot reuse.
 //! These are controlled infrastructure cases, not evidence of ecological adaptation.
+//!
+//! M4 integration first refreshed only the control reference for real species labels.
+//! The subsequent coverage-only refresh adds full classifier state to both values.
 
 use sim_core::control::BrainInheritance;
 use sim_core::genome::{Gene, Modality};
@@ -9,8 +12,8 @@ use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
-pub const EVOLVING_GOLDEN: u64 = 0x6716_4974_c6e4_26cb;
-pub const CONTROL_GOLDEN: u64 = 0x48e7_c54a_b9dd_b1ed;
+pub const EVOLVING_GOLDEN: u64 = 0x8beb_1d85_6ac6_5ff9;
+pub const CONTROL_GOLDEN: u64 = 0xf7d6_400a_c78b_99a7;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { decodeInspection, summarizeGenes } from './model.ts';
+import { decodeInspection, speciesLabel, summarizeGenes } from './model.ts';
 
 const inspection = {
   index: 3,
@@ -40,6 +40,22 @@ test('malformed inspection JSON is rejected', () => {
     () => decodeInspection(JSON.stringify({ ...inspection, activations: ['not a number'] })),
     /invalid inspection payload/,
   );
+});
+
+test('species labels distinguish world-local IDs from the unclassified sentinel', () => {
+  for (const id of [0, 8, 4294967294]) {
+    const decoded = decodeInspection(JSON.stringify({ ...inspection, species_id: id }));
+    assert.equal(speciesLabel(decoded.species_id), `#${id} (this world)`);
+  }
+  const unclassified = decodeInspection(JSON.stringify({ ...inspection, species_id: 4294967295 }));
+  assert.equal(speciesLabel(unclassified.species_id), 'unclassified');
+  for (const id of [-1, 4294967296, 0.5]) {
+    assert.throws(
+      () => decodeInspection(JSON.stringify({ ...inspection, species_id: id })),
+      /invalid inspection payload/,
+    );
+    assert.throws(() => speciesLabel(id), /invalid species ID/);
+  }
 });
 
 test('sensor-born brains decode with a different activation and genome length', () => {

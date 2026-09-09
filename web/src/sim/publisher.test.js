@@ -19,6 +19,8 @@ test('a dropped forced frame is retried when a transferable buffer returns', () 
     tick: () => tick,
     population: () => 2,
     descendants: () => 1,
+    speciesCount: () => 1,
+    unclassifiedPopulation: () => 1,
     meanEnergy: () => Number(tick),
     send: (message) => sent.push(message),
     now: () => 0,
@@ -38,6 +40,8 @@ test('a dropped forced frame is retried when a transferable buffer returns', () 
   assert.equal(frames.at(-1).tick, '3');
   assert.equal(sent.filter((message) => message.kind === 'metrics').at(-1).tick, '3');
   assert.equal(sent.filter((message) => message.kind === 'metrics').at(-1).descendants, 1);
+  assert.equal(sent.filter((message) => message.kind === 'metrics').at(-1).speciesCount, 1);
+  assert.equal(sent.filter((message) => message.kind === 'metrics').at(-1).unclassifiedPopulation, 1);
 });
 
 test('shared publication retries after a transient lease swap', () => {
@@ -56,6 +60,8 @@ test('shared publication retries after a transient lease swap', () => {
     tick: () => 9n,
     population: () => 3,
     descendants: () => 2,
+    speciesCount: () => 0,
+    unclassifiedPopulation: () => 3,
     meanEnergy: () => 40,
     send: (message) => sent.push(message),
     schedule: (callback) => retries.push(callback),
@@ -69,4 +75,46 @@ test('shared publication retries after a transient lease swap', () => {
   assert.equal(sent.at(-1).kind, 'metrics');
   assert.equal(sent.at(-1).tick, '9');
   assert.equal(sent.at(-1).descendants, 2);
+  assert.equal(sent.at(-1).speciesCount, 0);
+  assert.equal(sent.at(-1).unclassifiedPopulation, 3);
 });
+
+for (const kind of [SHARED, TRANSFERABLE]) {
+  test(`species counts are sampled only with lightweight metrics (${kind})`, () => {
+    const layout = frameLayout(2, 0);
+    const source = frameViews(new ArrayBuffer(layout.bytes), 0, layout);
+    const sent = [];
+    let sampledAt = 0;
+    let speciesReads = 0;
+    let unclassifiedReads = 0;
+    const publisher = createSnapshotPublisher({
+      writer: createWriter(kind, 2, 0),
+      source: () => source,
+      tick: () => 1n,
+      population: () => 2,
+      descendants: () => 0,
+      speciesCount: () => { speciesReads += 1; return 1; },
+      unclassifiedPopulation: () => { unclassifiedReads += 1; return 0; },
+      meanEnergy: () => 5,
+      send: (message) => sent.push(message),
+      now: () => sampledAt,
+    });
+    publisher.publish();
+    publisher.publish();
+    assert.equal(speciesReads, 1);
+    assert.equal(unclassifiedReads, 1);
+    if (kind === TRANSFERABLE) {
+      publisher.recycle(sent.find((message) => message.kind === TRANSFERABLE).buffer);
+    }
+    sampledAt = 250;
+    publisher.publish();
+    assert.equal(speciesReads, 2);
+    assert.equal(unclassifiedReads, 2);
+    const metrics = sent.filter((message) => message.kind === 'metrics');
+    assert.equal(metrics.length, 2);
+    assert.deepEqual(Object.keys(metrics[0]).sort(), [
+      'descendants', 'kind', 'meanEnergy', 'population', 'speciesCount', 'tick',
+      'unclassifiedPopulation',
+    ]);
+  });
+}

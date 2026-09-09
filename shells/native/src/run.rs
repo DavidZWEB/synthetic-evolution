@@ -7,6 +7,7 @@ use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
+use sim_core::species::SpeciesEventCounts;
 use sim_core::world::World;
 
 use crate::Result;
@@ -51,15 +52,21 @@ pub fn run(args: RunArgs) -> Result<()> {
         .metrics
         .as_ref()
         .map(|_| [StructuralMutationCounts::default(); 2]);
+    let mut species_events = args
+        .metrics
+        .as_ref()
+        .map(|_| [SpeciesEventCounts::default(); 2]);
     seed(
         &mut evolving,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[0]),
+        species_events.as_mut().map(|counts| &mut counts[0]),
     )?;
     seed(
         &mut random_control,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[1]),
+        species_events.as_mut().map(|counts| &mut counts[1]),
     )?;
 
     let mut output = args.metrics.as_deref().map(metrics_writer).transpose()?;
@@ -71,6 +78,7 @@ pub fn run(args: RunArgs) -> Result<()> {
             &random_control,
             spawn_failures,
             structural_mutations,
+            species_events,
             args.ticks == 0,
         )?;
         write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
@@ -78,16 +86,24 @@ pub fn run(args: RunArgs) -> Result<()> {
     }
 
     for _ in 0..args.ticks {
-        if let (Some([evolving_counts, control_counts]), Some([evolving_edits, control_edits])) =
-            (spawn_failures.as_mut(), structural_mutations.as_mut())
-        {
-            evolving.step_with_observers(
+        if let (
+            Some([evolving_counts, control_counts]),
+            Some([evolving_edits, control_edits]),
+            Some([evolving_species, control_species]),
+        ) = (
+            spawn_failures.as_mut(),
+            structural_mutations.as_mut(),
+            species_events.as_mut(),
+        ) {
+            evolving.step_with_all_observers(
                 |error| evolving_counts.record(error),
                 |event| evolving_edits.record(event),
+                |event| evolving_species.record(event),
             );
-            random_control.step_with_observers(
+            random_control.step_with_all_observers(
                 |error| control_counts.record(error),
                 |event| control_edits.record(event),
+                |event| control_species.record(event),
             );
         } else {
             evolving.step();
@@ -102,6 +118,7 @@ pub fn run(args: RunArgs) -> Result<()> {
                 &random_control,
                 spawn_failures,
                 structural_mutations,
+                species_events,
                 tick == args.ticks,
             )?;
             write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
@@ -119,6 +136,7 @@ pub fn run(args: RunArgs) -> Result<()> {
                 &random_control,
                 spawn_failures,
                 structural_mutations,
+                species_events,
                 true,
             )
         },
@@ -154,13 +172,22 @@ fn load_params(path: Option<&std::path::Path>) -> Result<SimParams> {
     }
 }
 
-fn seed(world: &mut World, founders: u32, counts: Option<&mut SpawnFailureCounts>) -> Result<()> {
+fn seed(
+    world: &mut World,
+    founders: u32,
+    counts: Option<&mut SpawnFailureCounts>,
+    species: Option<&mut SpeciesEventCounts>,
+) -> Result<()> {
     let mut refusal = None;
-    let placed = if let Some(counts) = counts {
-        world.seed_founders_with_observer(founders, |error| {
-            counts.record(error);
-            refusal = Some(error);
-        })
+    let placed = if let (Some(counts), Some(species)) = (counts, species) {
+        world.seed_founders_with_observers(
+            founders,
+            |error| {
+                counts.record(error);
+                refusal = Some(error);
+            },
+            |event| species.record(event),
+        )
     } else {
         world.seed_founders(founders)
     };

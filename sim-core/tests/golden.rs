@@ -31,6 +31,14 @@ mod structural_case;
 #[path = "common/organs_case.rs"]
 mod organs_case;
 
+#[path = "common/species_world_case.rs"]
+mod species_world_case;
+
+#[test]
+fn classified_world_matches_its_reference_in_both_modes() {
+    species_world_case::check_classified_world_runs();
+}
+
 #[test]
 fn organ_mutation_matches_its_reference_in_both_modes() {
     organs_case::check_organ_runs();

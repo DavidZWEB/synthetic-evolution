@@ -307,12 +307,15 @@ fn neural_structural_births_and_observers_never_allocate() {
 #[test]
 fn sensor_edits_and_combined_mutation_observers_never_allocate() {
     use sim_core::mutate::StructuralMutationCounts;
+    use sim_core::species::SpeciesEventCounts;
     let mut params = SimParams::default();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
     params.mutation.organs.remove_sensor_rate = 1.0;
     params.mutation.organs.add_sensor_rate = 1.0;
+    params.species.capacity = 1;
+    params.species.threshold = f64::MIN_POSITIVE;
     let rates = &mut params.mutation.structural;
     rates.remove_connection_rate = 1.0;
     rates.remove_neuron_rate = 1.0;
@@ -326,24 +329,27 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
         let mut counts = StructuralMutationCounts::default();
+        let mut species = SpeciesEventCounts::default();
         let observed = count_allocations(|| {
             for _ in 0..20 {
                 world.agents_mut().energy[parent.index()] = 300.0;
                 world.intents_mut().reproduce[parent.index()] = 1.0;
                 assert_eq!(
-                    world.resolve_births_with_observers(
+                    world.resolve_births_with_all_observers(
                         |_| panic!("birth refused"),
                         |event| counts.record(event),
+                        |event| species.record(event),
                     ),
                     1
                 );
                 let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
-                world.despawn(child);
+                world.despawn_with_species_observer(child, |event| species.record(event));
             }
         });
         assert_eq!(observed, 0);
         assert_eq!(counts.add_sensor.unwrap().applied, 20);
         assert_eq!(counts.remove_sensor.unwrap().applied, 20);
+        assert_eq!(species.unclassified_capacity, 20);
     }
 }
 
@@ -566,18 +572,22 @@ fn a_full_pool_refuses_without_allocating() {
 #[test]
 fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
     use sim_core::command::{Command, Kind};
+    use sim_core::species::SpeciesEventCounts;
 
     let mut params = SimParams::default();
     params.world.max_agents = 32;
     params.plants.max_plants = 8;
     params.chemo.cells = [8, 8, 1];
     let mut world = World::new(21, params).expect("valid params");
+    let mut species = SpeciesEventCounts::default();
 
     for count in [1, 8, 64] {
         for i in 0..count {
             world.push_command(Command::now(Kind::SpawnFounder { position: at(i) }));
         }
-        let observed = count_allocations(|| world.step());
+        let observed = count_allocations(|| {
+            world.step_with_all_observers(|_| {}, |_| {}, |event| species.record(event))
+        });
         assert_eq!(
             observed, 0,
             "draining a new batch of {count} commands allocated inside the tick"
@@ -585,6 +595,7 @@ fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
         assert_eq!(world.pending_commands(), 0);
         assert!(world.population() > 0, "commands did not spawn agents");
     }
+    assert!(species.created > 0);
 }
 
 #[test]

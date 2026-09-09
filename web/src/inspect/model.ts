@@ -31,6 +31,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
+const NULL_SPECIES = 0xffff_ffff;
+const isSpeciesId = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= NULL_SPECIES;
+
+export function speciesLabel(id: number): string {
+  if (!isSpeciesId(id)) throw new TypeError('invalid species ID');
+  return id === NULL_SPECIES ? 'unclassified' : `#${id} (this world)`;
+}
+
 function isInspection(value: unknown): value is Inspection {
   if (!isRecord(value)) return false;
   const geneKinds = new Set(['Neuron', 'Sensor', 'Effector', 'Connection', 'Body', 'Meta']);
@@ -45,7 +54,7 @@ function isInspection(value: unknown): value is Inspection {
     Array.isArray(value.signature) &&
     value.signature.length === 3 &&
     value.signature.every(isFiniteNumber) &&
-    Number.isSafeInteger(value.species_id) &&
+    isSpeciesId(value.species_id) &&
     Number.isSafeInteger(value.parent_a) &&
     Number.isSafeInteger(value.parent_b) &&
     Number.isSafeInteger(value.brain_units) &&

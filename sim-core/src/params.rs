@@ -33,6 +33,7 @@ pub struct SimParams {
     pub reproduction: ReproductionParams,
     pub mutation: MutationParams,
     pub distance: DistanceParams,
+    pub species: SpeciesParams,
     pub feeding: FeedingParams,
     pub plants: PlantParams,
     pub chemo: ChemoParams,
@@ -40,8 +41,7 @@ pub struct SimParams {
 
 /// Typed-gene distance coefficients (spec §3.4), not a species or fitness policy.
 ///
-/// M4's distance foundation can compare genomes but does not yet assign species.
-/// Thresholds and classification-time retuning rules belong to the later species slice.
+/// Frozen with species configuration for the life of a world.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DistanceParams {
@@ -76,6 +76,29 @@ impl DistanceParams {
             ));
         }
         Ok(())
+    }
+}
+
+/// Construction-time species classification policy (spec §3.4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SpeciesParams {
+    /// Maximum active immutable representatives. Zero makes every admission unclassified.
+    pub capacity: u32,
+    /// Provisional measurement scale, not a calibrated biological species boundary.
+    ///
+    /// Departs from §5.5's provisional 3.0, which exceeds the maximum structural-only
+    /// distance of 2 at the starting coefficients. Approved at 0.5 for M4 integration;
+    /// deletion-default calibration and ecological interpretation remain M8 work.
+    pub threshold: f64,
+}
+
+impl Default for SpeciesParams {
+    fn default() -> Self {
+        Self {
+            capacity: 256,
+            threshold: 0.5,
+        }
     }
 }
 
@@ -611,7 +634,6 @@ impl SimParams {
     /// `chemo.diffuse`, `world.dt`, `world.founder_spread`, `plants` other than the two
     /// below, `sensing` ranges within the limit below, and the `brain` fields that are
     /// not topology (`tau_min`, `tau_max`, the oscillator periods, `weight_init_scale`).
-    /// `distance` coefficients are also editable while species classification is absent.
     /// That is the whole point of spec §7.6: tuning happens in the browser against a
     /// running population, not in the compiler.
     ///
@@ -621,6 +643,7 @@ impl SimParams {
     /// |---|---|
     /// | `world.max_agents` | the slot pool, every SoA array, all six arenas, the snapshot |
     /// | `storage` | aggregate arenas, per-genome scratch and construction budget |
+    /// | `species`, `distance` | representative storage and stable classification meaning |
     /// | `world.size` | the spatial grid's extent and the chemo field's |
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
     /// | `chemo.cells` | the field's cell arrays |
@@ -649,6 +672,10 @@ impl SimParams {
         next.validate_values()?;
 
         for (changed, message) in [
+            (
+                next.species != self.species || next.distance != self.distance,
+                "species and distance are fixed for the life of a world",
+            ),
             (
                 next.world.max_agents != self.world.max_agents,
                 "world.max_agents is fixed for the life of a world",
@@ -712,6 +739,9 @@ impl SimParams {
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     fn validate_values(&self) -> Result<(), ParamError> {
         self.distance.validate()?;
+        if !self.species.threshold.is_finite() || self.species.threshold <= 0.0 {
+            return Err(ParamError("species.threshold must be finite and positive"));
+        }
         if !(self.world.size > 0.0) || !self.world.size.is_finite() {
             return Err(ParamError("world.size must be finite and positive"));
         }
@@ -1134,9 +1164,36 @@ mod tests {
                 let mut next = current.clone();
                 change(&mut next.distance, value);
                 next.validate().unwrap();
-                current.check_retune(&next, 62.5).unwrap();
+                assert!(current.check_retune(&next, 62.5).is_err());
             }
         }
+    }
+
+    #[test]
+    fn species_defaults_validate_and_classification_configuration_is_frozen() {
+        let current = SimParams::default();
+        assert_eq!(current.species.capacity, 256);
+        assert_eq!(current.species.threshold, 0.5);
+        assert_eq!(
+            serde_json::from_str::<SimParams>("{}").unwrap().species,
+            current.species
+        );
+        for threshold in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let mut next = current.clone();
+            next.species.threshold = threshold;
+            assert!(next.validate().is_err());
+            assert!(current.check_retune(&next, 62.5).is_err());
+        }
+        for capacity in [0, 1, 257] {
+            let mut next = current.clone();
+            next.species.capacity = capacity;
+            next.validate().unwrap();
+            assert!(current.check_retune(&next, 62.5).is_err());
+        }
+        let mut next = current.clone();
+        next.species.threshold = 0.75;
+        next.validate().unwrap();
+        assert!(current.check_retune(&next, 62.5).is_err());
     }
 
     #[test]

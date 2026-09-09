@@ -151,6 +151,8 @@ const handlers = {
       tick: () => sim.tick(),
       population: () => sim.population(),
       descendants: () => sim.descendants(),
+      speciesCount: () => sim.species_count(),
+      unclassifiedPopulation: () => sim.unclassified_population(),
       meanEnergy: () => sim.mean_energy(),
       send: (message, transfer) => sendPublication(message, transfer),
     });

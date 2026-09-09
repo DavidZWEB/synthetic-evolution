@@ -1,5 +1,5 @@
 <script>
-  let { tick, population, descendants, meanEnergy, fps, zoom, transport } = $props();
+  let { tick, population, descendants, speciesCount, unclassifiedPopulation, meanEnergy, fps, zoom, transport } = $props();
 </script>
 
 <header>
@@ -8,6 +8,8 @@
     <div><dt>tick</dt><dd>{tick}</dd></div>
     <div><dt>agents</dt><dd>{population}</dd></div>
     <div><dt>descendants</dt><dd>{descendants}</dd></div>
+    <div><dt>species</dt><dd>{speciesCount}</dd></div>
+    <div><dt>unclassified</dt><dd>{unclassifiedPopulation}</dd></div>
     <div><dt>mean energy</dt><dd>{meanEnergy.toFixed(1)}</dd></div>
     <div><dt>fps</dt><dd class:slow={fps > 0 && fps < 55}>{fps}</dd></div>
     <div><dt>zoom</dt><dd>{zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}×</dd></div>

@@ -5,8 +5,8 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M4's distance foundation and approved standalone classifier are implemented.**
-The shipped species threshold, World integration, distance/deletion-default calibration, the actual
+**Status: M4 World integration is implemented with the approved provisional threshold 0.5.**
+Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -21,11 +21,11 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3, D4 distance and D5 classifier contracts approved; shipped threshold/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3, D4/D5 and provisional threshold 0.5 approved; calibration/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
-| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | distance and standalone classifier implemented; World integration pending |
+| M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
@@ -248,7 +248,7 @@ equality. There is no implicit small-genome normalization heuristic.
 **Approved staging:** implement the allocation-free distance components and weighted
 comparison first, without species assignment or changed trajectories. Coefficients
 are runtime JSON configuration; D5's classifier contract is now approved below,
-while the shipped threshold and World integration remain pending. The provisional §5.5 threshold is not a
+and the provisional integration threshold 0.5 is now approved. This threshold is not a
 calibrated default. Use f64 arithmetic on finite f32 weights/coefficients to avoid
 overflow at valid representation extremes.
 
@@ -291,11 +291,13 @@ Coefficients, finite positive threshold, and resource limits are fixed at classi
 construction, not adaptive knobs that chase a species count. Once World owns a
 classifier, changing those values requires a new run.
 
-**Approved next slice:** implement and exercise the standalone classifier first,
-with an explicit threshold and construction budget. Defer World/telemetry integration
-and authoritative classifier hashing to a subsequent attributable change. No shipped
-threshold has been chosen: the spec's provisional 3.0 exceeds the structural-only
-maximum distance of 2 under the current coefficients.
+**Approved staging:** the standalone classifier landed first with explicit threshold
+and construction budget. World/telemetry integration now uses a provisional threshold
+of 0.5, keeping coefficients 1.0 / 1.0 / 0.4 and 256 representative slots. The former
+3.0 exceeded the structural-only maximum of 2. This is a starting measurement scale,
+not calibrated biological species or a target label count. Integration metadata
+and full classifier hashing remain separately attributable; the 96 MiB core budget
+is unchanged.
 
 ### D6 - Persistent ancestry without unbounded tick allocation
 
@@ -492,8 +494,24 @@ the remaining acceptance criteria below are not delivered by that measurement al
 **Standalone classifier delivered:** owned immutable representatives, nearest/strict
 threshold assignment, historical-ID tie-breaking, counted membership and exact-once
 retirement, bounded storage/ID outcomes, and checked standalone construction accounting.
-It accepts explicit configuration and does not yet replace World's placeholder species
-IDs, add population telemetry, freeze World's distance retunes, or change hashes.
+Its original slice accepted explicit configuration without replacing World's
+placeholder species IDs, adding population telemetry, or changing hashes.
+
+**World integration delivered:** shared admission/death paths own membership,
+unclassified individuals remain explicit, and optional events reach native/WASM
+observers including command-driven admissions. Schema 6 and browser status/inspection
+expose real populations while preserving honest legacy unavailability. Species and
+distance configuration are frozen, with representative buffers inside the existing
+core budget. Classification-on/off comparisons across multiple seeds and both
+heredity modes guard unchanged ecological state and RNG.
+
+**Separate classifier hash coverage:** frozen policy, next IDs, active representatives,
+membership, reservation placement, and current unclassified population are included.
+The integration commit moves only the organ-control reference for its live species
+labels; the following coverage-only commit refreshes the references for the added
+state. A shared classified-World scenario covers plant-funded births, same-tick
+retirement/recolonization, unclassified commands, and later storage reuse on native
+and WASM. These are mechanism guarantees, not ecological acceptance.
 
 Implement D4/D5 as separate systems with world-owned state. Reuse innovation
 alignment conventions without coupling classification to crossover. No mating,

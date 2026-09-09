@@ -14,6 +14,7 @@ use crate::genome::Gene;
 use crate::ids::{AgentId, InnovationId};
 use crate::params::{ParamError, SimParams};
 use crate::perceive::Sensor;
+use crate::species::Classifier;
 
 /// WASM32's `Vec` byte limit also applies on native, before attempting allocations.
 const PORTABLE_BUFFER_BYTES: u64 = i32::MAX as u64;
@@ -26,6 +27,7 @@ pub(crate) struct StorageLayout {
     pub(crate) sensors: u32,
     pub(crate) effectors: u32,
     pub(crate) construction_bytes: u64,
+    pub(crate) species_bytes: u64,
 }
 
 impl StorageLayout {
@@ -57,6 +59,10 @@ impl StorageLayout {
                 "storage.effectors_per_slot times world.max_agents exceeds u32 capacity",
             )?,
             construction_bytes: 0,
+            species_bytes: Classifier::estimated_construction_bytes(
+                params.species.capacity,
+                storage.max_genes,
+            )?,
         };
         let founder = FounderPlan::checked_counts(params).ok_or(ParamError(
             "founding topology exceeds representable gene counts",
@@ -123,7 +129,9 @@ impl StorageLayout {
             }
         }
 
-        let mut requests = AllocationRequests::default();
+        let mut requests = AllocationRequests {
+            bytes: layout.species_bytes,
+        };
         requests.variable_arena::<Gene>(layout.genes, agents).map_err(|_| ParamError(
             "storage.genes_per_slot produces an arena buffer exceeding the portable byte ceiling",
         ))?;

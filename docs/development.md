@@ -351,8 +351,9 @@ parameter editor or preset selector is introduced.
 
 `sim_core::distance::between(a, b, &params.distance)` compares two validated,
 canonically sorted genomes without allocating or consuming RNG. Its result exposes
-the raw components and weighted value. It does not yet assign species or change
-reproduction, energy, or simulation trajectories.
+the raw components and weighted value. It does not assign species or change
+reproduction, energy, or simulation trajectories itself; World uses this distance
+for the observational classification described below.
 
 The existing native/WASM parameter JSON accepts:
 
@@ -366,9 +367,9 @@ The existing native/WASM parameter JSON accepts:
 }
 ```
 
-Coefficients must be finite and nonnegative. Omitted values retain these defaults;
-there is no `threshold` field yet. They may be retuned while World classification is absent;
-the standalone classifier freezes its own copy at construction. Standalone
+Coefficients must be finite and nonnegative. Omitted values retain these defaults.
+World freezes them with its species policy at construction, even when classification
+capacity is zero; changing them requires a new world rather than a retune. Standalone
 Rust callers validate genomes with `genome::validate` and coefficients with
 `DistanceParams::validate` before calling `between`.
 
@@ -378,25 +379,42 @@ Other scalar/binding differences add no terms. For a two-neuron, one-connection
 example at the starting coefficients, toggling that connection measures 0, deleting
 it measures 1/3, and recreating the identical wiring with a fresh ID measures 2/3
 against the retained original. These are historical-marker effects, not evidence of
-new species or useful divergence. Thresholds and deletion-default calibration remain
-pending. Telemetry schema/control identities are unchanged: no species or distance
-observations are being claimed by this foundation.
+new species or useful divergence. Ecological threshold and deletion-default calibration
+remain pending. The distance function does not emit observations; World classification
+provides the species telemetry described below.
 
-### Standalone species classifier (M4)
+### Species classification (M4)
 
+Native `--params` and the WASM constructor accept this partial JSON:
+
+```json
+{
+  "species": {
+    "capacity": 256,
+    "threshold": 0.5
+  }
+}
+```
+
+These are the shipped construction defaults. Threshold is a finite positive `f64`;
+0.5 is a provisional measurement scale, not a calibrated biological boundary.
+Each representative reserves up to `storage.max_genes` genes, and distance coefficients
+use `DistanceParams` validation. All species fields and distance coefficients are
+frozen for the world's lifetime. Classification consumes no RNG and does not change
+reproduction, metabolism, feeding, or other ecological decisions.
+
+World classifies each successful founder or birth once, stores its historical species
+ID, and retires its membership once on death, including command-driven admissions.
+Storage or ID exhaustion leaves a successfully admitted agent unclassified; it never
+refuses the birth. Zero capacity disables classification and leaves all admissions
+unclassified with the `NULL_ID` sentinel. Unclassified agents are not a species.
+
+Standalone callers can still construct
 `sim_core::species::Classifier::try_new(capacity, max_genes, threshold, coefficients,
-max_memory_bytes)` constructs the approved classifier independently of World.
-There is intentionally no shipped threshold or species configuration in `SimParams`
-yet. Threshold must be finite and positive; coefficients use `DistanceParams`
-validation. Configuration is owned and immutable after construction.
-
-`classify` takes a coherent genome and counts one admitted member, returning a
-typed species ID and whether the species was created. Hosts must call it once per
-successful birth/founder, record the assignment, and call `remove_member` exactly
-once for each classified death. Failed classification returns an explicit
-`Unclassified` reason without consuming an ID or member. It must not be used to
-deny reproduction. Unclassified individuals stay unclassified, while their
-descendants can be independently assigned.
+max_memory_bytes)`. Outside World, those callers own the exactly-once `classify` and
+`remove_member` bookkeeping. Failed classification returns an explicit `Unclassified`
+reason without consuming an ID or member. Unclassified individuals stay unclassified,
+while their descendants can be independently assigned.
 
 Representatives are immutable copies. They survive the original agent and are
 released only when membership reaches zero; that departure returns `Extinct`
@@ -405,11 +423,13 @@ is in ascending historical-ID order. There is no retained history buffer.
 
 `estimated_construction_bytes` includes full per-slot gene reservations plus all
 metadata. The approved 256-slot / 1,024-gene policy requests **10,492,936 bytes**
-with the current layouts. This is separate from World today; the integration must
-charge it to World's existing core budget before allocation rather than silently
-increase that budget. Zero capacity requests no buffers and reports unclassified
-capacity outcomes. The constructor validates portable buffer limits and propagates
-host reservation failures.
+with the current layouts. World charges this to its existing core budget before
+allocation rather than silently increasing that budget. The current default world's
+total construction request is **88,493,076 bytes**, including this classifier component,
+within the unchanged **100,663,296-byte (96 MiB)** per-world limit. These are requested
+construction bytes, not process RSS or browser resident memory. Zero capacity requests
+no classifier buffers and reports unclassified capacity outcomes. The constructor
+validates portable buffer limits and propagates host reservation failures.
 
 To reproduce the bounded high-churn exercise:
 
@@ -420,30 +440,91 @@ cargo test --release -p sim-core --test species full_capacity_churn_reuses_stora
 It retires and recreates 2,048 representatives at 256 active species, checking IDs
 and membership totals and reporting time/reserved memory without a timing threshold.
 Its three-gene inputs exercise infrastructure, not worst-case genome comparison cost
-or ecological adaptation. World admission/death wiring, unclassified telemetry,
-classifier-state hashing, and a chosen default threshold remain the next slice.
+or ecological adaptation.
+
+The observational-integration regression compares capacity 1 against disabled
+classification for seeds **7, 42, and 99**, in both evolving and randomized-at-birth
+modes. It exercises actual births and compares observed stepping against plain
+stepping for 120 ticks:
+
+```bash
+cargo test -p sim-core classification_and_observation_leave_ecology_unchanged_across_seeds_and_modes
+```
+
+The test-only `ecology_hash` masks classification while retaining ecological state
+and RNG, and must agree after seeding and every step. Full state hashes need not agree:
+they include the now-live per-agent species IDs. The integration's organ-control
+golden change reflects those labels, not changed heredity or ecology; expanding
+classifier-state hash coverage is a separate change with its own reference updates.
+Shell event counters are observations and are not hashed. This regression establishes
+mechanical isolation, not calibrated clusters or ecological success.
 
 ### Telemetry protocol and observations
 
-New output uses metrics schema **5**, `phase: 2`, and
+New output uses metrics schema **6**, `phase: 2`, and
 `control: "randomized_at_birth_v3"` (the shared core protocol constant).
-The reader explicitly supports **schema 4 / phase 2 /
+Species classification does not change heredity, so the control protocol is unchanged.
+The reader explicitly supports **schema 5 / phase 2 /
+`control: "randomized_at_birth_v3"`**, **schema 4 / phase 2 /
 `control: "randomized_at_birth_v2"`** and **schema 3 / phase 1 /
 `control: "randomized_at_birth"`** (v1), without relabeling them as v3.
-Both legacy schemas reject nonzero organ mutation rates or nondefault M3 founder
+Schemas 3 and 4 reject nonzero organ mutation rates or nondefault M3 founder
 fields (`chemo_sensors != 1`, `energy_sensors != 1`, or non-null
 `connections_per_target`). Schema 3 also rejects every nonzero neural structural
 rate and any claimed structural observations. Schema 4 may carry the five neural
 operator observations but cannot claim measured sensor counts, even zeros.
+Schema 5 retains its organ observations and nondefault M3 founder configurations.
 Schemas 1 and 2, unknown schemas, and all other schema/phase/control combinations
 are rejected.
 
-Schema 5 retains the earlier metric fields. `arena_usage` contains current element
+Schemas 3–5 predate World classification. Their absent species metrics stay `null`,
+not invented zeroes. The reader rejects species observations or any explicit
+`params.species` field in those schemas; only a genuinely omitted field is internally
+decoded with classification disabled before validating the historical construction
+budget. Historical runs are not charged for today's default 256 representatives.
+Schema 6 requires explicit species capacity, threshold, and all distance coefficients
+in the header, rather than silently filling missing classification metadata.
+
+Schema 6 retains the earlier metric fields. `arena_usage` contains current element
 counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
 `largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
 `u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,
 `arena_fragmentation`, `arena_block_limit`, and `invalid_genome`. These count actual
 refused spawn attempts, not founder requests clamped to pool capacity.
+
+Each current cohort also contains **`species`**:
+
+```json
+{
+  "populations": [{"species_id": 7, "population": 12}],
+  "unclassified_population": 2,
+  "events": {
+    "created": 8,
+    "extinct": 7,
+    "unclassified_capacity": 2,
+    "unclassified_id_exhausted": 0,
+    "unclassified_genome_too_large": 0,
+    "unclassified_member_count_exhausted": 0,
+    "unclassified_storage": 0
+  }
+}
+```
+
+This illustrative sample describes 14 living agents, not 14 classified agents.
+Rows contain positive populations, unique non-NULL IDs in ascending historical-ID
+order, and no extinct representatives. The reader checks that classified plus
+unclassified populations equal the cohort population and that population and active
+species counts fit configured capacities. Historical IDs can exceed the active
+capacity because retired IDs are never reused. An empty or extinct current world
+has an empty row array and zero unclassified population, not unavailable state.
+
+Species population data is authoritative current World state even when stepping was
+not observed. Only `events` is nullable for unobserved sampling; collected runs
+accumulate its seven saturating `u64` counters from seeding and every step, separately
+for evolving and scalar-control worlds. Unclassified event counts describe admitted
+agents that lacked classification, not spawn refusals or current unclassified totals:
+those agents may subsequently die. Species creation/extinction events likewise
+describe classifier membership transitions, not evidence of adaptive success.
 
 Each cohort also has **`structural_mutations`**, with separate `remove_connection`,
 `remove_neuron`, `toggle_connection`, `add_connection`, and `add_neuron` counters,
@@ -455,8 +536,9 @@ edit changes an **offspring candidate**, which can subsequently fail to spawn;
 a refused edit can still result in an unedited successful birth. Neither applied
 edits nor refused edits establish live complexity or a count of births.
 
-Counts belong to each shell/world, not deterministic simulation state. The `--metrics`
-path observes seeding, command spawns, and natural births, collecting structural edits
+Event and refusal counters belong to each shell/world, not deterministic simulation
+state. The `--metrics` path observes seeding, command spawns, natural births, and
+species extinctions, collecting structural edits and classification transitions
 separately in both cohorts; plain runs use the unobserved stepping path.
 Samples created outside a collected run encode unavailable observations as `null`,
 not invented zeroes. Schema 3's absent `structural_mutations` fields likewise decode
@@ -467,8 +549,13 @@ Current shell observers instead begin with measured zeroes for all seven operato
 `diagnose` reports availability separately for each organ operator and cohort, and
 reports mutation caps (including sensor and vision-ray caps), scratch limits, and
 innovation exhaustion separately from spawn pressure, and distinguishes arena capacity
-from fragmentation; more energy does not resolve these limits. Exact `genome_variants`
-remain distinct from species: species-cluster diagnostics await M4 clustering.
+from fragmentation; more energy does not resolve these limits. It also reports the
+latest active-species and unclassified populations, with event-count availability
+separate for each cohort, and reports classification capacity, ID, representative
+storage/genome, and member-count pressure separately from spawn pressure. Labels are
+observational, not adaptive success. Exact `genome_variants` remain distinct from
+species: the monoculture heuristic still uses exact genomes, not a new species-based
+judgment.
 
 `SimParams.storage` reserves shared arena allowances and sets a default
 `max_memory_bytes` of **100663296 (96 MiB) per world**. Larger native configurations
@@ -480,9 +567,13 @@ metrics, and any shell snapshots/transports additional. The WASM shell similarly
 exposes `Sim.storage_diagnostics()` JSON on demand with `arena_usage` and cumulative
 `spawn_failures`; that envelope is unchanged. The separate
 `Sim.structural_mutation_diagnostics()` method returns the same counter object,
-extended with nullable `remove_sensor` and `add_sensor` fields. Both kinds of current
-shell counters start at zero on world construction,
-are isolated per world, and survive retuning. JSON requests can grow WASM memory,
+extended with nullable `remove_sensor` and `add_sensor` fields.
+`Sim.species_diagnostics()` returns the same `populations`,
+`unclassified_population`, and `events` envelope as native species metrics, with
+measured event counters. `Sim.species_count()` and `Sim.unclassified_population()`
+provide the current scalar counts without allocating a diagnostics JSON response.
+All current shell counters start at zero on world construction, are isolated per
+world, and survive retuning. JSON requests can grow WASM memory,
 so clients must refresh detached snapshot views. Snapshots and browser transports
 are outside the core budget. This is not a browser resident-memory safety guarantee.
 

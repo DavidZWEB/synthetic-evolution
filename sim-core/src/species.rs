@@ -11,6 +11,10 @@ use crate::genome::{self, Gene};
 use crate::ids::{NULL_ID, SpeciesId};
 use crate::params::{DistanceParams, ParamError};
 
+mod events;
+mod hash;
+pub use events::{SpeciesEvent, SpeciesEventCounts};
+
 #[derive(Debug)]
 pub enum BuildError {
     Parameters(ParamError),
@@ -337,5 +341,48 @@ mod tests {
         classifier.remove_member(id).unwrap();
         assert_eq!(classifier.classify(&gene(0)).unwrap().species, id);
         assert_eq!(classifier.active().next(), Some((id, u32::MAX)));
+    }
+
+    #[test]
+    fn world_id_exhaustion_keeps_admissions_and_existing_membership_available() {
+        use crate::{AgentId, SimParams, SpawnSpec, World};
+        use glam::Vec3;
+        let mut params = SimParams::default();
+        params.world.max_agents = 3;
+        params.plants.max_plants = 0;
+        params.species.capacity = 2;
+        params.species.threshold = f64::MIN_POSITIVE;
+        let mut world = World::new(42, params).unwrap();
+        let first = world.spawn_founder(Vec3::ZERO).unwrap();
+        let genes = world.genome(first).to_vec();
+        world.classifier.next_id = NULL_ID;
+        let mut events = SpeciesEventCounts::default();
+        let unclassified = world
+            .spawn_founder_with_species_observer(Vec3::ZERO, |event| events.record(event))
+            .unwrap();
+        assert_eq!(world.agents().species_id[unclassified.index()], NULL_ID);
+        assert_eq!(events.unclassified_id_exhausted, 1);
+        let assigned = world
+            .spawn_with_species_observer(
+                &SpawnSpec {
+                    position: Vec3::ZERO,
+                    yaw: 0.0,
+                    energy: 0.0,
+                    size: 3.0,
+                    signature: Vec3::ONE,
+                    parent_a: AgentId::NULL,
+                },
+                &genes,
+                |event| events.record(event),
+            )
+            .unwrap();
+        assert_eq!(world.agents().species_id[assigned.index()], 0);
+        assert_eq!(world.population(), 3);
+        assert_eq!(world.unclassified_population(), 1);
+        assert_eq!(
+            world.species().active().collect::<Vec<_>>(),
+            vec![(SpeciesId::new(0), 2)]
+        );
+        assert_eq!(events.created, 0);
     }
 }

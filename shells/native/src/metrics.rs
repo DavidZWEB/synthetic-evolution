@@ -10,13 +10,15 @@ use std::io;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use sim_core::genome::Gene;
+use sim_core::ids::SpeciesId;
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
+use sim_core::species::SpeciesEventCounts;
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -63,6 +65,21 @@ pub struct Summary {
     pub max: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SpeciesPopulation {
+    pub species_id: SpeciesId,
+    pub population: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpeciesMetrics {
+    /// Active immutable representatives, sorted by historical ID rather than slot.
+    pub populations: Vec<SpeciesPopulation>,
+    pub unclassified_population: u32,
+    /// Cumulative shell observations, not authoritative classifier state.
+    pub events: Option<SpeciesEventCounts>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldMetrics {
     pub population: u32,
@@ -94,6 +111,9 @@ pub struct WorldMetrics {
     /// neural counts but no organ observations.
     #[serde(default)]
     pub structural_mutations: Option<StructuralMutationCounts>,
+    /// Schemas 3–5 did not classify agents; their absent data must stay unknown.
+    #[serde(default)]
+    pub species: Option<SpeciesMetrics>,
 }
 
 #[derive(Default)]
@@ -142,6 +162,7 @@ pub fn sample_pair(
     random_control: &World,
     spawn_failures: Option<[SpawnFailureCounts; 2]>,
     structural_mutations: Option<[StructuralMutationCounts; 2]>,
+    species_events: Option<[SpeciesEventCounts; 2]>,
     include_state_hashes: bool,
 ) -> Result<RunSample> {
     debug_assert_eq!(evolving.tick_count(), random_control.tick_count());
@@ -154,6 +175,18 @@ pub fn sample_pair(
     if let Some([evolving, control]) = structural_mutations {
         evolving_metrics.structural_mutations = Some(evolving);
         control_metrics.structural_mutations = Some(control);
+    }
+    if let Some([evolving, control]) = species_events {
+        evolving_metrics
+            .species
+            .as_mut()
+            .expect("current world")
+            .events = Some(evolving);
+        control_metrics
+            .species
+            .as_mut()
+            .expect("current world")
+            .events = Some(control);
     }
     Ok(RunSample {
         tick: evolving.tick_count(),
@@ -232,6 +265,18 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         arena_usage: world.storage_usage().to_vec(),
         spawn_failures: None,
         structural_mutations: None,
+        species: Some(SpeciesMetrics {
+            populations: world
+                .species()
+                .active()
+                .map(|(species_id, population)| SpeciesPopulation {
+                    species_id,
+                    population,
+                })
+                .collect(),
+            unclassified_population: world.unclassified_population(),
+            events: None,
+        }),
     })
 }
 
@@ -270,6 +315,7 @@ mod tests {
         assert_eq!(metrics.arena_usage, world.storage_usage());
         assert_eq!(metrics.spawn_failures, None);
         assert_eq!(metrics.structural_mutations, None);
+        assert_eq!(metrics.species, Some(SpeciesMetrics::default()));
     }
 
     #[test]
@@ -288,6 +334,18 @@ mod tests {
         assert_eq!(metrics.population, 1);
         assert_eq!(metrics.agent_energy.mean, 30.0);
         assert_eq!(metrics.genome_variants, 1);
+        let species = metrics.species.unwrap();
+        assert_eq!(species.populations.len() as u32, world.species_count());
+        assert_eq!(
+            species
+                .populations
+                .iter()
+                .map(|row| row.population)
+                .sum::<u32>()
+                + species.unclassified_population,
+            1
+        );
+        assert_eq!(species.events, None);
     }
 
     #[test]
@@ -302,7 +360,7 @@ mod tests {
         assert_eq!(evolving.seed_founders(4), 4);
         assert_eq!(control.seed_founders(4), 4);
 
-        let sample = sample_pair(&evolving, &control, None, None, true).expect("samples");
+        let sample = sample_pair(&evolving, &control, None, None, None, true).expect("samples");
         assert_eq!(sample.evolving, sample.random_control);
         assert_eq!(
             sample.final_state_hashes.as_ref().unwrap().evolving,
@@ -333,8 +391,25 @@ mod tests {
         mutations[0].add_neuron.genome_limit = 3;
         mutations[1].remove_connection.attempted = 7;
         mutations[1].remove_connection.applied = 7;
-        let sample =
-            sample_pair(&evolving, &control, Some(counts), Some(mutations), false).unwrap();
+        let species = [
+            SpeciesEventCounts {
+                unclassified_capacity: 5,
+                ..Default::default()
+            },
+            SpeciesEventCounts {
+                unclassified_id_exhausted: 9,
+                ..Default::default()
+            },
+        ];
+        let sample = sample_pair(
+            &evolving,
+            &control,
+            Some(counts),
+            Some(mutations),
+            Some(species),
+            false,
+        )
+        .unwrap();
         assert_eq!(sample.evolving.spawn_failures, Some(counts[0]));
         assert_eq!(sample.random_control.spawn_failures, Some(counts[1]));
         assert_eq!(sample.evolving.structural_mutations, Some(mutations[0]));
@@ -342,7 +417,12 @@ mod tests {
             sample.random_control.structural_mutations,
             Some(mutations[1])
         );
-        let unobserved = sample_pair(&evolving, &control, None, None, false).unwrap();
+        assert_eq!(sample.evolving.species.unwrap().events, Some(species[0]));
+        assert_eq!(
+            sample.random_control.species.unwrap().events,
+            Some(species[1])
+        );
+        let unobserved = sample_pair(&evolving, &control, None, None, None, false).unwrap();
         let json = serde_json::to_value(unobserved).unwrap();
         for cohort in ["evolving", "random_control"] {
             assert_eq!(
@@ -353,7 +433,94 @@ mod tests {
                 json[cohort].get("structural_mutations"),
                 Some(&serde_json::Value::Null)
             );
+            assert_eq!(
+                json[cohort]["species"]["populations"],
+                serde_json::json!([])
+            );
+            assert_eq!(json[cohort]["species"]["unclassified_population"], 0);
+            assert_eq!(
+                json[cohort]["species"].get("events"),
+                Some(&serde_json::Value::Null)
+            );
         }
+    }
+
+    #[test]
+    fn disabled_classification_reports_living_unclassified_agents_not_zero_population() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 2;
+        params.species.capacity = 0;
+        let mut world = World::new(1, params).unwrap();
+        assert_eq!(world.seed_founders(3), 3);
+        let species = sample_world(&world).unwrap().species.unwrap();
+        assert!(species.populations.is_empty());
+        assert_eq!(species.unclassified_population, 3);
+        let first = world.pool().iter_live().next().unwrap();
+        world.despawn(first);
+        assert_eq!(
+            sample_world(&world)
+                .unwrap()
+                .species
+                .unwrap()
+                .unclassified_population,
+            2
+        );
+    }
+
+    #[test]
+    fn extinct_species_leave_no_zero_population_rows() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 2;
+        params.plants.max_plants = 1;
+        let mut world = World::new(1, params).unwrap();
+        let id = world.spawn_founder(Vec3::ZERO).unwrap();
+        assert_eq!(
+            sample_world(&world)
+                .unwrap()
+                .species
+                .unwrap()
+                .populations
+                .len(),
+            1
+        );
+        world.despawn(id);
+        assert_eq!(
+            sample_world(&world).unwrap().species,
+            Some(SpeciesMetrics::default())
+        );
+    }
+
+    #[test]
+    fn sampling_preserves_historical_species_ids_when_slots_are_reused() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 1;
+        params.species.capacity = 2;
+        params.species.threshold = 1e-12;
+        let mut world = World::new(1, params).unwrap();
+        let first = world.spawn_founder(Vec3::ZERO).unwrap();
+        let second = world.spawn_founder(Vec3::ZERO).unwrap();
+        let second_species = world.agents().species_id[second.index()];
+        world.despawn(first);
+        let third = world.spawn_founder(Vec3::ZERO).unwrap();
+        let third_species = world.agents().species_id[third.index()];
+        let metrics = sample_world(&world).unwrap().species.unwrap();
+        assert_eq!(
+            metrics.populations,
+            vec![
+                SpeciesPopulation {
+                    species_id: SpeciesId::new(second_species),
+                    population: 1
+                },
+                SpeciesPopulation {
+                    species_id: SpeciesId::new(third_species),
+                    population: 1
+                },
+            ]
+        );
+        assert!(third_species > second_species);
+        assert_eq!(metrics.unclassified_population, 0);
     }
 
     #[test]
