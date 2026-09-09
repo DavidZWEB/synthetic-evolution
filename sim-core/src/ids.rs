@@ -1,4 +1,4 @@
-//! Newtype identifiers for the things that are all `u32` underneath.
+//! Newtype identifiers for genome identities, storage slots, and organism births.
 //!
 //! The distinction that matters: an [`InnovationId`] is a *genome-level identity*,
 //! stable across a lineage and comparable between two genomes; a [`NeuronId`] is a
@@ -6,10 +6,14 @@
 //! agent. Passing one where the other is wanted produces a simulation that runs and
 //! is subtly wrong, so they are different types and the compiler checks it.
 //!
-//! Also provides checked innovation reservations, without owning the world's counter.
+//! Also provides checked identity reservations, without owning the world's counters.
 //! Lookup tables and arenas that hold these identifiers live elsewhere.
 
 use serde::{Deserialize, Serialize};
+
+mod birth;
+pub use birth::BirthId;
+pub(crate) use birth::issue_birth;
 
 /// Sentinel for "no such entity". `parentB` is always this in V1 (spec §3.4).
 pub const NULL_ID: u32 = u32::MAX;

@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M4 World integration is implemented with the approved provisional threshold 0.5.**
+**Status: M4 is implemented; M5's approved birth-identity foundation is in progress.**
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -21,12 +21,12 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1, M2-M3, D4/D5 and provisional threshold 0.5 approved; calibration/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identity foundation approved; history/calibration/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
-| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | not started |
+| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | birth identities in progress; retained history not started |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
@@ -301,11 +301,26 @@ is unchanged.
 
 ### D6 - Persistent ancestry without unbounded tick allocation
 
-**Recommendation:** world-local, monotonic birth identities with two stable parent
+**Approved identity foundation:** world-local, monotonic u64 birth identities with two stable parent
 references, distinct from reusable pool slots and their UI incarnations. Preserve
 the existing `parent_a`/`parent_b` fields and serialized hedges; do not silently
 reinterpret old parent-slot payloads as persistent IDs. Represent wide IDs exactly
 across JSON/JS, as is already done for ticks and seeds.
+
+Issue IDs only after successful admission, never reuse them, and reserve u64::MAX
+for explicit unavailable identity. Exhaustion cannot refuse ecological births or
+wrap the counter. Capture the live parent's identity before allocating a potentially
+reused child slot; missing/dead slot inputs remain unknown rather than becoming
+self-parentage. Ordinary births keep the second parent empty. Preserve the old slot
+fields for compatibility and distinguish them from persistent references.
+
+Use exact decimal strings or null in inspection, with no JS-number coercion or
+render-snapshot expansion. Preallocate all three u64 arrays within the existing core
+budget. The first PR wires identity and inspection, with an independently attributable
+hash-coverage refresh; it does not implement archive, graph, or checkpoint formats.
+
+**History design still pending:** the following viewer and retention proposals need
+approval before that part of M5 is implemented.
 
 The primary viewer should be a **species-origin graph**, with the birth of a new
 species linked to its founding parent's species and tick. It is not an archive of
@@ -318,7 +333,7 @@ I/O; browser history can persist in IndexedDB, native history in exported record
 This is history persistence, not full-world checkpointing or resumption. M7 owns
 that separate capability; exporting M5's ancestry graph cannot resume a world.
 
-Approve retention limits, pruning semantics, and overflow handling before M5.
+Approve retention limits, pruning semantics, and overflow handling before the retained-history slice.
 Recommended overflow behavior is an explicit gap/truncation marker, never altered
 ecology or a silently complete-looking tree. Pruning must preserve referenced
 ancestor identities or mark them as unavailable. A missed intermediate snapshot
@@ -534,6 +549,13 @@ so approving removal rates accounts for their measurement effect, not only wheth
 the resulting genomes validate.
 
 ## M5 - Stable ancestry and retained history
+
+**Identity foundation in progress:** monotonic world-owned IDs, parent capture at
+admission, explicit exhaustion, persistent references across slot reuse, and exact
+inspection values. No history retention or ancestry graph is being claimed yet.
+Native schema 7 distinguishes the new construction footprint while preserving
+historical schemas 3-6 without charging their runtimes for nonexistent identity
+arrays. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
 
 Implement D6's identities, species-origin events, history retention, and shell-side
 archival. Link births using persistent parent identities at birth time, never by

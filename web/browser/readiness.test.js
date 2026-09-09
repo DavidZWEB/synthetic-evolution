@@ -82,7 +82,125 @@ async function selectFirstFounder(page) {
   return inspector;
 }
 
+async function inspectorFields(inspector) {
+  return inspector.evaluate((el) => Object.fromEntries(
+    [...el.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling.textContent]),
+  ));
+}
+
 for (const mode of ['development', 'transferable']) {
+  test(`stable birth inspection survives stepping and resets with its world (${mode})`, async () => {
+    await withClient(mode, async (page) => {
+      let inspector = await selectFirstFounder(page);
+      await page.waitForFunction(() => [...document.querySelectorAll('aside dt')]
+        .find((dt) => dt.textContent === 'birth ID')?.nextElementSibling?.textContent === '#0 (this world)');
+      const before = await inspectorFields(inspector);
+      assert.match(await inspector.locator('header strong').innerText(), /^pool slot #0$/);
+      assert.equal(before['parent A birth ID'], '— (founder)');
+      assert.equal(before['parent B birth ID'], '— (asexual)');
+      assert.equal(before['parent A slot'], '— (founder)');
+      assert.equal(before['parent B slot'], '— (asexual)');
+      assert.ok(Object.hasOwn(before, 'species'));
+      await inspector.locator('summary').click();
+      await page.waitForFunction(() => (document.querySelector('pre')?.textContent.length ?? 0) > 0);
+      const genome = await inspector.locator('pre').innerText();
+      const activations = await inspector.locator('.neuron output').allTextContents();
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() =>
+        document.querySelector('aside dt')?.nextElementSibling?.textContent === '1');
+      const after = await inspectorFields(inspector);
+      assert.equal(after['birth ID'], before['birth ID']);
+      assert.equal(after['slot incarnation'], before['slot incarnation']);
+      assert.equal(after.age, '1');
+      assert.equal(await inspector.locator('pre').innerText(), genome);
+      assert.notDeepEqual(await inspector.locator('.neuron output').allTextContents(), activations);
+
+      await page.getByRole('textbox', { name: 'seed', exact: true }).fill('117');
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await page.waitForFunction(() => new URLSearchParams(location.hash.slice(1)).get('seed') === '117');
+      await waitForTransport(page, mode);
+      assert.equal(await page.getByRole('complementary').count(), 0, 'selection survived world reset');
+      inspector = await selectFirstFounder(page);
+      await page.waitForFunction(() => [...document.querySelectorAll('aside dt')]
+        .find((dt) => dt.textContent === 'birth ID')?.nextElementSibling?.textContent === '#0 (this world)');
+      const reset = await inspectorFields(inspector);
+      assert.equal(reset.tick, '0');
+      assert.equal(reset.age, '0');
+      assert.equal(reset['slot incarnation'], '1');
+      assert.equal(reset['parent A birth ID'], '— (founder)');
+      assert.equal(await inspector.locator('details').evaluate((el) => el.open), false);
+    });
+  });
+
+  test(`high-u64 and unavailable parent identities render without slot ancestry or overflow (${mode})`, async () => {
+    await withClient(mode, async (page) => {
+      const inspector = await selectFirstFounder(page);
+      await page.waitForFunction(() => [...document.querySelectorAll('aside dt')]
+        .find((dt) => dt.textContent === 'birth ID')?.nextElementSibling?.textContent
+          === '#18446744073709551614 (this world)');
+      const fields = await inspectorFields(inspector);
+      assert.equal(fields['parent A birth ID'], '#9007199254740993 (this world)');
+      assert.equal(fields['parent B birth ID'], '#9007199254740994 (this world)');
+      assert.equal(fields['parent A slot'], 'slot #0 at birth (may be reused)');
+      assert.equal(fields['parent B slot'], 'slot #0 at birth (may be reused)');
+      for (const viewport of [
+        { width: 1440, height: 1000 }, { width: 390, height: 844 }, { width: 320, height: 640 },
+      ]) {
+        await page.setViewportSize(viewport);
+        const layout = await inspector.evaluate((el) => ({
+          overflow: el.scrollWidth > el.clientWidth,
+          documentOverflow: document.documentElement.scrollWidth > innerWidth,
+          fields: [...el.querySelectorAll('.identity')].map((row) => {
+            const label = row.querySelector('dt').getBoundingClientRect();
+            const value = row.querySelector('dd').getBoundingClientRect();
+            return { labelRight: label.right, valueLeft: value.left, valueRight: value.right };
+          }),
+        }));
+        assert.equal(layout.overflow, false, `inspector overflow at ${viewport.width}px`);
+        assert.equal(layout.documentOverflow, false, `document overflow at ${viewport.width}px`);
+        for (const field of layout.fields) {
+          assert.ok(field.labelRight <= field.valueLeft && field.valueRight <= viewport.width,
+            `identity fields overlap at ${viewport.width}px: ${JSON.stringify(field)}`);
+        }
+      }
+      await page.evaluate(() => {
+        globalThis.inspectionIdentityFixture = {
+          birth_id: null, parent_birth_a: null, parent_birth_b: null, parent_a: 0, parent_b: 0,
+        };
+      });
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() => [...document.querySelectorAll('aside dt')]
+        .find((dt) => dt.textContent === 'birth ID')?.nextElementSibling?.textContent === 'unavailable');
+      const unavailable = await inspectorFields(inspector);
+      assert.equal(unavailable['parent A birth ID'], 'unavailable');
+      assert.equal(unavailable['parent B birth ID'], 'unavailable');
+      assert.doesNotMatch(await inspector.innerText(), /founder|asexual/);
+    }, {
+      beforeLoad: (page) => page.addInitScript(() => {
+        globalThis.inspectionIdentityFixture = {
+          birth_id: '18446744073709551614',
+          parent_birth_a: '9007199254740993',
+          parent_birth_b: '9007199254740994',
+          parent_a: 0,
+          parent_b: 0,
+        };
+        const RealWorker = globalThis.Worker;
+        globalThis.Worker = class extends RealWorker {
+          constructor(...args) {
+            super(...args);
+            this.addEventListener('message', (event) => {
+              if (event.data.kind === 'inspection' && event.data.agent) {
+                event.data.agent = JSON.stringify({
+                  ...JSON.parse(event.data.agent), ...globalThis.inspectionIdentityFixture,
+                });
+              }
+            });
+          }
+        };
+      }),
+    });
+  });
+
   test(`species status and inspection reflect real classification through reseed and stepping (${mode})`, async () => {
     for (const capacity of [0, 4]) {
       await withClient(mode, async (page) => {

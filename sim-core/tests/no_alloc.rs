@@ -84,6 +84,25 @@ fn the_counter_actually_counts() {
 }
 
 #[test]
+fn persistent_identity_churn_and_failed_admissions_never_allocate() {
+    use sim_core::ids::BirthId;
+    let mut params = SimParams::default();
+    params.world.max_agents = 1;
+    params.plants.max_plants = 0;
+    let mut world = World::new(42, params).unwrap();
+    let observed = count_allocations(|| {
+        for expected in 0..100 {
+            let id = world.spawn_founder(Vec3::ZERO).unwrap();
+            assert_eq!(world.agents().birth_id[id.index()], BirthId::new(expected));
+            assert!(world.spawn_founder(Vec3::ZERO).is_err());
+            assert!(world.despawn(id));
+            assert_eq!(world.agents().birth_id[id.index()], BirthId::NULL);
+        }
+    });
+    assert_eq!(observed, 0);
+}
+
+#[test]
 fn genetic_distance_never_allocates_or_changes_a_world() {
     let mut params = SimParams::default();
     params.world.max_agents = 4;

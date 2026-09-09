@@ -6,6 +6,7 @@
  */
 
 import type { Gene } from '../generated/Gene';
+import type { BirthId } from '../generated/BirthId';
 
 export interface Inspection {
   index: number;
@@ -16,6 +17,9 @@ export interface Inspection {
   size: number;
   signature: [number, number, number];
   species_id: number;
+  birth_id: BirthId;
+  parent_birth_a: BirthId;
+  parent_birth_b: BirthId;
   parent_a: number;
   parent_b: number;
   brain_units: number;
@@ -32,12 +36,39 @@ const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 const NULL_SPECIES = 0xffff_ffff;
-const isSpeciesId = (value: unknown): value is number =>
+const isUint32 = (value: unknown): value is number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= NULL_SPECIES;
 
 export function speciesLabel(id: number): string {
-  if (!isSpeciesId(id)) throw new TypeError('invalid species ID');
+  if (!isUint32(id)) throw new TypeError('invalid species ID');
   return id === NULL_SPECIES ? 'unclassified' : `#${id} (this world)`;
+}
+
+const NULL_AGENT = 0xffff_ffff;
+const MAX_BIRTH_ID = (1n << 64n) - 2n;
+const isBirthId = (value: unknown): value is BirthId =>
+  value === null ||
+  (typeof value === 'string' &&
+    value.length <= 20 &&
+    !/[^0-9]/.test(value) &&
+    (value === '0' || /^[1-9]/.test(value)) &&
+    BigInt(value) <= MAX_BIRTH_ID);
+
+export function birthIdLabel(id: BirthId): string {
+  if (!isBirthId(id)) throw new TypeError('invalid birth ID');
+  return id === null ? 'unavailable' : `#${id} (this world)`;
+}
+
+export function parentSlotLabel(slot: number, parent: 'A' | 'B'): string {
+  if (!isUint32(slot)) throw new TypeError('invalid parent slot');
+  if (slot !== NULL_AGENT) return `slot #${slot} at birth (may be reused)`;
+  return parent === 'A' ? '— (founder)' : '— (asexual)';
+}
+
+export function parentBirthLabel(id: BirthId, slot: number, parent: 'A' | 'B'): string {
+  if (!isUint32(slot)) throw new TypeError('invalid parent slot');
+  if (id !== null || slot !== NULL_AGENT) return birthIdLabel(id);
+  return parentSlotLabel(slot, parent);
 }
 
 function isInspection(value: unknown): value is Inspection {
@@ -54,9 +85,12 @@ function isInspection(value: unknown): value is Inspection {
     Array.isArray(value.signature) &&
     value.signature.length === 3 &&
     value.signature.every(isFiniteNumber) &&
-    isSpeciesId(value.species_id) &&
-    Number.isSafeInteger(value.parent_a) &&
-    Number.isSafeInteger(value.parent_b) &&
+    isUint32(value.species_id) &&
+    isBirthId(value.birth_id) &&
+    isBirthId(value.parent_birth_a) &&
+    isBirthId(value.parent_birth_b) &&
+    isUint32(value.parent_a) &&
+    isUint32(value.parent_b) &&
     Number.isSafeInteger(value.brain_units) &&
     isFiniteNumber(value.sensor_load) &&
     Array.isArray(value.activations) &&

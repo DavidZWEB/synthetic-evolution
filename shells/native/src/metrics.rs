@@ -18,7 +18,7 @@ use sim_core::species::SpeciesEventCounts;
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 6;
+pub const SCHEMA_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]

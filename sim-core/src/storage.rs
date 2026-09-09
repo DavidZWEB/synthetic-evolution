@@ -11,7 +11,7 @@ use crate::brain::{Neuron, Synapse};
 use crate::effectors::Effector;
 use crate::founder::{FounderCounts, FounderPlan};
 use crate::genome::Gene;
-use crate::ids::{AgentId, InnovationId};
+use crate::ids::{AgentId, BirthId, InnovationId};
 use crate::params::{ParamError, SimParams};
 use crate::perceive::Sensor;
 use crate::species::Classifier;
@@ -33,6 +33,18 @@ pub(crate) struct StorageLayout {
 impl StorageLayout {
     /// Called by parameter validation, so must never call `validate` or build a plan.
     pub(crate) fn new(params: &SimParams) -> Result<Self, ParamError> {
+        Self::with_birth_identity(params, true)
+    }
+
+    /// Compatibility validation only; new worlds always use the complete layout.
+    pub(crate) fn pre_birth_identity(params: &SimParams) -> Result<Self, ParamError> {
+        Self::with_birth_identity(params, false)
+    }
+
+    fn with_birth_identity(
+        params: &SimParams,
+        include_birth_identity: bool,
+    ) -> Result<Self, ParamError> {
         let storage = &params.storage;
         let agents = params.world.max_agents;
         let aggregate =
@@ -149,6 +161,9 @@ impl StorageLayout {
         ))?;
         // Cached reset values are inline Copy data, not additional heap allocations.
         requests.agent_storage(u64::from(agents))?;
+        if include_birth_identity {
+            requests.buffers::<BirthId>(u64::from(agents), 3)?;
+        }
         requests.founder_plan(params, &founder)?;
         requests.buffer::<Gene>(u64::from(storage.max_genes)).map_err(|_| ParamError(
             "storage.max_genes produces a scratch buffer exceeding the portable byte ceiling",

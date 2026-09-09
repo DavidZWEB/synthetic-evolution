@@ -15,7 +15,7 @@ use crate::arena::{AllocationFailure, Block, VariableArena};
 use crate::brain;
 use crate::effectors;
 use crate::genome::{self, BodyTrait, Gene};
-use crate::ids::{AgentId, SpeciesId};
+use crate::ids::{AgentId, BirthId, SpeciesId, issue_birth};
 use crate::math;
 use crate::perceive;
 use crate::spawn::{self, ArenaKind, SpawnError};
@@ -67,6 +67,13 @@ impl World {
         if self.pool.live_count() == self.pool.capacity() {
             return Err(SpawnError::PoolFull);
         }
+        // Capture before allocation: a dead parent slot may be reused by this child.
+        // Resolving it afterwards could create self-parentage (spec §3.4).
+        let parent_birth_a = if self.pool.is_alive(spec.parent_a) {
+            self.agents.birth_id[spec.parent_a.index()]
+        } else {
+            BirthId::NULL
+        };
         let handles = self.claim_blocks(genes)?;
         // Reserve every arena before claiming an identity: a failed birth must not
         // advance a slot incarnation or alter future allocation order (spec section 2.2a).
@@ -85,6 +92,11 @@ impl World {
         perceive::compile(genes, self.sensors.get_mut(handles.sensors));
         effectors::compile(genes, self.effectors.get_mut(handles.effectors));
         self.agents.init(id, spec, &handles);
+        self.agents.birth_id[id.index()] = match issue_birth(&mut self.next_birth) {
+            Some(birth) => birth,
+            None => BirthId::NULL,
+        };
+        self.agents.parent_birth_a[id.index()] = parent_birth_a;
         // The intent buffer lives outside `Agents`, so it misses `init`'s guarantee that
         // nothing survives from the slot's previous tenant. Without this a newborn
         // claiming a recycled slot acts on a corpse's last request on its first tick —

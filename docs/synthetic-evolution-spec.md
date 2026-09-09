@@ -69,8 +69,11 @@ speciesId:    Uint32Array(N)
 signature:    Float32Array(N * 3)   // evolvable "color" — see §4.2
 size:         Float32Array(N)
 alive:        Uint8Array(N)
-parentA:      Uint32Array(N)        // phylogeny
+parentA:      Uint32Array(N)        // legacy parent slot, not a persistent identity
 parentB:      Uint32Array(N)        // NULL_ID in V1 — see §3.4
+birthId:      BigUint64Array(N)     // stable world-local organism identity
+parentBirthA: BigUint64Array(N)     // captured at admission; u64::MAX means unavailable
+parentBirthB: BigUint64Array(N)     // empty during asexual reproduction
 gridCell:     Uint32Array(N)        // spatial hash bucket, rebuilt per tick
 brainOffset:  Uint32Array(N)        // index into the brain arena
 genomeOffset: Uint32Array(N)        // index into the genome arena
@@ -463,7 +466,7 @@ report creation, extinction, and unclassified admissions; shell-owned cumulative
 counters never affect RNG or authoritative state. Existing methods use no-op
 observers unless a caller opts in.
 
-Native schema 6 and WASM/browser status distinguish active populations, unclassified
+Native schema 6 introduced population metadata retained by later schemas; WASM/browser status distinguish active populations, unclassified
 population, and optional event observations. Legacy schemas 3/4/5 retain unavailable
 species observations and are validated without charging nonexistent historical
 classifier buffers. Scalar-control protocol remains `randomized_at_birth_v3` because
@@ -471,6 +474,39 @@ heredity is unchanged. World integration and subsequent full classifier hash cov
 are separate attributable commits; neither changes ecological dynamics.
 Retained ancestry/history remains M5 work; this component returns synchronous
 assignment and departure outcomes rather than owning an event archive.
+
+**DECIDED for M5's identity foundation:** every successfully admitted founder or
+newborn receives a world-local monotonic u64 `BirthId`, starting at zero. Rejected
+admissions consume no ID. IDs never wrap or get reused with agent slots; u64::MAX is
+reserved for unavailable identity. Exhaustion must not refuse an ecological birth:
+keep the counter exhausted and mark that individual's identity unavailable.
+
+Store the individual's ID and two persistent parent references in preallocated
+per-slot arrays. Ordinary reproduction captures the actual live parent's BirthId
+before allocating the child slot, so an unavailable/dead parent slot cannot be
+reused by the child and then mistaken for its own parent. The existing `SpawnSpec`
+parent slot names the current live parent at admission, not an imported historical
+identity; invalid/dead parent slots produce unavailable stable parentage rather than
+guessed links. Capture once, never resolve a child's ancestry through its old parent
+slot during inspection. Preserve the legacy parent-slot fields unchanged. The
+second stable parent stays empty in asexual births; representation supports two
+parents without enabling sexual reproduction.
+
+Human-readable serialization and JS inspection use canonical decimal strings for
+IDs 0 through u64::MAX-1 and explicit null for unavailable identity, never JSON
+numbers. Binary serde retains raw u64 values, without defining a checkpoint format.
+The identity arrays add 24 bytes per agent-pool slot inside the existing core budget;
+no per-birth allocation or RNG draw is introduced. They are on-demand inspection
+data, not additions to the narrow render snapshot.
+
+This first slice provides stable references, not a retained ancestry graph or an
+archive of dead organisms. History retention, pruning, overflow/gap records, and
+native/browser persistence remain subsequent D6 decisions. Identity integration
+preserves existing references; its full state-hash coverage is a separate refresh.
+Native schema 7 identifies the identity-aware construction footprint, without adding
+individual history rows to population telemetry. Historical schemas 3-6 validate
+their original budgets against the layout before these identity arrays existed;
+constructing a current World still requires the complete current allocation budget.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.

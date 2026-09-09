@@ -129,6 +129,23 @@ fn world_species_storage_is_charged_without_increasing_the_core_budget() {
 }
 
 #[test]
+fn birth_identity_arrays_fit_the_unchanged_budget_and_legacy_validation_excludes_them() {
+    let mut params = SimParams::default();
+    let current = params.estimated_construction_bytes().unwrap();
+    assert_eq!(current, 88_613_076);
+    assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
+    params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);
+    assert!(params.validate().is_err());
+    params.validate_pre_birth_identity_storage().unwrap();
+    assert!(
+        World::new(42, params.clone()).is_err(),
+        "legacy validation must not authorize a current World"
+    );
+    params.storage.max_memory_bytes -= 1;
+    assert!(params.validate_pre_birth_identity_storage().is_err());
+}
+
+#[test]
 fn estimate_covers_nondefault_constructor_shapes() {
     type Profile = fn(&mut SimParams);
     let profiles: [Profile; 11] = [

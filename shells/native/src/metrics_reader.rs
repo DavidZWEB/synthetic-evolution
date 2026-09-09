@@ -46,7 +46,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         })?;
         match record {
             MetricsRecord::Header(next) if header.is_none() && samples.is_empty() => {
-                if !matches!(next.schema_version, 3 | 4 | 5 | SCHEMA_VERSION) {
+                if !matches!(next.schema_version, 3 | 4 | 5 | 6 | SCHEMA_VERSION) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unsupported metrics schema {}", next.schema_version),
@@ -114,7 +114,12 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                next.params.validate().map_err(|error| {
+                let validation = if next.schema_version < 7 {
+                    next.params.validate_pre_birth_identity_storage()
+                } else {
+                    next.params.validate()
+                };
+                validation.map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("metrics header contains {error}"),
@@ -236,7 +241,9 @@ fn decode_record(line: &str) -> Result<MetricsRecord> {
                     "species".to_owned(),
                     serde_json::json!({"capacity": 0, "threshold": 0.5}),
                 );
-            } else if schema == Some(u64::from(SCHEMA_VERSION)) {
+            } else if schema
+                .is_some_and(|version| (6..=u64::from(SCHEMA_VERSION)).contains(&version))
+            {
                 for (section, fields) in [
                     ("species", &["capacity", "threshold"][..]),
                     (
@@ -475,7 +482,10 @@ mod tests {
             (6, 2, "randomized_at_birth_v2"),
             (6, 2, "randomized_at_birth"),
             (6, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (7, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (7, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (7, 2, "randomized_at_birth_v2"),
+            (7, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (8, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
         ] {
             let mut records = final_records();
             if matches!(schema, 3..=5) {
@@ -498,7 +508,8 @@ mod tests {
             params.world.max_agents = 2;
             params.plants.max_plants = 8;
             params.species.capacity = 0;
-            params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap();
+            params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
+                - 3 * 8 * u64::from(params.world.max_agents);
             let historical_budget = params.storage.max_memory_bytes;
             let mut records = final_records();
             records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
@@ -557,6 +568,31 @@ mod tests {
             );
             assert_eq!(metrics.species, None);
         }
+    }
+
+    #[test]
+    fn schema_six_preserves_species_but_does_not_pay_for_later_birth_identity_arrays() {
+        let mut records = final_records();
+        records[0]["data"]["schema_version"] = 6.into();
+        let mut params = SimParams::default();
+        params.world.max_agents = 2;
+        params.plants.max_plants = 8;
+        params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
+            - 3 * 8 * u64::from(params.world.max_agents);
+        assert!(params.validate().is_err());
+        params.validate_pre_birth_identity_storage().unwrap();
+        records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
+        let data = parse_values(&records).unwrap();
+        assert_eq!(
+            data.header.params, params,
+            "do not rewrite the historical budget or classifier"
+        );
+        assert!(data.samples[0].evolving.species.is_some());
+        records[0]["data"]["schema_version"] = SCHEMA_VERSION.into();
+        assert!(
+            parse_values(&records).is_err(),
+            "current runtime must pay for its identity arrays"
+        );
     }
 
     #[test]

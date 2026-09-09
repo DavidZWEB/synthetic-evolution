@@ -425,7 +425,8 @@ is in ascending historical-ID order. There is no retained history buffer.
 metadata. The approved 256-slot / 1,024-gene policy requests **10,492,936 bytes**
 with the current layouts. World charges this to its existing core budget before
 allocation rather than silently increasing that budget. The current default world's
-total construction request is **88,493,076 bytes**, including this classifier component,
+total construction request is **88,613,076 bytes**, including this classifier component
+and the M5 birth-identity arrays,
 within the unchanged **100,663,296-byte (96 MiB)** per-world limit. These are requested
 construction bytes, not process RSS or browser resident memory. Zero capacity requests
 no classifier buffers and reports unclassified capacity outcomes. The constructor
@@ -459,12 +460,37 @@ classifier-state hash coverage is a separate change with its own reference updat
 Shell event counters are observations and are not hashed. This regression establishes
 mechanical isolation, not calibrated clusters or ecological success.
 
+### Persistent birth identities (M5 foundation)
+
+World assigns every successful admission a monotonic 64-bit `BirthId`. This identifies
+an individual, unlike a reusable agent slot or a species shared by many organisms.
+IDs are local to one World and start at zero. Pool/arena refusals consume no ID;
+exhaustion yields explicit unavailable identity without refusing the ecological birth.
+
+Inspection adds `birth_id`, `parent_birth_a`, and `parent_birth_b`, encoded as exact
+decimal strings or null. Never convert these strings to JavaScript `Number`.
+The unavailable u64::MAX sentinel is null, not a decimal string. The three identity
+arrays reserve 24 bytes per agent slot (120,000 bytes at the default 5,000 slots)
+inside the unchanged 96 MiB core budget; they do not widen the render snapshot.
+
+The live parent's identity is captured at admission, before child-slot allocation
+could reuse a dead parent slot. `SpawnSpec.parent_a` still means the current parent
+slot at that moment, not a historical ancestry handle. Dead/unknown parents retain
+unavailable persistent references; they must not be guessed from a later occupant.
+The existing `parent_a`/`parent_b` slot fields stay separate and unchanged. Ordinary
+asexual reproduction leaves `parent_birth_b` empty.
+
+An ID can outlive the corresponding live slot without retaining that organism's
+genome or phenotype. This foundation is not a history archive, ancestry viewer, or
+resumable checkpoint. Retention, pruning, and persistent graph export remain later
+M5 decisions.
+
 ### Telemetry protocol and observations
 
-New output uses metrics schema **6**, `phase: 2`, and
+New output uses metrics schema **7**, `phase: 2`, and
 `control: "randomized_at_birth_v3"` (the shared core protocol constant).
 Species classification does not change heredity, so the control protocol is unchanged.
-The reader explicitly supports **schema 5 / phase 2 /
+The reader explicitly supports **schemas 6 and 5 / phase 2 /
 `control: "randomized_at_birth_v3"`**, **schema 4 / phase 2 /
 `control: "randomized_at_birth_v2"`** and **schema 3 / phase 1 /
 `control: "randomized_at_birth"`** (v1), without relabeling them as v3.
@@ -482,10 +508,17 @@ not invented zeroes. The reader rejects species observations or any explicit
 `params.species` field in those schemas; only a genuinely omitted field is internally
 decoded with classification disabled before validating the historical construction
 budget. Historical runs are not charged for today's default 256 representatives.
-Schema 6 requires explicit species capacity, threshold, and all distance coefficients
+Schemas 6 and 7 require explicit species capacity, threshold, and all distance coefficients
 in the header, rather than silently filling missing classification metadata.
 
-Schema 6 retains the earlier metric fields. `arena_usage` contains current element
+Schemas 3-6 predate birth-identity arrays. Their budgets are validated against the
+pre-identity storage layout, without changing their recorded budget or pretending
+identity records exist. This compatibility check is not permission to construct a
+current World under an insufficient budget: `World::new` always requires the full
+current layout. Schema 7 marks the identity-aware runtime/storage contract, not
+the addition of per-organism history records to these population samples.
+
+Schema 7 retains the earlier metric fields. `arena_usage` contains current element
 counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
 `largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
 `u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,

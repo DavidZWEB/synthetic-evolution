@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { decodeInspection, speciesLabel, summarizeGenes } from './model.ts';
+import {
+  birthIdLabel, decodeInspection, parentBirthLabel, parentSlotLabel, speciesLabel, summarizeGenes,
+} from './model.ts';
 
 const inspection = {
   index: 3,
@@ -14,6 +16,9 @@ const inspection = {
   size: 3,
   signature: [0.1, 0.2, 0.3],
   species_id: 0,
+  birth_id: '9007199254740993',
+  parent_birth_a: '9007199254740992',
+  parent_birth_b: null,
   parent_a: 1,
   parent_b: 4294967295,
   brain_units: 10,
@@ -42,6 +47,82 @@ test('malformed inspection JSON is rejected', () => {
   );
 });
 
+test('birth identities preserve exact decimal strings above the safe integer range', () => {
+  for (const id of [null, '0', '9007199254740993', '18446744073709551614']) {
+    const decoded = decodeInspection(JSON.stringify({
+      ...inspection, birth_id: id, parent_birth_a: id, parent_birth_b: id,
+    }));
+    assert.equal(decoded.birth_id, id);
+    assert.equal(decoded.parent_birth_a, id);
+    assert.equal(decoded.parent_birth_b, id);
+    assert.equal(birthIdLabel(decoded.birth_id), id === null ? 'unavailable' : `#${id} (this world)`);
+  }
+});
+
+test('all birth identity fields reject missing, numeric, noncanonical and out-of-range values', () => {
+  const malformed = [
+    undefined, 0, 9007199254740992, -1, true, {}, [], '', '00', '01', '-1', '-0',
+    '+1', ' 1', '1 ', '1\n', '1.0', '1e3', '0x10', '１', 'null',
+    '18446744073709551615', '18446744073709551616', '100000000000000000000',
+  ];
+  for (const field of ['birth_id', 'parent_birth_a', 'parent_birth_b']) {
+    for (const value of malformed) {
+      assert.throws(
+        () => decodeInspection(JSON.stringify({ ...inspection, [field]: value })),
+        /invalid inspection payload/,
+        `${field} accepted ${JSON.stringify(value)}`,
+      );
+    }
+  }
+});
+
+test('parent labels distinguish absent parents from unavailable persistent identities', () => {
+  const nullSlot = 4294967295;
+  assert.equal(birthIdLabel(null), 'unavailable');
+  assert.equal(parentBirthLabel(null, nullSlot, 'A'), '— (founder)');
+  assert.equal(parentBirthLabel(null, nullSlot, 'B'), '— (asexual)');
+  for (const parent of ['A', 'B'] as const) {
+    assert.equal(parentBirthLabel(null, 0, parent), 'unavailable');
+    assert.equal(parentBirthLabel('0', 17, parent), '#0 (this world)');
+    assert.equal(parentBirthLabel('0', nullSlot, parent), '#0 (this world)');
+    assert.equal(parentSlotLabel(17, parent), 'slot #17 at birth (may be reused)');
+  }
+});
+
+test('two persistent parents are independent of recycled legacy slots', () => {
+  const decoded = decodeInspection(JSON.stringify({
+    ...inspection,
+    birth_id: '18446744073709551614',
+    parent_birth_a: '9007199254740993',
+    parent_birth_b: '9007199254740994',
+    parent_a: 3,
+    parent_b: 3,
+  }));
+  assert.equal(
+    parentBirthLabel(decoded.parent_birth_a, decoded.parent_a, 'A'),
+    '#9007199254740993 (this world)',
+  );
+  assert.equal(
+    parentBirthLabel(decoded.parent_birth_b, decoded.parent_b, 'B'),
+    '#9007199254740994 (this world)',
+  );
+  assert.deepEqual(decoded.genome, inspection.genome);
+  assert.deepEqual(decoded.activations, inspection.activations);
+});
+
+test('parent status rejects invalid legacy slot values rather than labeling them unknown', () => {
+  for (const slot of [-1, 4294967296, 0.5, NaN]) {
+    for (const field of ['parent_a', 'parent_b']) {
+      assert.throws(
+        () => decodeInspection(JSON.stringify({ ...inspection, [field]: slot })),
+        /invalid inspection payload/,
+      );
+    }
+    assert.throws(() => parentSlotLabel(slot, 'A'), /invalid parent slot/);
+    assert.throws(() => parentBirthLabel('0', slot, 'A'), /invalid parent slot/);
+  }
+});
+
 test('species labels distinguish world-local IDs from the unclassified sentinel', () => {
   for (const id of [0, 8, 4294967294]) {
     const decoded = decodeInspection(JSON.stringify({ ...inspection, species_id: id }));
@@ -62,6 +143,8 @@ test('sensor-born brains decode with a different activation and genome length', 
   const child = {
     ...inspection,
     index: 4,
+    birth_id: '9007199254740994',
+    parent_birth_a: inspection.birth_id,
     parent_a: inspection.index,
     activations: [...inspection.activations, 0.2, 0.3, 0.4],
     genome: [
