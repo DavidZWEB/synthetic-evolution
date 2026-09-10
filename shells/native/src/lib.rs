@@ -7,8 +7,12 @@
 pub mod cli;
 pub mod diagnose;
 mod diagnose_output;
+pub mod history;
+mod history_reader;
+mod history_wire;
 pub mod metrics;
 mod metrics_reader;
+mod output;
 pub mod run;
 
 use std::error::Error;
@@ -22,6 +26,7 @@ pub fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Diagnose(args)) => diagnose::run(args),
+        Some(Command::History(args)) => history::summarize(args),
         None => run::run(cli.run),
     }
 }

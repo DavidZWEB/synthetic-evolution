@@ -17,6 +17,8 @@ pub struct Cli {
 pub enum Command {
     /// Diagnose known failure signatures in a metrics JSONL file.
     Diagnose(DiagnoseArgs),
+    /// Validate and summarize a completed species-history JSONL archive.
+    History(HistoryArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -39,6 +41,12 @@ pub struct RunArgs {
     /// JSONL output path, or `-` for stdout.
     #[arg(long)]
     pub metrics: Option<PathBuf>,
+    /// Species-history JSONL path, or `-` for stdout (separate from metrics).
+    #[arg(long)]
+    pub history: Option<PathBuf>,
+    /// Preallocated history records per world; used only with --history.
+    #[arg(long, default_value_t = 4096, requires = "history", value_parser = clap::value_parser!(u32).range(1..))]
+    pub history_capacity: u32,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -46,6 +54,15 @@ pub struct DiagnoseArgs {
     /// Metrics JSONL path, or `-` for stdin.
     pub metrics: PathBuf,
     /// Emit the report as JSON instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct HistoryArgs {
+    /// Species-history JSONL path, or `-` for stdin.
+    pub history: PathBuf,
+    /// Emit the summary as JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
 }
@@ -78,6 +95,25 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Diagnose(DiagnoseArgs { json: true, .. }))
+        ));
+    }
+
+    #[test]
+    fn history_capture_and_readback_parse() {
+        let cli = Cli::try_parse_from(["native"]).unwrap();
+        assert!(cli.run.history.is_none());
+        assert_eq!(cli.run.history_capacity, 4096);
+        let cli =
+            Cli::try_parse_from(["native", "--history", "-", "--history-capacity", "1"]).unwrap();
+        assert_eq!(cli.run.history_capacity, 1);
+        assert!(Cli::try_parse_from(["native", "--history-capacity", "1"]).is_err());
+        assert!(
+            Cli::try_parse_from(["native", "--history", "-", "--history-capacity", "0"]).is_err()
+        );
+        let cli = Cli::try_parse_from(["native", "history", "-", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::History(HistoryArgs { json: true, .. }))
         ));
     }
 }

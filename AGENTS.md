@@ -54,6 +54,7 @@ They look arbitrary. They are load-bearing, and removing them produces a sim tha
 
 - **One module, one concept.** A file should be describable in a single sentence without "and." That's the real test — not a line count.
 - **Long files are worth a second look, not an automatic split.** Past ~500 lines (excluding inline `#[cfg(test)]` blocks), ask whether it's still one concept. A flat list of fields (`params.rs`) or a struct's `impl` split across focused modules (`world.rs`, `tick.rs`, `world/lifecycle.rs`) can honestly stay long. Several unrelated systems sharing a file cannot — split by responsibility.
+- **Keep in-crate Rust tests inline.** Put `#[cfg(test)] mod tests { ... }` in the implementation file. Keep integration tests and their shared fixtures under the crate's `tests/` directory.
 - **Place modules by ownership.** Keep independently scoped systems as siblings when crate-visible inputs suffice; use a private child module for owner-specific implementation that needs the parent's private items rather than widening visibility.
 - **Every Rust source module opens with a `//!` module doc**: what it's responsible for, and what it deliberately isn't. Two or three sentences.
 - **Public surface is small.** Default to private; `pub` is a decision. A module exposing its internals invites the next module to reach in.

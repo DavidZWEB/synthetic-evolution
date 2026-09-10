@@ -84,6 +84,49 @@ fn the_counter_actually_counts() {
 }
 
 #[test]
+fn history_lifecycle_capture_and_drain_never_allocate() {
+    use sim_core::history::Recorder;
+    let mut params = SimParams::default();
+    params.world.max_agents = 2;
+    params.plants.max_plants = 0;
+    let mut world = World::new(42, params).unwrap();
+    let mut history = Recorder::try_new(2).unwrap();
+    let observed = count_allocations(|| {
+        for round in 0..100 {
+            let id = world
+                .spawn_founder_with_history_observer(
+                    Vec3::ZERO,
+                    |_| {},
+                    |event| {
+                        history.record(event).unwrap();
+                    },
+                )
+                .unwrap();
+            assert!(world.despawn_with_history_observer(
+                id,
+                |_| {},
+                |event| {
+                    history.record(event).unwrap();
+                }
+            ));
+            if round % 5 == 0 {
+                while history.pop().is_some() {}
+            }
+        }
+    });
+    assert_eq!(observed, 0);
+    assert_eq!(history.next_sequence(), 200);
+    assert!(history.dropped_events() > 0);
+    assert!(history.pending_len() > 0);
+    let before = world.state_hash();
+    assert_eq!(
+        count_allocations(|| { while history.pop().is_some() {} }),
+        0
+    );
+    assert_eq!(world.state_hash(), before);
+}
+
+#[test]
 fn persistent_identity_churn_and_failed_admissions_never_allocate() {
     use sim_core::ids::BirthId;
     let mut params = SimParams::default();
@@ -599,13 +642,21 @@ fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
     params.chemo.cells = [8, 8, 1];
     let mut world = World::new(21, params).expect("valid params");
     let mut species = SpeciesEventCounts::default();
+    let mut history = sim_core::history::Recorder::try_new(2).unwrap();
 
     for count in [1, 8, 64] {
         for i in 0..count {
             world.push_command(Command::now(Kind::SpawnFounder { position: at(i) }));
         }
         let observed = count_allocations(|| {
-            world.step_with_all_observers(|_| {}, |_| {}, |event| species.record(event))
+            world.step_with_history_observer(
+                |_| {},
+                |_| {},
+                |event| species.record(event),
+                |event| {
+                    history.record(event).unwrap();
+                },
+            )
         });
         assert_eq!(
             observed, 0,
@@ -615,6 +666,7 @@ fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
         assert!(world.population() > 0, "commands did not spawn agents");
     }
     assert!(species.created > 0);
+    assert!(history.next_sequence() > 0);
 }
 
 #[test]

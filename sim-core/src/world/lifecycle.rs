@@ -15,6 +15,7 @@ use crate::arena::{AllocationFailure, Block, VariableArena};
 use crate::brain;
 use crate::effectors;
 use crate::genome::{self, BodyTrait, Gene};
+use crate::history::{Event as HistoryEvent, EventKind as HistoryKind, Parent as HistoryParent};
 use crate::ids::{AgentId, BirthId, SpeciesId, issue_birth};
 use crate::math;
 use crate::perceive;
@@ -42,9 +43,19 @@ impl World {
         genes: &[Gene],
         on_species: impl FnMut(SpeciesEvent),
     ) -> Result<AgentId, SpawnError> {
+        self.spawn_with_history_observer(spec, genes, on_species, |_| {})
+    }
+
+    pub fn spawn_with_history_observer(
+        &mut self,
+        spec: &SpawnSpec,
+        genes: &[Gene],
+        on_species: impl FnMut(SpeciesEvent),
+        on_history: impl FnMut(HistoryEvent),
+    ) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
-        let id = self.spawn_validated(spec, genes, on_species)?;
+        let id = self.spawn_validated(spec, genes, on_species, on_history)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep
         // subsequent structural edits from reusing them (spec section 3.1).
         if let Some(last) = genes.iter().filter_map(Gene::innovation).max() {
@@ -63,16 +74,29 @@ impl World {
         spec: &SpawnSpec,
         genes: &[Gene],
         mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
     ) -> Result<AgentId, SpawnError> {
         if self.pool.live_count() == self.pool.capacity() {
             return Err(SpawnError::PoolFull);
         }
         // Capture before allocation: a dead parent slot may be reused by this child.
         // Resolving it afterwards could create self-parentage (spec §3.4).
-        let parent_birth_a = if self.pool.is_alive(spec.parent_a) {
+        let parent_is_alive = self.pool.is_alive(spec.parent_a);
+        let parent_birth_a = if parent_is_alive {
             self.agents.birth_id[spec.parent_a.index()]
         } else {
             BirthId::NULL
+        };
+        let history_parent_a = if spec.parent_a.is_null() {
+            HistoryParent::Absent
+        } else if parent_is_alive {
+            let species = SpeciesId::new(self.agents.species_id[spec.parent_a.index()]);
+            HistoryParent::Observed {
+                birth_id: parent_birth_a,
+                species_id: (!species.is_null()).then_some(species),
+            }
+        } else {
+            HistoryParent::Unavailable
         };
         let handles = self.claim_blocks(genes)?;
         // Reserve every arena before claiming an identity: a failed birth must not
@@ -113,6 +137,15 @@ impl World {
                 self.agents.species_id[id.index()] = assignment.species.raw();
                 if assignment.created {
                     on_species(SpeciesEvent::Created(assignment.species));
+                    on_history(HistoryEvent {
+                        tick: self.tick,
+                        kind: HistoryKind::SpeciesOrigin {
+                            species_id: assignment.species,
+                            founder_birth_id: self.agents.birth_id[id.index()],
+                            parent_a: history_parent_a,
+                            parent_b: HistoryParent::Absent,
+                        },
+                    });
                 }
             }
             Err(reason) => {
@@ -196,6 +229,15 @@ impl World {
         position: Vec3,
         on_species: impl FnMut(SpeciesEvent),
     ) -> Result<AgentId, SpawnError> {
+        self.spawn_founder_with_history_observer(position, on_species, |_| {})
+    }
+
+    pub fn spawn_founder_with_history_observer(
+        &mut self,
+        position: Vec3,
+        on_species: impl FnMut(SpeciesEvent),
+        on_history: impl FnMut(HistoryEvent),
+    ) -> Result<AgentId, SpawnError> {
         // Taken out of `self` so the borrow checker sees the buffer and the world as
         // separate; put back before returning.
         let mut scratch = core::mem::take(&mut self.genome_scratch);
@@ -218,7 +260,7 @@ impl World {
             ),
             parent_a: AgentId::NULL,
         };
-        let spawned = self.spawn_validated(&spec, &scratch, on_species);
+        let spawned = self.spawn_validated(&spec, &scratch, on_species, on_history);
         self.genome_scratch = scratch;
         if spawned.is_ok() {
             // A founder's tank is the one energy source that is not a plant. It is a
@@ -256,7 +298,16 @@ impl World {
     pub fn despawn_with_species_observer(
         &mut self,
         id: AgentId,
+        on_species: impl FnMut(SpeciesEvent),
+    ) -> bool {
+        self.despawn_with_history_observer(id, on_species, |_| {})
+    }
+
+    pub fn despawn_with_history_observer(
+        &mut self,
+        id: AgentId,
         mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
     ) -> bool {
         if !self.pool.is_alive(id) {
             return false;
@@ -294,6 +345,12 @@ impl World {
         let removed = self.pool.free(id);
         if extinct {
             on_species(SpeciesEvent::Extinct(species));
+            on_history(HistoryEvent {
+                tick: self.tick,
+                kind: HistoryKind::SpeciesExtinct {
+                    species_id: species,
+                },
+            });
         }
         removed
     }
@@ -329,6 +386,16 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_species: impl FnMut(SpeciesEvent),
     ) -> u32 {
+        self.seed_founders_with_history_observer(count, &mut on_refusal, &mut on_species, |_| {})
+    }
+
+    pub fn seed_founders_with_history_observer(
+        &mut self,
+        count: u32,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
+    ) -> u32 {
         /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
         /// sunflower seeds pack without lining up.
         const GOLDEN_ANGLE: f32 = 2.399_963_2;
@@ -350,7 +417,11 @@ impl World {
                 size * 0.5 + r * math::sin(angle),
                 0.0,
             );
-            match self.spawn_founder_with_species_observer(position, &mut on_species) {
+            match self.spawn_founder_with_history_observer(
+                position,
+                &mut on_species,
+                &mut on_history,
+            ) {
                 Ok(_) => placed += 1,
                 Err(error) => {
                     on_refusal(error);
