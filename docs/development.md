@@ -740,11 +740,21 @@ Not really dependency management, but it belongs in the same habit. You will hit
 ## Windows
 
 The Rust and Node toolchains are cross-platform; `scripts/setup.sh` is bash. Run it from
-WSL or Git Bash, or follow the current steps in that script manually. Nobody has tried
-this yet, so treat it as untested rather than supported.
+WSL or Git Bash, or follow the current steps in that script manually. Native Windows
+runtime behavior remains untested rather than claimed as supported.
+
+The existing Ubuntu CI job installs the Windows Rust target and type-checks all
+native targets, including `#[cfg(windows)]` output-alias handling:
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo check -p native --target x86_64-pc-windows-msvc --all-targets
+```
+
+`cargo check` does not link, so this needs neither a cross-linker nor a Windows
+runner. It catches Windows-only compile errors but does not exercise handle behavior
+or filesystem semantics; those still require execution on Windows.
 
 ## Not yet
 
 **Docker / devcontainers.** Perfect reproducibility, but WASM toolchains in containers add friction, and file-watching across the container boundary is unpleasant. `rustup` and `nvm` reading pinned files gets you most of the benefit for none of the cost. Revisit if you're ever onboarding someone else.
-
-**CI.** Worth adding once Phase 1's tests exist — running `cargo test`, `clippy`, and the cross-target hash comparison on every push is exactly what catches a determinism break the day it happens rather than three weeks later. It's the natural first task after Phase 1 closes.

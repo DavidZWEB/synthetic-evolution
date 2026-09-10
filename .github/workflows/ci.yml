@@ -63,6 +63,12 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Compile cfg(windows) code and tests without linking or a Windows runner.
+      - name: Check Windows native target
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo check -p native --target x86_64-pc-windows-msvc --all-targets
+
       # The golden hash, energy conservation, the no-alloc check, and the source scan
       # for the determinism invariants all live in here.
       - name: Test
