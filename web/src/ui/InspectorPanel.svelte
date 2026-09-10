@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Inspection } from '../inspect/model';
-  import { speciesLabel, summarizeGenes } from '../inspect/model';
+  import {
+    birthIdLabel, parentBirthLabel, parentSlotLabel, speciesLabel, summarizeGenes,
+  } from '../inspect/model';
 
   let {
     selectedIndex,
@@ -15,10 +17,6 @@
   } = $props();
 
   const activationLevel = (value: number) => `${Math.min(1, Math.abs(value)) * 100}%`;
-  const NULL_AGENT = 0xffff_ffff;
-  const parentA = (id: number) => (id === NULL_AGENT ? '— (founder)' : `slot #${id} at birth`);
-  const parentB = (id: number) =>
-    id === NULL_AGENT ? '— (asexual in Phase 1)' : `slot #${id} at birth`;
   let genomeOpen = $state(false);
   let genomeJson = $state('');
   let geneSummary = $state<Array<{ kind: string; count: number }>>([]);
@@ -45,7 +43,7 @@
 
 <aside aria-label={`Inspector for agent ${selectedIndex}`}>
   <header>
-    <strong>agent #{selectedIndex}</strong>
+    <strong>pool slot #{selectedIndex}</strong>
     <button onclick={onclose} aria-label="Close inspector">×</button>
   </header>
 
@@ -57,14 +55,30 @@
     <dl>
       <div><dt>tick</dt><dd>{inspection.tick}</dd></div>
       <div><dt>slot incarnation</dt><dd>{inspection.incarnation}</dd></div>
+      <div class="identity">
+        <dt title="Stable identity for this individual, local to this world">birth ID</dt>
+        <dd>{birthIdLabel(inspection.birth_id)}</dd>
+      </div>
       <div><dt>energy</dt><dd>{inspection.energy.toFixed(2)}</dd></div>
       <div><dt>age</dt><dd>{inspection.age}</dd></div>
       <div><dt>species</dt><dd>{speciesLabel(inspection.species_id)}</dd></div>
       <div><dt>size</dt><dd>{inspection.size.toFixed(2)}</dd></div>
       <div><dt>brain units</dt><dd>{inspection.brain_units}</dd></div>
       <div><dt>sensor load</dt><dd>{inspection.sensor_load.toFixed(1)}</dd></div>
-      <div><dt>parent A</dt><dd>{parentA(inspection.parent_a)}</dd></div>
-      <div><dt>parent B</dt><dd>{parentB(inspection.parent_b)}</dd></div>
+      <div class="identity">
+        <dt>parent A birth ID</dt>
+        <dd>{parentBirthLabel(inspection.parent_birth_a, inspection.parent_a, 'A')}</dd>
+      </div>
+      <div class="identity">
+        <dt>parent B birth ID</dt>
+        <dd>{parentBirthLabel(inspection.parent_birth_b, inspection.parent_b, 'B')}</dd>
+      </div>
+      <div class="identity">
+        <dt>parent A slot</dt><dd>{parentSlotLabel(inspection.parent_a, 'A')}</dd>
+      </div>
+      <div class="identity">
+        <dt>parent B slot</dt><dd>{parentSlotLabel(inspection.parent_b, 'B')}</dd>
+      </div>
     </dl>
 
     <section>
@@ -145,6 +159,10 @@
 
   dt { color: #6b7280; }
   dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+  .identity { grid-column: 1 / -1; }
+  .identity dt { flex-shrink: 0; }
+  .identity dd { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
   h2 {
     margin: 0 0 0.45rem;

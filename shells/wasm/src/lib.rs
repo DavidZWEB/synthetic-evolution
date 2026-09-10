@@ -25,7 +25,7 @@ use wasm_bindgen::prelude::*;
 
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
-use sim_core::ids::AgentId;
+use sim_core::ids::{AgentId, BirthId};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::snapshot::Snapshot;
@@ -153,6 +153,9 @@ struct Inspection<'a> {
     size: f32,
     signature: [f32; 3],
     species_id: u32,
+    birth_id: BirthId,
+    parent_birth_a: BirthId,
+    parent_birth_b: BirthId,
     parent_a: u32,
     /// Always `NULL_ID` in Phase 1: reproduction is asexual until Phase 6 (spec §9.1).
     parent_b: u32,
@@ -433,6 +436,9 @@ impl Sim {
             size: agents.size[i],
             signature: agents.signature[i].to_array(),
             species_id: agents.species_id[i],
+            birth_id: agents.birth_id[i],
+            parent_birth_a: agents.parent_birth_a[i],
+            parent_birth_b: agents.parent_birth_b[i],
             parent_a: agents.parent_a[i],
             parent_b: agents.parent_b[i],
             brain_units: agents.brain_units[i],

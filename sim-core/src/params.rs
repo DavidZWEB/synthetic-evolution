@@ -727,6 +727,17 @@ impl SimParams {
         Ok(())
     }
 
+    /// Validate archived run parameters from before persistent birth-identity storage.
+    ///
+    /// This is not construction permission: `World::new` always validates and reserves
+    /// the complete current layout. Historical metrics must not be charged for arrays
+    /// that their runtime never allocated (spec section 7.9).
+    pub fn validate_pre_birth_identity_storage(&self) -> Result<(), ParamError> {
+        self.validate_values()?;
+        StorageLayout::pre_birth_identity(self)?;
+        Ok(())
+    }
+
     /// Validates scalar values and the storage needed to construct a new world.
     pub fn validate(&self) -> Result<(), ParamError> {
         self.validate_values()?;

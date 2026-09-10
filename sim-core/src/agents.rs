@@ -16,7 +16,7 @@
 use glam::{Quat, Vec3};
 
 use crate::arena::Block;
-use crate::ids::{AgentId, NULL_ID};
+use crate::ids::{AgentId, BirthId, NULL_ID};
 
 // The spec specifies these arrays as `Float32Array(N * 3)` and `Float32Array(N * 4)`.
 // `Vec<Vec3>` and `Vec<Quat>` are exactly that layout while staying typed — but only
@@ -55,7 +55,7 @@ pub struct Agents {
     /// Damage pool. Nothing reduces it before predation lands in Phase 3.
     pub health: Vec<f32>,
     pub age: Vec<u32>,
-    /// Species cluster. Assigned by genetic distance from Phase 2; 0 for everyone now.
+    /// Species cluster, or `NULL_ID` when classification is unavailable.
     pub species_id: Vec<u32>,
     /// Evolvable displayed colour. `vision_ray` returns it, and `set_signature` writes
     /// it from Phase 4 — together those give aposematism, crypsis, and mimicry
@@ -63,7 +63,8 @@ pub struct Agents {
     pub signature: Vec<Vec3>,
     /// Collision and render radius.
     pub size: Vec<f32>,
-    /// Phylogeny. `parent_b` is `NULL_ID` for every agent in V1.
+    /// Legacy parent slots, not persistent ancestry IDs. Use `parent_birth_a/b` for
+    /// lifetime references; `parent_b` stays `NULL_ID` during asexual reproduction.
     ///
     /// With sex, lineage stops being a tree and becomes a DAG. One `parent` field
     /// bakes a tree assumption into world state, the save format, and the tree viewer
@@ -71,6 +72,11 @@ pub struct Agents {
     /// (spec §3.4).
     pub parent_a: Vec<u32>,
     pub parent_b: Vec<u32>,
+    /// Lifetime identities, captured at admission rather than resolved from old slots.
+    pub birth_id: Vec<BirthId>,
+    pub parent_birth_a: Vec<BirthId>,
+    /// Retained for two-parent ancestry; ordinary reproduction remains asexual.
+    pub parent_birth_b: Vec<BirthId>,
     /// Spatial hash bucket, rebuilt every tick.
     pub grid_cell: Vec<u32>,
     /// Neurons plus connections in this agent's genome, cached at birth.
@@ -117,6 +123,7 @@ pub struct SpawnSpec {
     pub size: f32,
     pub signature: Vec3,
     /// `AgentId::NULL` for a founder.
+    /// Otherwise this names the current live parent at admission, not a saved ancestry ID.
     pub parent_a: AgentId,
 }
 
@@ -151,6 +158,9 @@ impl Agents {
             size: vec![0.0; n],
             parent_a: vec![NULL_ID; n],
             parent_b: vec![NULL_ID; n],
+            birth_id: vec![BirthId::NULL; n],
+            parent_birth_a: vec![BirthId::NULL; n],
+            parent_birth_b: vec![BirthId::NULL; n],
             grid_cell: vec![0; n],
             brain_units: vec![0; n],
             sensor_load: vec![0.0; n],
@@ -186,6 +196,9 @@ impl Agents {
         self.parent_a[i] = spec.parent_a.raw();
         // Always NULL in V1. The field is the hedge, not a placeholder to fill in.
         self.parent_b[i] = NULL_ID;
+        self.birth_id[i] = BirthId::NULL;
+        self.parent_birth_a[i] = BirthId::NULL;
+        self.parent_birth_b[i] = BirthId::NULL;
         self.grid_cell[i] = 0;
         // Overwritten by `spawn` from the genome; zeroed here so a slot whose caller
         // forgets cannot inherit the dead tenant's upkeep.
@@ -205,6 +218,9 @@ impl Agents {
         let i = id.index();
         self.species_id[i] = NULL_ID;
         self.brain[i] = Block::EMPTY;
+        self.birth_id[i] = BirthId::NULL;
+        self.parent_birth_a[i] = BirthId::NULL;
+        self.parent_birth_b[i] = BirthId::NULL;
         self.synapses[i] = Block::EMPTY;
         self.sensors[i] = Block::EMPTY;
         self.effectors[i] = Block::EMPTY;

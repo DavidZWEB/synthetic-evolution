@@ -5,6 +5,7 @@
 //!
 //! M4 integration first refreshed only the control reference for real species labels.
 //! The subsequent coverage-only refresh adds full classifier state to both values.
+//! M5's additional coverage-only refresh includes lifetime birth identities.
 
 use sim_core::control::BrainInheritance;
 use sim_core::genome::{Gene, Modality};
@@ -12,8 +13,8 @@ use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
-pub const EVOLVING_GOLDEN: u64 = 0x8beb_1d85_6ac6_5ff9;
-pub const CONTROL_GOLDEN: u64 = 0xf7d6_400a_c78b_99a7;
+pub const EVOLVING_GOLDEN: u64 = 0xc3f3_265e_d053_882a;
+pub const CONTROL_GOLDEN: u64 = 0x91f5_534a_4715_57bc;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = SimParams::default();

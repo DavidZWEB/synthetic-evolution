@@ -15,6 +15,9 @@ const payload = (index, incarnation, tick = 4) =>
     size: 3,
     signature: [0.1, 0.2, 0.3],
     species_id: 0,
+    birth_id: '10',
+    parent_birth_a: null,
+    parent_birth_b: null,
     parent_a: 4294967295,
     parent_b: 4294967295,
     brain_units: 2,
@@ -107,4 +110,26 @@ test('slow replies remain usable while refresh demand is coalesced', () => {
   assert.equal(fixture.requests.length, 2, 'lost updates received while inspection was pending');
   assert.equal(fixture.accept(4), true);
   assert.equal(fixture.changes.at(-1).inspection.age, 4);
+});
+
+test('stable birth metadata does not replace incarnation and reseed request guards', () => {
+  const fixture = pollingFixture();
+  const [index, oldIncarnation, oldRequestId] = fixture.requests.at(-1);
+  fixture.controller.select({ index, incarnation: 8 });
+  const requestId = fixture.requests.at(-1)[2];
+  assert.equal(fixture.controller.accept({
+    index, incarnation: oldIncarnation, requestId, agent: payload(index, oldIncarnation),
+  }), false, 'recycled slot accepted the old incarnation');
+  assert.equal(fixture.controller.accept({
+    index, incarnation: 8, requestId, agent: payload(index, 8),
+  }), true);
+
+  fixture.controller.select(null);
+  fixture.controller.select({ index, incarnation: oldIncarnation });
+  assert.equal(fixture.controller.accept({
+    index, incarnation: oldIncarnation, requestId: oldRequestId,
+    agent: payload(index, oldIncarnation),
+  }), false, 'world-local birth IDs and slot incarnations can repeat after reseeding');
+  assert.equal(fixture.accept(0), true);
+  assert.equal(fixture.changes.at(-1).inspection.birth_id, '10');
 });

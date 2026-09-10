@@ -86,7 +86,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
     assert_eq!(header["data"]["phase"], 2);
-    assert_eq!(header["data"]["schema_version"], 6);
+    assert_eq!(header["data"]["schema_version"], 7);
     assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     assert_eq!(header["data"]["params"]["species"]["capacity"], 256);
     assert_eq!(header["data"]["params"]["species"]["threshold"], 0.5);
@@ -367,7 +367,7 @@ fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
     });
     let (lines, report) = run_and_diagnose(&params.to_string(), 7, 1, 1, 1);
     let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    assert_eq!(header["data"]["schema_version"], 6);
+    assert_eq!(header["data"]["schema_version"], 7);
     assert_eq!(header["data"]["control"], "randomized_at_birth_v3");
     let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
     let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();

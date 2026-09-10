@@ -98,6 +98,8 @@ pub struct World {
     /// Monotonic source of [`InnovationId`]s. A field rather than a `static` so two
     /// worlds in one process cannot hand out ids from the same counter (spec §3.1).
     pub(crate) next_innovation: u32,
+    /// Lifetime organism identities advance only after successful admission (spec §3.4).
+    pub(crate) next_birth: u64,
     pub(crate) pool: SlotPool,
     pub(crate) agents: Agents,
     pub(crate) classifier: Classifier,
@@ -193,6 +195,7 @@ impl World {
             rng,
             tick: 0,
             next_innovation,
+            next_birth: 0,
             pool: SlotPool::with_capacity(capacity),
             agents: Agents::with_capacity(capacity),
             classifier: Classifier::try_new(
@@ -468,6 +471,70 @@ mod tests {
     use crate::genome::{self, BodyTrait};
     use crate::spawn::SpawnError;
     use glam::Vec3;
+
+    #[test]
+    fn exhausted_birth_ids_preserve_births_and_known_parent_references() {
+        use crate::ids::BirthId;
+        let mut params = SimParams::default();
+        params.world.max_agents = 3;
+        params.plants.max_plants = 1;
+        params.plants.max_energy = 300.0;
+        params.feeding.rate = 300.0;
+        params.reproduction.maturity_ticks = 0;
+        let mut world = World::new(42, params).unwrap();
+        world.next_birth = u64::MAX - 1;
+        let parent = world.spawn_founder(world.plants().position()[0]).unwrap();
+        assert_eq!(
+            world.agents.birth_id[parent.index()],
+            BirthId::new(u64::MAX - 1)
+        );
+        world.intents.ingest[parent.index()] = 1.0;
+        world.resolve_feeding();
+        world.intents.reproduce[parent.index()] = 1.0;
+        let before = world.agents.energy[parent.index()];
+        assert_eq!(world.resolve_births(), 1);
+        let child = world.pool.iter_live().find(|&id| id != parent).unwrap();
+        assert_eq!(world.agents.birth_id[child.index()], BirthId::NULL);
+        assert_eq!(
+            world.agents.parent_birth_a[child.index()],
+            BirthId::new(u64::MAX - 1)
+        );
+        assert_eq!(world.agents.parent_birth_b[child.index()], BirthId::NULL);
+        assert_eq!(world.next_birth, u64::MAX);
+        assert_eq!(
+            world.agents.energy[parent.index()] + world.agents.energy[child.index()],
+            before
+        );
+        assert!((world.total_energy() - world.ledger.expected_stock()).abs() < 1e-6);
+        let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+        assert_eq!(world.agents.birth_id[founder.index()], BirthId::NULL);
+        assert_eq!(world.next_birth, u64::MAX);
+        assert_eq!(world.population(), 3);
+    }
+
+    #[test]
+    fn identity_exhaustion_does_not_change_ecology_or_rng() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 8;
+        params.plants.max_plants = 8;
+        let mut known = World::new(42, params.clone()).unwrap();
+        let mut exhausted = World::new(42, params).unwrap();
+        exhausted.next_birth = u64::MAX;
+        known.seed_founders(4);
+        exhausted.seed_founders(4);
+        for _ in 0..20 {
+            assert_eq!(known.ecology_hash(), exhausted.ecology_hash());
+            known.step();
+            exhausted.step();
+        }
+        assert_eq!(known.ecology_hash(), exhausted.ecology_hash());
+        assert!(
+            exhausted
+                .pool
+                .iter_live()
+                .all(|id| exhausted.agents.birth_id[id.index()].is_null())
+        );
+    }
 
     #[test]
     fn classification_and_observation_leave_ecology_unchanged_across_seeds_and_modes() {
