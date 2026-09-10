@@ -6,6 +6,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
+use sim_core::LayoutEra;
 use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 
 use crate::Result;
@@ -14,6 +15,15 @@ use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, WorldM
 pub(crate) struct MetricsData {
     pub header: RunHeader,
     pub samples: Vec<RunSample>,
+}
+
+fn layout_era(schema: u32) -> Option<LayoutEra> {
+    match schema {
+        3..=5 => Some(LayoutEra::BeforeSpecies),
+        6 => Some(LayoutEra::Species),
+        7 => Some(LayoutEra::BirthIdentities),
+        _ => None,
+    }
 }
 
 pub(crate) fn read_metrics(path: &std::path::Path) -> Result<MetricsData> {
@@ -46,13 +56,12 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         })?;
         match record {
             MetricsRecord::Header(next) if header.is_none() && samples.is_empty() => {
-                if !matches!(next.schema_version, 3 | 4 | 5 | 6 | SCHEMA_VERSION) {
-                    return Err(io::Error::new(
+                let era = layout_era(next.schema_version).ok_or_else(|| {
+                    io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unsupported metrics schema {}", next.schema_version),
                     )
-                    .into());
-                }
+                })?;
                 let (expected_phase, expected_control) = match next.schema_version {
                     3 => (1, "randomized_at_birth"),
                     4 => (2, "randomized_at_birth_v2"),
@@ -114,12 +123,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                let validation = if next.schema_version < 7 {
-                    next.params.validate_pre_birth_identity_storage()
-                } else {
-                    next.params.validate()
-                };
-                validation.map_err(|error| {
+                next.params.validate_for_layout(era).map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("metrics header contains {error}"),
@@ -235,8 +239,8 @@ fn decode_record(line: &str) -> Result<MetricsRecord> {
                     .into());
                 }
                 // No historical classifier allocation existed. Inserting a disabled
-                // policy before serde defaults preserves the original memory budget,
-                // without inventing species observations for those runs.
+                // policy preserves the metadata's meaning, not its buffer selection:
+                // LayoutEra owns accounting independently of this normalization.
                 params.insert(
                     "species".to_owned(),
                     serde_json::json!({"capacity": 0, "threshold": 0.5}),
@@ -328,6 +332,19 @@ mod tests {
 
     use super::*;
     use crate::metrics::{RunSample, SpeciesMetrics, StateHashes, WorldMetrics};
+
+    #[test]
+    fn wire_schemas_map_explicitly_to_their_immutable_layout_eras() {
+        for schema in [3, 4, 5] {
+            assert_eq!(layout_era(schema), Some(LayoutEra::BeforeSpecies));
+        }
+        assert_eq!(layout_era(6), Some(LayoutEra::Species));
+        assert_eq!(layout_era(7), Some(LayoutEra::BirthIdentities));
+        assert_eq!(layout_era(SCHEMA_VERSION), Some(LayoutEra::CURRENT));
+        for unsupported in [0, 1, 2, 8, u32::MAX] {
+            assert_eq!(layout_era(unsupported), None);
+        }
+    }
 
     fn empty_world_metrics() -> WorldMetrics {
         WorldMetrics {
@@ -580,7 +597,7 @@ mod tests {
         params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
             - 3 * 8 * u64::from(params.world.max_agents);
         assert!(params.validate().is_err());
-        params.validate_pre_birth_identity_storage().unwrap();
+        params.validate_for_layout(LayoutEra::Species).unwrap();
         records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
         let data = parse_values(&records).unwrap();
         assert_eq!(

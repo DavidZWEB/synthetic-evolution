@@ -506,16 +506,28 @@ are rejected.
 Schemas 3–5 predate World classification. Their absent species metrics stay `null`,
 not invented zeroes. The reader rejects species observations or any explicit
 `params.species` field in those schemas; only a genuinely omitted field is internally
-decoded with classification disabled before validating the historical construction
-budget. Historical runs are not charged for today's default 256 representatives.
+decoded with classification disabled to preserve the metadata's meaning. Historical
+buffer selection is independent of that normalization and is owned by `LayoutEra`.
 Schemas 6 and 7 require explicit species capacity, threshold, and all distance coefficients
 in the header, rather than silently filling missing classification metadata.
 
-Schemas 3-6 predate birth-identity arrays. Their budgets are validated against the
-pre-identity storage layout, without changing their recorded budget or pretending
-identity records exist. This compatibility check is not permission to construct a
-current World under an insufficient budget: `World::new` always requires the full
-current layout. Schema 7 marks the identity-aware runtime/storage contract, not
+The native reader maps supported wire schemas to core buffer inventories:
+
+| Native schema | Core `LayoutEra` | Additional buffers |
+|---|---|---|
+| 3-5 | `BeforeSpecies` | Neither species representatives nor birth identities |
+| 6 | `Species` | Species representatives only |
+| 7 | `BirthIdentities` | Species representatives and three lifetime identity arrays |
+
+`SimParams::validate_for_layout(era)` replaces the era-specific pre-birth validator.
+The core owns which buffers existed; it does not know native schema numbers. This
+validation changes neither parameters nor recorded budgets and does not invent
+observations. The reader still independently rejects unsupported feature claims.
+
+Historical validation is not permission to construct an old runtime or bypass
+the current memory ceiling: `World::new` always uses `LayoutEra::CURRENT`.
+Selecting an era neither parses nor migrates checkpoint data; M7 still requires
+explicit rejection of incompatible formats. Schema 7 marks the identity-aware runtime/storage contract, not
 the addition of per-organism history records to these population samples.
 
 Schema 7 retains the earlier metric fields. `arena_usage` contains current element
