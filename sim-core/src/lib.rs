@@ -21,6 +21,7 @@ mod energy;
 pub mod feeding;
 pub mod founder;
 pub mod genome;
+pub mod history;
 pub mod ids;
 pub mod ledger;
 pub mod math;

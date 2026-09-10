@@ -1,9 +1,9 @@
 //! Headless experiment orchestration and JSONL output.
 
-use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 
 use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
+use sim_core::history::Recorder;
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
@@ -12,6 +12,7 @@ use sim_core::world::World;
 
 use crate::Result;
 use crate::cli::RunArgs;
+use crate::history::{self, ArchiveWriter, Capture};
 use crate::metrics::{MetricsRecord, RunHeader, SCHEMA_VERSION, sample_pair};
 
 pub fn run(args: RunArgs) -> Result<()> {
@@ -28,6 +29,7 @@ pub fn run(args: RunArgs) -> Result<()> {
         );
     }
 
+    crate::output::validate(&args)?;
     let params = load_params(args.params.as_deref())?;
     let header = RunHeader {
         schema_version: SCHEMA_VERSION,
@@ -41,6 +43,9 @@ pub fn run(args: RunArgs) -> Result<()> {
         params: params.clone(),
         control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
     };
+    if args.history.is_some() {
+        history::validate_export(&header, args.history_capacity)?;
+    }
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
         World::new_with_brain_inheritance(args.seed, params, BrainInheritance::RandomizedAtBirth)?;
@@ -56,20 +61,36 @@ pub fn run(args: RunArgs) -> Result<()> {
         .metrics
         .as_ref()
         .map(|_| [SpeciesEventCounts::default(); 2]);
+    let mut capture = args
+        .history
+        .as_ref()
+        .map(|_| Capture::new(args.history_capacity))
+        .transpose()?;
     seed(
         &mut evolving,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[0]),
         species_events.as_mut().map(|counts| &mut counts[0]),
+        capture.as_mut().map(|capture| &mut capture.recorders[0]),
     )?;
     seed(
         &mut random_control,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[1]),
         species_events.as_mut().map(|counts| &mut counts[1]),
+        capture.as_mut().map(|capture| &mut capture.recorders[1]),
     )?;
 
-    let mut output = args.metrics.as_deref().map(metrics_writer).transpose()?;
+    if let Some(capture) = &capture {
+        capture.check()?;
+    }
+    let (mut output, history_output) = crate::output::open(&args)?;
+    let mut archive = history_output
+        .map(|output| ArchiveWriter::new(output, &header, args.history_capacity))
+        .transpose()?;
+    if let (Some(archive), Some(capture)) = (&mut archive, &mut capture) {
+        archive.drain(capture)?;
+    }
     let mut final_sample = None;
     if let Some(output) = output.as_mut() {
         write_record(output, &MetricsRecord::Header(Box::new(header)))?;
@@ -86,43 +107,40 @@ pub fn run(args: RunArgs) -> Result<()> {
     }
 
     for _ in 0..args.ticks {
-        if let (
-            Some([evolving_counts, control_counts]),
-            Some([evolving_edits, control_edits]),
-            Some([evolving_species, control_species]),
-        ) = (
-            spawn_failures.as_mut(),
-            structural_mutations.as_mut(),
-            species_events.as_mut(),
-        ) {
-            evolving.step_with_all_observers(
-                |error| evolving_counts.record(error),
-                |event| evolving_edits.record(event),
-                |event| evolving_species.record(event),
-            );
-            random_control.step_with_all_observers(
-                |error| control_counts.record(error),
-                |event| control_edits.record(event),
-                |event| control_species.record(event),
-            );
-        } else {
-            evolving.step();
-            random_control.step();
+        step(
+            &mut evolving,
+            spawn_failures.as_mut().map(|counts| &mut counts[0]),
+            structural_mutations.as_mut().map(|counts| &mut counts[0]),
+            species_events.as_mut().map(|counts| &mut counts[0]),
+            capture.as_mut().map(|capture| &mut capture.recorders[0]),
+        );
+        step(
+            &mut random_control,
+            spawn_failures.as_mut().map(|counts| &mut counts[1]),
+            structural_mutations.as_mut().map(|counts| &mut counts[1]),
+            species_events.as_mut().map(|counts| &mut counts[1]),
+            capture.as_mut().map(|capture| &mut capture.recorders[1]),
+        );
+        if let Some(capture) = &capture {
+            capture.check()?;
         }
         let tick = evolving.tick_count();
-        if (tick % args.sample_every == 0 || tick == args.ticks)
-            && let Some(output) = output.as_mut()
-        {
-            let sample = sample_pair(
-                &evolving,
-                &random_control,
-                spawn_failures,
-                structural_mutations,
-                species_events,
-                tick == args.ticks,
-            )?;
-            write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
-            final_sample = Some(sample);
+        if tick % args.sample_every == 0 || tick == args.ticks {
+            if let (Some(archive), Some(capture)) = (&mut archive, &mut capture) {
+                archive.drain(capture)?;
+            }
+            if let Some(output) = output.as_mut() {
+                let sample = sample_pair(
+                    &evolving,
+                    &random_control,
+                    spawn_failures,
+                    structural_mutations,
+                    species_events,
+                    tick == args.ticks,
+                )?;
+                write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
+                final_sample = Some(sample);
+            }
         }
     }
 
@@ -146,6 +164,9 @@ pub fn run(args: RunArgs) -> Result<()> {
         .final_state_hashes
         .as_ref()
         .expect("final sample always includes hashes");
+    if let (Some(archive), Some(capture)) = (archive, &mut capture) {
+        archive.finish(capture, hashes)?;
+    }
     eprintln!(
         "completed {} ticks: evolving={} ({}) control={} ({})",
         args.ticks,
@@ -175,11 +196,28 @@ fn load_params(path: Option<&std::path::Path>) -> Result<SimParams> {
 fn seed(
     world: &mut World,
     founders: u32,
-    counts: Option<&mut SpawnFailureCounts>,
-    species: Option<&mut SpeciesEventCounts>,
+    mut counts: Option<&mut SpawnFailureCounts>,
+    mut species: Option<&mut SpeciesEventCounts>,
+    recorder: Option<&mut Recorder>,
 ) -> Result<()> {
     let mut refusal = None;
-    let placed = if let (Some(counts), Some(species)) = (counts, species) {
+    let placed = if let Some(recorder) = recorder {
+        world.seed_founders_with_history_observer(
+            founders,
+            |error| {
+                if let Some(counts) = &mut counts {
+                    counts.record(error);
+                }
+                refusal = Some(error);
+            },
+            |event| {
+                if let Some(species) = &mut species {
+                    species.record(event);
+                }
+            },
+            |event| history::record(recorder, event),
+        )
+    } else if let (Some(counts), Some(species)) = (counts, species) {
         world.seed_founders_with_observers(
             founders,
             |error| {
@@ -204,18 +242,41 @@ fn seed(
     Ok(())
 }
 
-fn metrics_writer(path: &std::path::Path) -> Result<BufWriter<Box<dyn Write>>> {
-    let target: Box<dyn Write> = if path == std::path::Path::new("-") {
-        Box::new(io::stdout())
+fn step(
+    world: &mut World,
+    mut counts: Option<&mut SpawnFailureCounts>,
+    mut edits: Option<&mut StructuralMutationCounts>,
+    mut species: Option<&mut SpeciesEventCounts>,
+    recorder: Option<&mut Recorder>,
+) {
+    if let Some(recorder) = recorder {
+        world.step_with_history_observer(
+            |error| {
+                if let Some(counts) = &mut counts {
+                    counts.record(error);
+                }
+            },
+            |event| {
+                if let Some(edits) = &mut edits {
+                    edits.record(event);
+                }
+            },
+            |event| {
+                if let Some(species) = &mut species {
+                    species.record(event);
+                }
+            },
+            |event| history::record(recorder, event),
+        );
+    } else if let (Some(counts), Some(edits), Some(species)) = (counts, edits, species) {
+        world.step_with_all_observers(
+            |error| counts.record(error),
+            |event| edits.record(event),
+            |event| species.record(event),
+        );
     } else {
-        Box::new(File::create(path).map_err(|error| {
-            io::Error::new(
-                error.kind(),
-                format!("could not create metrics {}: {error}", path.display()),
-            )
-        })?)
-    };
-    Ok(BufWriter::new(target))
+        world.step();
+    }
 }
 
 fn write_record(writer: &mut impl Write, record: &MetricsRecord) -> Result<()> {

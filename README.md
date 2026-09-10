@@ -15,8 +15,8 @@ default; simpler-founder viability is still an experiment, not an assumption.
 M4 now assigns species in the running world, with explicit unclassified population
 when representative resources are exhausted. Its 0.5 threshold is provisional, not
 a calibrated biological species boundary. The
-M5 identity foundation adds stable individual and parent IDs; retained history and
-the ancestry graph remain pending. The
+M5 adds stable individual/parent IDs and opt-in native species-history export with
+explicit capture gaps. Browser persistence and the ancestry graph remain pending. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

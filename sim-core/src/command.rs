@@ -17,6 +17,7 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::history::Event as HistoryEvent;
 use crate::spawn::SpawnError;
 use crate::species::SpeciesEvent;
 use crate::world::World;
@@ -85,13 +86,14 @@ impl World {
     /// linear pass rather than shifting the pending tail after each removal.
     #[cfg(test)]
     pub(crate) fn apply_commands(&mut self) {
-        self.apply_commands_with_observers(&mut |_| {}, &mut |_| {});
+        self.apply_commands_with_observers(&mut |_| {}, &mut |_| {}, &mut |_| {});
     }
 
     pub(crate) fn apply_commands_with_observers(
         &mut self,
         on_refusal: &mut impl FnMut(SpawnError),
         on_species: &mut impl FnMut(SpeciesEvent),
+        on_history: &mut impl FnMut(HistoryEvent),
     ) {
         if self.commands.is_empty() {
             return;
@@ -106,9 +108,11 @@ impl World {
         for command in &due {
             match command.kind {
                 Kind::SpawnFounder { position } => {
-                    if let Err(error) =
-                        self.spawn_founder_with_species_observer(position, &mut *on_species)
-                    {
+                    if let Err(error) = self.spawn_founder_with_history_observer(
+                        position,
+                        &mut *on_species,
+                        &mut *on_history,
+                    ) {
                         on_refusal(error);
                     }
                 }

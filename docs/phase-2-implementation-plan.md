@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M4 and M5's approved birth-identity foundation are implemented.**
+**Status: M5 species-history capture and native export are implemented after the identity foundation.**
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -21,12 +21,12 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identity foundation approved; history/calibration/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identities/capture/native export approved; browser retention/calibration/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
-| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | birth identities implemented; retained history not started |
+| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and capture/native export implemented; browser retention pending |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
 | M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
@@ -319,8 +319,25 @@ render-snapshot expansion. Preallocate all three u64 arrays within the existing 
 budget. The first PR wires identity and inspection, with an independently attributable
 hash-coverage refresh; it does not implement archive, graph, or checkpoint formats.
 
-**History design still pending:** the following viewer and retention proposals need
-approval before that part of M5 is implemented.
+**Approved capture/native slice:** species origins and extinctions, including the
+founding individual's BirthId and both explicitly absent/unavailable/observed parent
+references, captured at the event tick. Observed but unclassified parents retain
+that distinction. This is not an archive of every organism.
+
+Use the existing callback boundary with a shell-owned preallocated recorder. Native
+capture is opt-in, initially 4,096 records with configurable capacity. Keep queued
+records on overflow, drop new events, and retain exact sequence gap ranges outside
+the full FIFO until they can be emitted in order. Capture/overflow/drain cannot
+change World state, hashes, RNG, or ecological admission. No World archive buffer
+or new current layout era is needed for a shell-owned observer.
+
+Stream a versioned native JSONL archive with run/cohort provenance and a completion
+marker. Drain between batches; do not retain the whole file in RAM. Surface output
+failures and incomplete execution, and distinguish them from valid capture-gap
+records. Readback must preserve these limits rather than invent a complete tree.
+
+**Still pending:** browser persistence, retention/pruning policy, and presentation
+choices for the M6 viewer require approval before those parts are implemented.
 
 The primary viewer should be a **species-origin graph**, with the birth of a new
 species linked to its founding parent's species and tick. It is not an archive of
@@ -333,7 +350,7 @@ I/O; browser history can persist in IndexedDB, native history in exported record
 This is history persistence, not full-world checkpointing or resumption. M7 owns
 that separate capability; exporting M5's ancestry graph cannot resume a world.
 
-Approve retention limits, pruning semantics, and overflow handling before the retained-history slice.
+Approve browser/archive retention limits and pruning semantics before that next slice.
 Recommended overflow behavior is an explicit gap/truncation marker, never altered
 ecology or a silently complete-looking tree. Pruning must preserve referenced
 ancestor identities or mark them as unavailable. A missed intermediate snapshot
@@ -556,6 +573,11 @@ inspection values. No history retention or ancestry graph is being claimed yet.
 Native schema 7 distinguishes the new construction footprint while preserving
 historical schemas 3-6 without charging their runtimes for nonexistent identity
 arrays. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
+
+**History capture/native export delivered:** rich optional species lifecycle
+callbacks, a bounded shell-owned FIFO with explicit ordered gaps, and versioned
+native streaming export/readback. This does not yet deliver browser persistence or
+the graph viewer. Existing World reference hashes remain unchanged.
 
 Identity integration retains all ten previous reference values. A separate coverage
 commit then hashes the birth counter and each live individual's ID and two parent

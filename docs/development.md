@@ -237,7 +237,8 @@ cargo run -p native -- diagnose run.jsonl
 Use `--params params.json` for a partial or complete `SimParams` document; absent fields
 use shipped defaults. Omit `--metrics` for only a completion summary and final hashes;
 use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-readable
-report.
+report. Species history is a separate opt-in stream, described below; it does not add
+records or fields to metrics.
 
 ### Opt-in neural structural mutation (M2)
 
@@ -419,7 +420,8 @@ while their descendants can be independently assigned.
 Representatives are immutable copies. They survive the original agent and are
 released only when membership reaches zero; that departure returns `Extinct`
 once. Retired IDs never return, even if a storage slot is reused. Active iteration
-is in ascending historical-ID order. There is no retained history buffer.
+is in ascending historical-ID order. World retains no history buffer; the native shell
+can optionally record species origins and extinctions separately.
 
 `estimated_construction_bytes` includes full per-slot gene reservations plus all
 metadata. The approved 256-slot / 1,024-gene policy requests **10,492,936 bytes**
@@ -481,9 +483,92 @@ The existing `parent_a`/`parent_b` slot fields stay separate and unchanged. Ordi
 asexual reproduction leaves `parent_birth_b` empty.
 
 An ID can outlive the corresponding live slot without retaining that organism's
-genome or phenotype. This foundation is not a history archive, ancestry viewer, or
-resumable checkpoint. Retention, pruning, and persistent graph export remain later
-M5 decisions.
+genome or phenotype. The identity arrays alone are not a history archive, ancestry
+viewer, or resumable checkpoint. Native species-history capture uses these identities
+without retaining every organism's life.
+
+### Native species-history capture and readback (M5)
+
+```bash
+cargo run --release -p native -- \
+  --seed 42 --ticks 500000 --sample-every 1000 \
+  --metrics run.jsonl --history species-history.jsonl --history-capacity 4096
+cargo run -p native -- history species-history.jsonl
+cargo run -p native -- history species-history.jsonl --json
+```
+
+`--history PATH` enables capture independently of `--metrics`; omit it for no recorder
+allocation or archival work. `--history-capacity` requires `--history`, must be positive,
+and defaults to **4096 queued records per cohort**. The shell owns two preallocated
+recorders, one each for the independent evolving and randomized-at-birth control worlds.
+They are not `SimParams`, core storage, or hashed state. Capture neither changes tick
+batching nor consumes RNG.
+
+Recorders drain immediately after both cohorts are successfully seeded, then every
+`--sample-every` completed ticks (also when metrics are disabled), and at the final tick.
+The shell flushes each drain. The cadence is fixed, not adjusted in response to buffer
+pressure. Queued records stay FIFO when full; newly arriving events are dropped and
+represented by exact inclusive sequence **gap ranges**, in order. Smaller capacities
+or longer drain intervals may lose more history without changing ecology. Portable
+capacity limits and host allocation failures are explicit errors. Sequence exhaustion
+is also a command failure, surfaced outside the tick; it never wraps.
+
+Use `--history -` for stdout or `history - [--json]` to read stdin. Metrics and history
+cannot both use stdout, the same output file, or file aliases (including hard links and
+symlinks). Neither output may alias the `--params` input. Outputs are opened only after
+parameter validation and complete founder admission; rejected founder requests retain
+the existing command-failure behavior and do not truncate outputs. Both destinations
+are opened before either is truncated. I/O and flush failures fail the command.
+This is streaming output, not an atomic two-file transaction or protection against
+concurrent filesystem renames.
+
+History uses its own **schema 1** JSONL protocol; metrics remain **schema 7**, phase 2,
+with **`randomized_at_birth_v3`** unchanged. Each line is a `kind`/`data` envelope:
+
+| `kind` | Contents |
+|---|---|
+| `header` | Schema, explicit cohort names, run provenance (sim version, source revision, phase, seed, control protocol), requested ticks/founders, complete params, drain interval, and per-cohort recorder capacity |
+| `event` | Cohort, sequence, actual World tick, and either `species_origin` or `species_extinct` |
+| `gap` | Cohort plus inclusive `first_sequence` and `last_sequence` for dropped events |
+| `complete` | Matching schema/run provenance and final tick, plus per-cohort exact totals, `history_complete`, and final World hash |
+
+Every u64 in this protocol (including seeds, ticks, sequences, and footer counters)
+is a canonical decimal **string**, never a JSON number. Sequences start at `"0"` per
+cohort; u64::MAX is not issued, although `next_sequence` can reach it. Species IDs are
+u32 numbers, excluding the null sentinel. Birth IDs use the core's exact decimal
+string/null representation. Never convert these values to JavaScript `Number`.
+
+An origin includes the historical species ID, the founding individual's `founder_birth_id`,
+and explicit `parent_a`/`parent_b` records. Each parent's `status` is `absent` (no parent
+declared), `unavailable` (declared but not observable at admission), or `observed`
+(required `birth_id` and required nullable `species_id`). An observed parent's null
+species means **unclassified**, not a founder. An observed live parent's birth ID can
+be null if persistent identities are exhausted; that is distinct from an unobserved
+parent. Extinction records carry the retired species ID, not an individual death.
+World stamps events with the tick being processed: seeding is tick zero, and events
+during N executed ticks have ticks 0 through N-1. Metrics samples instead label
+completed tick boundaries.
+
+The completion marker means execution finished and both cohort histories were drained.
+`history_complete: false` means execution completed **with capture gaps**, not a
+truncated execution. Footer totals count retained origins/extinctions separately from
+unknown dropped event kinds. Final hashes match the metrics final sample when both
+streams are requested. A missing footer (even after a valid event line), malformed
+record, unknown schema/protocol, or missing required metadata is rejected, never
+interpreted as a successful empty history.
+
+`history PATH` validates sequences/gap continuity separately per cohort, ordered and
+bounded ticks, IDs/parent metadata, available lifecycle links, and footer totals and
+provenance. Both export and readback enforce a 1 MiB maximum encoded line size,
+including its newline. Oversized parameter/provenance headers are rejected before
+outputs are truncated, rather than producing an archive the reader cannot open.
+Writing buffers at most one bounded record, not the archive. Reading is streamed;
+it retains counters and
+at most the configured active species per cohort, not the archive. After a gap, missing
+origins or extinctions cannot be reconstructed or fully cross-checked. The summary
+does not certify biological ancestry: members clustered into one species are **not**
+all descendants of the founding individual. Per-organism life histories, full genealogy,
+browser persistence/pruning, graph/viewer UI, and checkpoint/resume are deferred.
 
 ### Telemetry protocol and observations
 

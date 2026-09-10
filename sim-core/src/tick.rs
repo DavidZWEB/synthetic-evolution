@@ -32,6 +32,7 @@ use crate::effectors::{self, AgentIntents};
 use crate::energy;
 use crate::feeding;
 use crate::genome::{self, BodyTrait};
+use crate::history::Event as HistoryEvent;
 use crate::metabolism;
 use crate::movement;
 use crate::mutate::{MutationState, structural::StructuralMutationEvent};
@@ -74,8 +75,18 @@ impl World {
         mut on_mutation: impl FnMut(StructuralMutationEvent),
         mut on_species: impl FnMut(SpeciesEvent),
     ) {
+        self.step_with_history_observer(&mut on_refusal, &mut on_mutation, &mut on_species, |_| {});
+    }
+
+    pub fn step_with_history_observer(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+        mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
+    ) {
         // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
-        self.apply_commands_with_observers(&mut on_refusal, &mut on_species);
+        self.apply_commands_with_observers(&mut on_refusal, &mut on_species, &mut on_history);
         self.rebuild_spatial_hash(); // 1
         self.perceive_all(); // 2
         self.step_brains(); // 3
@@ -85,8 +96,13 @@ impl World {
         self.grow_plants(); // 8, deposit
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
-        self.resolve_deaths_with_observer(&mut on_species); // 10
-        self.resolve_births_with_all_observers(&mut on_refusal, &mut on_mutation, &mut on_species); // 10
+        self.resolve_deaths_with_history_observer(&mut on_species, &mut on_history); // 10
+        self.resolve_births_with_history_observer(
+            &mut on_refusal,
+            &mut on_mutation,
+            &mut on_species,
+            &mut on_history,
+        ); // 10
         self.advance_tick(); // 11
     }
 
@@ -274,6 +290,14 @@ impl World {
         &mut self,
         mut on_species: impl FnMut(SpeciesEvent),
     ) -> usize {
+        self.resolve_deaths_with_history_observer(&mut on_species, |_| {})
+    }
+
+    pub fn resolve_deaths_with_history_observer(
+        &mut self,
+        mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
+    ) -> usize {
         let dying = core::mem::take(&mut self.dying);
         let mut removed = 0;
         for &id in &dying {
@@ -281,7 +305,7 @@ impl World {
                 self.agents.energy[id.index()] <= 0.0,
                 "starvation should have drained this agent before step 10"
             );
-            if self.despawn_with_species_observer(id, &mut on_species) {
+            if self.despawn_with_history_observer(id, &mut on_species, &mut on_history) {
                 removed += 1;
             }
         }
@@ -375,6 +399,21 @@ impl World {
         mut on_mutation: impl FnMut(StructuralMutationEvent),
         mut on_species: impl FnMut(SpeciesEvent),
     ) -> usize {
+        self.resolve_births_with_history_observer(
+            &mut on_refusal,
+            &mut on_mutation,
+            &mut on_species,
+            |_| {},
+        )
+    }
+
+    pub fn resolve_births_with_history_observer(
+        &mut self,
+        mut on_refusal: impl FnMut(SpawnError),
+        mut on_mutation: impl FnMut(StructuralMutationEvent),
+        mut on_species: impl FnMut(SpeciesEvent),
+        mut on_history: impl FnMut(HistoryEvent),
+    ) -> usize {
         self.note_breeders();
         let breeding = core::mem::take(&mut self.breeding);
         let mut born = 0;
@@ -428,7 +467,7 @@ impl World {
             };
             // Structural edits enforce coherence and per-genome bounds atomically
             // before the validated spawn fast path (spec section 3.3).
-            let spawned = self.spawn_validated(&spec, &scratch, &mut on_species);
+            let spawned = self.spawn_validated(&spec, &scratch, &mut on_species, &mut on_history);
             self.genome_scratch = scratch;
 
             if let Ok(child) = spawned {

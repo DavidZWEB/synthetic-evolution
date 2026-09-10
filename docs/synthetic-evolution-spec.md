@@ -499,9 +499,9 @@ The identity arrays add 24 bytes per agent-pool slot inside the existing core bu
 no per-birth allocation or RNG draw is introduced. They are on-demand inspection
 data, not additions to the narrow render snapshot.
 
-This first slice provides stable references, not a retained ancestry graph or an
-archive of dead organisms. History retention, pruning, overflow/gap records, and
-native/browser persistence remain subsequent D6 decisions. Identity integration
+This identity slice provides stable references, not a retained ancestry graph or an
+archive of dead organisms. The capture/export contract below is the next D6 slice;
+browser retention and graph presentation remain separate decisions. Identity integration
 preserves existing references; its full state-hash coverage is a separate refresh.
 Native schema 7 identifies the identity-aware construction footprint, without adding
 individual history rows to population telemetry. Historical schemas 3-6 validate
@@ -514,6 +514,41 @@ validators or relying on parameter normalization to choose buffers. Normalizatio
 and rejection of unsupported historical feature claims remain boundary concerns.
 World construction always uses the current era; selecting a historical inventory
 does not authorize an old runtime layout or add checkpoint migration support.
+
+**DECIDED for M5 history capture and native export:** record species origins and
+extinctions, not every organism's life. Each origin records the new species, its
+founding individual's BirthId, and both parent positions. Parentage distinguishes
+absent parents, declared-but-unavailable parents, and observed live parents. An
+observed parent carries its captured BirthId and an optional species ID; unclassified
+parents must not be relabeled as founders. Capture parent metadata before slot
+allocation, not when the archive is later drained. Ordinary births still have no
+second parent; the event representation supports two without enabling sex.
+
+Events carry the current simulation tick (zero during initial seeding; the tick
+being processed during a step). Within a World, callback order is authoritative.
+The optional history callback is separate from existing species counters. A
+shell-owned, preallocated recorder receives those callbacks; World gains no archive
+state, persistence I/O, or history allocation. Plain stepping uses a no-op history
+callback. Capturing, overflowing, or draining history must leave the complete
+World state/hash and RNG unchanged.
+
+Capture is opt-in. Native capture initially uses a configurable 4,096-record FIFO.
+When full, retain queued records and drop new events, assigning sequence positions
+even to dropped events. Coalesce dropped positions into explicit inclusive gap ranges.
+Keep a pending gap outside the occupied ring so it can be drained even if no later
+event arrives; emit it before any newer retained event. Flushing a gap may consume
+the last free slot and cause a newer event to start another gap. No overflow policy
+may change simulation admission or energy. Sequence exhaustion is explicit and
+nonwrapping; already queued records remain drainable.
+
+Native persistence is streaming, versioned JSONL with run/cohort provenance, exact
+decimal-string ticks/sequences, origins/extinctions, gaps, and a completion marker.
+Drain after seeding and between step batches, including the final batch, without
+retaining the entire archive in memory. Surface I/O failures and distinguish a
+truncated execution from a completed run with capture gaps. Complete capture is
+not proof of complete biological ancestry: unavailable parents and unclassified
+lineages remain explicit. This stream is not a checkpoint. Browser persistence,
+its retention/pruning policy, and the M6 graph viewer are deferred.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
