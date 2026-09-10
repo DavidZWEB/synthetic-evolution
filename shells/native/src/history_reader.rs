@@ -3,7 +3,7 @@
 //! Retains counters and at most the configured active species per cohort, not an
 //! archive or genealogy. Gaps explicitly limit which lifecycle links can be checked.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
@@ -168,7 +168,7 @@ struct CohortState {
     greatest_species: Option<SpeciesId>,
     last_founder: Option<BirthId>,
     birth_ids_exhausted: bool,
-    active: BTreeSet<SpeciesId>,
+    active: BTreeMap<SpeciesId, BirthId>,
     has_gap: bool,
 }
 
@@ -210,13 +210,35 @@ impl CohortState {
                 for parent in [parent_a, parent_b] {
                     validate_parent(parent, species_id, founder_birth_id)?;
                     if let ParentRecord::Observed {
-                        species_id: Some(id),
-                        ..
+                        birth_id,
+                        species_id,
                     } = parent
-                        && !self.has_gap
-                        && !self.active.contains(&id)
                     {
-                        return Err(invalid("observed parent species has no active origin").into());
+                        if let Some(id) = species_id {
+                            if let Some(origin_birth) = self.active.get(&id) {
+                                if !birth_id.is_null() && birth_id < *origin_birth {
+                                    return Err(invalid(
+                                        "observed parent predates its species origin",
+                                    )
+                                    .into());
+                                }
+                            } else if !self.has_gap {
+                                return Err(invalid(
+                                    "observed parent species has no active origin",
+                                )
+                                .into());
+                            }
+                        }
+                        if !birth_id.is_null()
+                            && self.active.iter().any(|(id, origin_birth)| {
+                                *origin_birth == birth_id && Some(*id) != species_id
+                            })
+                        {
+                            return Err(invalid(
+                                "observed parent contradicts its recorded species origin",
+                            )
+                            .into());
+                        }
                     }
                 }
                 if let (
@@ -240,7 +262,7 @@ impl CohortState {
                 } else {
                     self.birth_ids_exhausted = true;
                 }
-                self.active.insert(species_id);
+                self.active.insert(species_id, founder_birth_id);
                 if self.active.len() > header.params.species.capacity as usize {
                     return Err(
                         invalid("observed active species exceed classification capacity").into(),
@@ -252,7 +274,7 @@ impl CohortState {
                 if species_id.is_null() || header.ticks.0 == 0 {
                     return Err(invalid("invalid species extinction").into());
                 }
-                if !self.active.remove(&species_id) && !self.has_gap {
+                if self.active.remove(&species_id).is_none() && !self.has_gap {
                     return Err(invalid("extinction without an active observed origin").into());
                 }
                 self.greatest_species = Some(

@@ -288,6 +288,7 @@ fn malformed_records_provenance_and_footer_totals_are_rejected() {
             "accepted {pointer} = {replacement}"
         );
     }
+
     for (row, field) in [(0, "params"), (1, "sequence"), (5, "cohorts")] {
         let mut rows = original.clone();
         rows[row]["data"].as_object_mut().unwrap().remove(field);
@@ -317,6 +318,79 @@ fn malformed_records_provenance_and_footer_totals_are_rejected() {
     rows[1]["data"]["tick"] = serde_json::json!("8");
     rows[2]["data"]["tick"] = serde_json::json!("7");
     assert!(parse(Cursor::new(encode(&rows))).is_err());
+}
+
+#[test]
+fn parents_cannot_contradict_known_species_founders() {
+    let mut bytes = Vec::new();
+    let mut capture = Capture::new(4).unwrap();
+    for recorder in &mut capture.recorders {
+        for (species, birth) in [(0, 0), (1, 5)] {
+            record(
+                recorder,
+                Event {
+                    tick: 0,
+                    kind: EventKind::SpeciesOrigin {
+                        species_id: SpeciesId::new(species),
+                        founder_birth_id: BirthId::new(birth),
+                        parent_a: Parent::Absent,
+                        parent_b: Parent::Absent,
+                    },
+                },
+            );
+        }
+        record(
+            recorder,
+            Event {
+                tick: 1,
+                kind: EventKind::SpeciesOrigin {
+                    species_id: SpeciesId::new(2),
+                    founder_birth_id: BirthId::new(10),
+                    parent_a: Parent::Observed {
+                        birth_id: BirthId::new(0),
+                        species_id: Some(SpeciesId::new(0)),
+                    },
+                    parent_b: Parent::Absent,
+                },
+            },
+        );
+    }
+    let mut run = header();
+    run.founders = 6;
+    ArchiveWriter::new(&mut bytes, &run, 4)
+        .unwrap()
+        .finish(&mut capture, &hashes())
+        .unwrap();
+    parse(Cursor::new(&bytes)).unwrap();
+    let original = records(&bytes);
+    for parent_field in ["parent_a", "parent_b"] {
+        for (birth_id, species_id, message) in [
+            ("0", Some(1), "predates its species origin"),
+            ("4", Some(1), "predates its species origin"),
+            ("5", Some(0), "contradicts its recorded species origin"),
+            ("5", None, "contradicts its recorded species origin"),
+        ] {
+            let mut rows = original.clone();
+            rows[3]["data"]["event"]["parent_a"] = serde_json::json!({"status":"absent"});
+            rows[3]["data"]["event"][parent_field] = serde_json::json!({
+                "status":"observed", "birth_id":birth_id, "species_id":species_id,
+            });
+            let error = parse(Cursor::new(encode(&rows))).unwrap_err();
+            assert!(
+                error.to_string().contains(message),
+                "{parent_field}: {error}"
+            );
+        }
+        for (birth_id, species_id) in [("0", Some(0)), ("5", Some(1)), ("7", Some(1)), ("7", None)]
+        {
+            let mut rows = original.clone();
+            rows[3]["data"]["event"]["parent_a"] = serde_json::json!({"status":"absent"});
+            rows[3]["data"]["event"][parent_field] = serde_json::json!({
+                "status":"observed", "birth_id":birth_id, "species_id":species_id,
+            });
+            parse(Cursor::new(encode(&rows))).unwrap();
+        }
+    }
 }
 
 #[test]
