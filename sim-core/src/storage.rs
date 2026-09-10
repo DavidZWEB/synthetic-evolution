@@ -19,6 +19,24 @@ use crate::species::Classifier;
 /// WASM32's `Vec` byte limit also applies on native, before attempting allocations.
 const PORTABLE_BUFFER_BYTES: u64 = i32::MAX as u64;
 
+/// Historical buffer inventories, independent of any shell's wire-schema numbering.
+///
+/// Eras select validation accounting only. World construction always uses `CURRENT`;
+/// choosing an older era does not migrate data or authorize an older runtime layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutEra {
+    /// Ecological buffers before species representatives and lifetime identities.
+    BeforeSpecies,
+    /// Adds bounded species representatives, but not lifetime identity arrays.
+    Species,
+    /// Adds individual birth IDs and both persistent parent references.
+    BirthIdentities,
+}
+
+impl LayoutEra {
+    pub const CURRENT: Self = Self::BirthIdentities;
+}
+
 #[derive(Debug)]
 pub(crate) struct StorageLayout {
     pub(crate) genes: u32,
@@ -33,18 +51,15 @@ pub(crate) struct StorageLayout {
 impl StorageLayout {
     /// Called by parameter validation, so must never call `validate` or build a plan.
     pub(crate) fn new(params: &SimParams) -> Result<Self, ParamError> {
-        Self::with_birth_identity(params, true)
+        Self::for_era(params, LayoutEra::CURRENT)
     }
 
-    /// Compatibility validation only; new worlds always use the complete layout.
-    pub(crate) fn pre_birth_identity(params: &SimParams) -> Result<Self, ParamError> {
-        Self::with_birth_identity(params, false)
-    }
-
-    fn with_birth_identity(
-        params: &SimParams,
-        include_birth_identity: bool,
-    ) -> Result<Self, ParamError> {
+    pub(crate) fn for_era(params: &SimParams, era: LayoutEra) -> Result<Self, ParamError> {
+        let (include_species, include_birth_identity) = match era {
+            LayoutEra::BeforeSpecies => (false, false),
+            LayoutEra::Species => (true, false),
+            LayoutEra::BirthIdentities => (true, true),
+        };
         let storage = &params.storage;
         let agents = params.world.max_agents;
         let aggregate =
@@ -71,10 +86,14 @@ impl StorageLayout {
                 "storage.effectors_per_slot times world.max_agents exceeds u32 capacity",
             )?,
             construction_bytes: 0,
-            species_bytes: Classifier::estimated_construction_bytes(
-                params.species.capacity,
-                storage.max_genes,
-            )?,
+            species_bytes: if include_species {
+                Classifier::estimated_construction_bytes(
+                    params.species.capacity,
+                    storage.max_genes,
+                )?
+            } else {
+                0
+            },
         };
         let founder = FounderPlan::checked_counts(params).ok_or(ParamError(
             "founding topology exceeds representable gene counts",
@@ -317,6 +336,80 @@ impl AllocationRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eras_own_the_complete_historical_buffer_inventory() {
+        for agents in [2, 17, 5_000] {
+            for capacity in [0, 1, 256] {
+                let mut params = SimParams::default();
+                params.world.max_agents = agents;
+                params.species.capacity = capacity;
+                let before = StorageLayout::for_era(&params, LayoutEra::BeforeSpecies).unwrap();
+                let species = StorageLayout::for_era(&params, LayoutEra::Species).unwrap();
+                let identities =
+                    StorageLayout::for_era(&params, LayoutEra::BirthIdentities).unwrap();
+                let classifier_bytes =
+                    Classifier::estimated_construction_bytes(capacity, params.storage.max_genes)
+                        .unwrap();
+                assert_eq!(before.species_bytes, 0);
+                assert_eq!(species.species_bytes, classifier_bytes);
+                assert_eq!(
+                    species.construction_bytes - before.construction_bytes,
+                    classifier_bytes
+                );
+                assert_eq!(
+                    identities.construction_bytes - species.construction_bytes,
+                    3 * size_of::<BirthId>() as u64 * u64::from(agents)
+                );
+                assert_eq!(
+                    StorageLayout::new(&params).unwrap().construction_bytes,
+                    identities.construction_bytes
+                );
+                for layout in [&species, &identities] {
+                    assert_eq!(layout.genes, before.genes);
+                    assert_eq!(layout.neurons, before.neurons);
+                    assert_eq!(layout.synapses, before.synapses);
+                    assert_eq!(layout.sensors, before.sensors);
+                    assert_eq!(layout.effectors, before.effectors);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pre_species_inventory_does_not_depend_on_disabling_classifier_params() {
+        let mut params = SimParams::default();
+        let expected = StorageLayout::for_era(&params, LayoutEra::BeforeSpecies)
+            .unwrap()
+            .construction_bytes;
+        params.species.capacity = u32::MAX;
+        assert_eq!(
+            StorageLayout::for_era(&params, LayoutEra::BeforeSpecies)
+                .unwrap()
+                .construction_bytes,
+            expected
+        );
+        assert!(StorageLayout::for_era(&params, LayoutEra::Species).is_err());
+        assert!(StorageLayout::new(&params).is_err());
+    }
+
+    #[test]
+    fn historical_validation_never_selects_a_worlds_runtime_layout() {
+        let mut params = SimParams::default();
+        params.storage.max_memory_bytes = StorageLayout::for_era(&params, LayoutEra::BeforeSpecies)
+            .unwrap()
+            .construction_bytes;
+        params
+            .validate_for_layout(LayoutEra::BeforeSpecies)
+            .unwrap();
+        assert_eq!(
+            params.species.capacity, 256,
+            "validation must not rewrite configuration"
+        );
+        assert!(params.validate_for_layout(LayoutEra::Species).is_err());
+        assert!(params.validate().is_err());
+        assert!(crate::World::new(42, params).is_err());
+    }
 
     #[test]
     fn defaults_use_pooled_allowances_and_fit_the_budget() {

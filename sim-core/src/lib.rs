@@ -56,4 +56,5 @@ pub use plants::Plants;
 pub use pool::SlotPool;
 pub use rng::Rng;
 pub use spatial::SpatialHash;
+pub use storage::LayoutEra;
 pub use world::World;

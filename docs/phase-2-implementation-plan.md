@@ -562,6 +562,12 @@ commit then hashes the birth counter and each live individual's ID and two paren
 references, with a shared native/WASM continuation case. This is a coverage-only
 refresh, not ecological or heredity change.
 
+**Compatibility follow-up:** historical footprint accounting is consolidated behind
+core `LayoutEra` inventories, with wire-version mapping and feature-claim validation
+owned by the shells. This removes feature-specific layout-validator growth before
+the retained-history work, without changing schema versions, buffers, or references.
+It is not a checkpoint migration framework; M7 still rejects incompatible formats.
+
 Implement D6's identities, species-origin events, history retention, and shell-side
 archival. Link births using persistent parent identities at birth time, never by
 looking up a potentially recycled slot later. Preserve both parent positions in the

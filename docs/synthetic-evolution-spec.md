@@ -508,6 +508,13 @@ individual history rows to population telemetry. Historical schemas 3-6 validate
 their original budgets against the layout before these identity arrays existed;
 constructing a current World still requires the complete current allocation budget.
 
+Historical footprint validation has one core-owned `LayoutEra` inventory. Shells
+map their supported wire versions to an era, rather than selecting feature-specific
+validators or relying on parameter normalization to choose buffers. Normalization
+and rejection of unsupported historical feature claims remain boundary concerns.
+World construction always uses the current era; selecting a historical inventory
+does not authorize an old runtime layout or add checkpoint migration support.
+
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
 - **Reproductive isolation:** agents will only mate if δ < threshold. This means speciation is a real event in the sim, not just a coloring of the plot — and it means mate choice itself becomes an evolvable behavior.
