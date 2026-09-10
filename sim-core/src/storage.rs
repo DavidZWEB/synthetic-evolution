@@ -338,6 +338,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_era_budgets_are_pinned_independently_of_inventory_deltas() {
+        let params = SimParams::default();
+        // Equal growth in every era leaves delta checks unchanged. Pin each named
+        // inventory, not CURRENT, so future additions cannot silently rewrite history.
+        for (era, expected_bytes) in [
+            (LayoutEra::BeforeSpecies, 78_000_140),
+            (LayoutEra::Species, 88_493_076),
+            (LayoutEra::BirthIdentities, 88_613_076),
+        ] {
+            assert_eq!(
+                StorageLayout::for_era(&params, era)
+                    .unwrap()
+                    .construction_bytes,
+                expected_bytes,
+                "{era:?} budget changed; review the fixture or era gating rather than updating historical totals implicitly"
+            );
+        }
+    }
+
+    #[test]
     fn eras_own_the_complete_historical_buffer_inventory() {
         for agents in [2, 17, 5_000] {
             for capacity in [0, 1, 256] {
