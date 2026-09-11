@@ -547,8 +547,55 @@ Drain after seeding and between step batches, including the final batch, without
 retaining the entire archive in memory. Surface I/O failures and distinguish a
 truncated execution from a completed run with capture gaps. Complete capture is
 not proof of complete biological ancestry: unavailable parents and unclassified
-lineages remain explicit. This stream is not a checkpoint. Browser persistence,
-its retention/pruning policy, and the M6 graph viewer are deferred.
+lineages remain explicit. This stream is not a checkpoint.
+
+**DECIDED for M5 browser persistence:** enable capture only before the initial
+seeding of a new/reseeded World. The WASM shell owns the same 4,096-record recorder.
+History delivery is independent of render snapshots: at most one complete drained
+batch awaits acknowledgement, issued only after persistence commits. Slow storage
+does not stall stepping; queued events overflow into the recorder's ordered gaps.
+Drain the whole available prefix at a single tick boundary, including a pending gap.
+Do not hash the World or write empty batches every tick. Explicit export/stop
+barriers drain and hash one boundary after earlier delivery is acknowledged.
+
+IndexedDB stores archives by a unique run ID, never by seed. Repeating a seed and
+configuration creates a different run; pause/play/step keep the same run. Imported
+paired native cohorts remain separate sequence/identity namespaces in one archive.
+The initial local limits are 10 MiB per run, 50 MiB total, and 20 saved runs, measured
+as serialized archive data rather than IndexedDB implementation overhead. Reserve
+footer space while capturing so a limit-sized saved prefix can still round-trip.
+Quota accounting and appends are atomic across tabs. There is no automatic pruning
+or eviction. Explicit deletion must not allow a stale writer to recreate a run.
+
+A limit, quota, or capture failure stops recording only, preserving the last
+committed prefix and visibly marking it incomplete. A storage failure may also
+prevent updating its status; an open/unfinalized record is never a completed run.
+Open records can still belong to another tab, so reload must not invent a crash.
+Reload restores archived history, not World state or simulation continuation.
+Browser data may be evicted or cleared; an exported file is the user's backup.
+
+Archive schema 2 extends schema 1 without relabeling old files. Headers declare an
+opaque run ID and either cohort alone or both in canonical order; no missing control
+cohort is invented. Planned ticks and periodic drain interval may be explicitly null
+for open-ended, acknowledgement-drained browser runs. Event/gap records and exact
+decimal u64/nullable BirthId encoding are unchanged. Both schemas use the historical
+`BirthIdentities` layout inventory and retain the 1 MiB encoded-line limit.
+
+Schema 2 footers give the actual captured boundary and a `capture_end` reason.
+`finished` requires the planned end and final hashes. `snapshot`, `stopped`,
+`reseeded`, and `params_changed` describe intentional prefixes with boundary hashes,
+not finished simulations; capture is complete only when no events were dropped.
+`unfinalized`, `storage_limit`, `storage_error`, and `capture_error` explicitly mark
+incomplete prefixes even without a recorded gap, and may lack a hash. A zero-record
+incomplete prefix is valid if the initial batch never committed. Footer cohort
+order, provenance, run ID, counts, and event tick bounds must match the saved prefix.
+Native writing stays schema 1; both shells read schemas 1 and 2.
+
+Successful live retuning ends capture at the pre-retune boundary rather than
+misrepresenting later events with the original parameters. Rejected retuning keeps
+capture active. Browser build provenance identifies dirty builds and development
+sessions explicitly; a development server is not an immutable clean revision.
+The M6 species-origin graph and M7 resumable checkpoints remain separate work.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.

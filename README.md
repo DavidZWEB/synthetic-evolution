@@ -14,9 +14,11 @@ founders. New structural rates default to zero and dense founders remain the shi
 default; simpler-founder viability is still an experiment, not an assumption.
 M4 now assigns species in the running world, with explicit unclassified population
 when representative resources are exhausted. Its 0.5 threshold is provisional, not
-a calibrated biological species boundary. The
-M5 adds stable individual/parent IDs and opt-in native species-history export with
-explicit capture gaps. Browser persistence and the ancestry graph remain pending. The
+a calibrated biological species boundary.
+M5 adds stable individual/parent IDs and opt-in native/browser species-history
+archives with explicit capture gaps. Browser archives are saved locally per run,
+with bounded storage and interoperable JSONL import/export; they do not resume a
+World. The ancestry graph remains M6 work. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control
@@ -49,6 +51,9 @@ npm run dev --prefix web             # client on http://localhost:5173
 cargo run --release -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
 cargo run -p native -- diagnose run.jsonl
 ```
+
+In the client, open **history**, enable recording for new/reseeded runs, and reseed.
+Export important histories: browser storage is local and may be cleared or evicted.
 
 On Windows, run `setup.sh` from WSL or Git Bash — the Rust and Node steps are
 cross-platform but the script is bash.

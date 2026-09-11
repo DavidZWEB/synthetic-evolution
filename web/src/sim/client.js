@@ -9,7 +9,9 @@
 import { createReader } from './transport.js';
 import { EVOLVING } from './brain-inheritance.js';
 
-export function createSim({ seed, founders, params = null, brainInheritance = EVOLVING }) {
+export function createSim({
+  seed, founders, params = null, brainInheritance = EVOLVING, historyRunId = null,
+}) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
   let reader = null;
@@ -23,6 +25,9 @@ export function createSim({ seed, founders, params = null, brainInheritance = EV
     hash: [],
     status: [],
     validatedRun: [],
+    historyReady: [],
+    historyBatch: [],
+    historyError: [],
   };
   const emit = (kind, payload) => listeners[kind]?.forEach((fn) => fn(payload));
 
@@ -65,7 +70,7 @@ export function createSim({ seed, founders, params = null, brainInheritance = EV
     });
   };
 
-  worker.postMessage({ kind: 'create', seed, params, founders, brainInheritance });
+  worker.postMessage({ kind: 'create', seed, params, founders, brainInheritance, historyRunId });
 
   const send = (kind, payload = {}) => {
     if (!destroyed) worker.postMessage({ kind, ...payload });
@@ -92,6 +97,9 @@ export function createSim({ seed, founders, params = null, brainInheritance = EV
     inspect: (index, incarnation, requestId) =>
       send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
+    acknowledgeHistory: (batchId, error) => send('historyAck', { batchId, error }),
+    historyBoundary: (captureEnd, requestId) => send('historyBoundary', { captureEnd, requestId }),
+    stopHistory: (message) => send('historyStop', { message }),
     validateRun: (seed, founders, params, brainInheritance, requestId) =>
       send('validateRun', { seed, founders, params, brainInheritance, requestId }),
 

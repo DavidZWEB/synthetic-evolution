@@ -3,6 +3,10 @@
   import ControlBar from './ui/ControlBar.svelte';
   import FailureBanner from './ui/FailureBanner.svelte';
   import InspectorPanel from './ui/InspectorPanel.svelte';
+  import HistoryPanel from './ui/HistoryPanel.svelte';
+  import { createHistorySession } from './history/controller.js';
+  import { parseArchive } from './history/archive.js';
+  import { DEFAULT_LIMITS, openHistoryStore } from './history/store.js';
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
   import { createInspectorController } from './inspect/controller.js';
@@ -60,6 +64,84 @@
   let activeRun = null;
   let runSource = 'create';
   let validating = $state(false);
+  let transitioning = $state(false);
+  let showHistory = $state(false);
+  let captureNext = $state(false);
+  let captureStatus = $state('off');
+  let historyMessage = $state(null);
+  let historyRuns = $state([]);
+  let historyBusy = $state(false);
+  let activeHistoryId = $state(null);
+  let historySession = null;
+  let historyStore = null;
+  let disposed = false;
+
+  function getHistoryStore() {
+    historyStore ??= openHistoryStore().catch((error) => {
+      historyStore = null;
+      throw error;
+    });
+    return historyStore;
+  }
+
+  async function refreshHistory() {
+    historyRuns = await (await getHistoryStore()).list();
+  }
+
+  async function historyAction(action) {
+    if (historyBusy) return;
+    historyBusy = true;
+    historyMessage = null;
+    try {
+      await action();
+      await refreshHistory();
+    } catch (error) {
+      historyMessage = String(error);
+    } finally {
+      historyBusy = false;
+    }
+  }
+
+  function downloadHistory(text, id) {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/x-ndjson' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `species-history-${id}.jsonl`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportHistory(id) {
+    return historyAction(async () => {
+      const text = historySession?.active && historySession.id === id
+        ? await historySession.boundary('snapshot')
+        : await (await getHistoryStore()).exportArchive(id);
+      downloadHistory(text, id);
+    });
+  }
+
+  function deleteHistory(id) {
+    return historyAction(async () => {
+      if (historySession?.active && historySession.id === id) {
+        await historySession.boundary('stopped');
+      }
+      await (await getHistoryStore()).delete(id);
+    });
+  }
+
+  function importHistory(file) {
+    return historyAction(async () => {
+      if (file.size > DEFAULT_LIMITS.perRunBytes) {
+        throw new Error('History file exceeds the 10 MiB per-run limit');
+      }
+      const { default: init, validate_params } = await import('./wasm/wasm.js');
+      await init();
+      const archive = await parseArchive(await file.text(), (params) =>
+        JSON.parse(validate_params(JSON.stringify(params))));
+      await (await getHistoryStore()).importArchive(archive);
+      historyMessage = 'History imported. No simulation was started or resumed.';
+    });
+  }
 
   const inspector = createInspectorController({
     getSim: () => sim,
@@ -105,7 +187,21 @@
     requestRun({ seed, founders, params: runParams, brainInheritance }, 'reseed');
   }
 
-  function activateRun(next) {
+  async function activateRun(next) {
+    if (transitioning) return;
+    transitioning = true;
+    const oldSession = historySession;
+    try {
+      if (oldSession?.active) {
+        await oldSession.waitForBoundary();
+        if (oldSession.active) await oldSession.boundary('reseeded');
+      }
+    } catch (error) {
+      historyMessage = `Previous history remains incomplete: ${String(error)}`;
+    }
+    oldSession?.detach();
+    historySession = null;
+    if (disposed) return;
     sim?.destroy();
     sim = null;
     validating = false;
@@ -128,9 +224,11 @@
     metricSamples = [];
     inspector.select(null);
     start();
+    transitioning = false;
   }
 
   function requestRun(next, source) {
+    if (transitioning) return;
     if (!sim) {
       activateRun({ ...next, source });
       return;
@@ -166,8 +264,24 @@
     transport = null;
     const startingSource = runSource;
     const previousShareUrl = shareUrl;
-    const nextSim = createSim({ seed, founders, params: runParams, brainInheritance });
+    const historyRunId = captureNext ? crypto.randomUUID() : null;
+    const nextSim = createSim({ seed, founders, params: runParams, brainInheritance, historyRunId });
     sim = nextSim;
+    activeHistoryId = null;
+    captureStatus = historyRunId ? 'starting' : 'off';
+    if (historyRunId) {
+      historySession = createHistorySession({
+        sim: nextSim,
+        getStore: getHistoryStore,
+        onChange: ({ id, status, message }) => {
+          if (sim !== nextSim) return;
+          activeHistoryId = id;
+          captureStatus = status;
+          if (message) historyMessage = message;
+        },
+        onSaved: refreshHistory,
+      });
+    }
 
     nextSim.on('ready', ({ transport: kind, hints, run }) => {
       if (sim !== nextSim) return;
@@ -202,6 +316,7 @@
         });
       } catch (error) {
         failure = String(error);
+        historySession?.abort(`renderer initialization failed: ${String(error)}`);
         nextSim.destroy();
         sim = null;
         return;
@@ -256,6 +371,7 @@
       const context = message.context === 'create' ? startingSource : message.context;
       failure = `${context}: ${message.message}`;
       if (message.fatal) {
+        historySession?.abort(failure);
         running = false;
         transport = null;
         runValidation.cancel();
@@ -282,6 +398,7 @@
   }
 
   onMount(() => {
+    void historyAction(refreshHistory);
     let validUrl = true;
     try {
       const shared = readRunUrl(globalThis.location.href, founders);
@@ -349,9 +466,11 @@
     handle = requestAnimationFrame(loop);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(handle);
       globalThis.removeEventListener('hashchange', onHashChange);
       canvas.removeEventListener('wheel', onWheel);
+      historySession?.detach();
       sim?.destroy();
       renderer?.destroy();
     };
@@ -388,10 +507,27 @@
         ondismiss={() => (failure = null)}
       />
     {/if}
+    {#if showHistory}
+      <HistoryPanel
+        {captureNext}
+        oncapture={(value) => (captureNext = value)}
+        runs={historyRuns}
+        activeId={activeHistoryId}
+        {captureStatus}
+        message={historyMessage}
+        busy={historyBusy || transitioning}
+        onclose={() => (showHistory = false)}
+        onrefresh={() => historyAction(refreshHistory)}
+        onimport={importHistory}
+        onexport={exportHistory}
+        ondelete={deleteHistory}
+        onstop={() => historyAction(() => historySession?.boundary('stopped'))}
+      />
+    {/if}
   </div>
 
   <ControlBar
-    ready={Boolean(transport) && !validating}
+    ready={Boolean(transport) && !validating && !transitioning}
     {running}
     {speed}
     {seed}
@@ -408,6 +544,12 @@
     onreseed={reseed}
     oncopy={copyLink}
     onreset={resetView}
+    onhistory={() => {
+      showHistory = !showHistory;
+      if (showHistory) void historyAction(refreshHistory);
+    }}
+    {captureStatus}
+    {transitioning}
   />
 </main>
 

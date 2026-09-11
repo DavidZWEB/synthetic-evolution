@@ -10,8 +10,8 @@ use sim_core::history::{Event, Record, Recorder, SequenceExhausted};
 use crate::Result;
 use crate::cli::HistoryArgs;
 use crate::history_wire::{
-    ArchiveRecord, Cohort, CohortCompletion, Completion, Counts, Decimal, EventRecord, Header,
-    MAX_LINE_BYTES, SCHEMA_VERSION,
+    ArchiveRecord, CaptureEnd, Cohort, CohortCompletion, Completion, Counts, Decimal, EventRecord,
+    Header, MAX_LINE_BYTES, SCHEMA_VERSION,
 };
 use crate::metrics::{RunHeader, StateHashes};
 
@@ -117,19 +117,21 @@ impl<W: Write> ArchiveWriter<W> {
                 cohort,
                 history_complete: counts.dropped_events.0 == 0,
                 counts,
-                final_state_hash: match cohort {
+                final_state_hash: Some(match cohort {
                     Cohort::Evolving => hashes.evolving.clone(),
                     Cohort::RandomControl => hashes.random_control.clone(),
-                },
+                }),
             }
         });
         write_record(
             &mut self.output,
             &ArchiveRecord::Complete(Completion {
                 schema_version: SCHEMA_VERSION,
+                run_id: None,
                 provenance: self.header.provenance,
-                ticks: self.header.ticks,
-                cohorts,
+                ticks: self.header.ticks.expect("native export has planned ticks"),
+                capture_end: None,
+                cohorts: cohorts.to_vec(),
             }),
         )?;
         self.output.flush()?;
@@ -184,25 +186,44 @@ pub fn summarize(args: HistoryArgs) -> Result<()> {
         serde_json::to_writer_pretty(&mut output, &summary)?;
         writeln!(output)?;
     } else {
-        writeln!(
+        write_summary(&mut output, &summary)?;
+    }
+    output.flush()?;
+    Ok(())
+}
+
+fn write_summary(output: &mut impl Write, summary: &Completion) -> Result<()> {
+    match summary.capture_end {
+        None | Some(CaptureEnd::Finished) => writeln!(
             output,
             "completed {} ticks; species history schema {}",
             summary.ticks.0, summary.schema_version
-        )?;
-        for cohort in summary.cohorts {
-            writeln!(
-                output,
-                "{:?}: {} origins, {} extinctions retained; {} dropped events in {} gaps; hash {}",
-                cohort.cohort,
-                cohort.counts.origins.0,
-                cohort.counts.extinctions.0,
-                cohort.counts.dropped_events.0,
-                cohort.counts.gaps.0,
-                cohort.final_state_hash,
-            )?;
-        }
+        )?,
+        Some(reason) => writeln!(
+            output,
+            "{}capture prefix through {} ticks ({}); species history schema {}",
+            if reason.is_incomplete() {
+                "incomplete "
+            } else {
+                ""
+            },
+            summary.ticks.0,
+            reason.as_str(),
+            summary.schema_version
+        )?,
     }
-    output.flush()?;
+    for cohort in &summary.cohorts {
+        writeln!(
+            output,
+            "{:?}: {} origins, {} extinctions retained; {} dropped events in {} gaps; hash {}",
+            cohort.cohort,
+            cohort.counts.origins.0,
+            cohort.counts.extinctions.0,
+            cohort.counts.dropped_events.0,
+            cohort.counts.gaps.0,
+            cohort.final_state_hash.as_deref().unwrap_or("unavailable"),
+        )?;
+    }
     Ok(())
 }
 
@@ -292,6 +313,591 @@ mod tests {
             bytes.push(b'\n');
         }
         bytes
+    }
+
+    fn browser_fixture(cohorts: &[Cohort], reason: CaptureEnd) -> Vec<serde_json::Value> {
+        let mut rows = records(&fixture());
+        let cohort_names = serde_json::to_value(cohorts).unwrap();
+        rows.retain(|row| {
+            row["kind"] == "header"
+                || row["kind"] == "complete"
+                || cohort_names
+                    .as_array()
+                    .unwrap()
+                    .contains(&row["data"]["cohort"])
+        });
+        rows[0]["data"]["schema_version"] = serde_json::json!(2);
+        rows[0]["data"]["run_id"] = serde_json::json!("browser-run-1");
+        rows[0]["data"]["cohorts"] = cohort_names.clone();
+        rows[0]["data"]["ticks"] = serde_json::Value::Null;
+        rows[0]["data"]["drain_every"] = serde_json::Value::Null;
+        let footer = rows.last_mut().unwrap();
+        footer["data"]["schema_version"] = serde_json::json!(2);
+        footer["data"]["run_id"] = serde_json::json!("browser-run-1");
+        footer["data"]["ticks"] = serde_json::json!("10");
+        footer["data"]["capture_end"] = serde_json::to_value(reason).unwrap();
+        footer["data"]["cohorts"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|row| cohort_names.as_array().unwrap().contains(&row["cohort"]));
+        for row in footer["data"]["cohorts"].as_array_mut().unwrap() {
+            row["history_complete"] = serde_json::json!(!reason.is_incomplete());
+            if reason.is_incomplete() {
+                row["final_state_hash"] = serde_json::Value::Null;
+            }
+        }
+        if reason == CaptureEnd::Finished {
+            rows[0]["data"]["ticks"] = serde_json::json!("10");
+        }
+        rows
+    }
+
+    fn empty_browser_fixture(reason: CaptureEnd) -> Vec<serde_json::Value> {
+        let mut rows = browser_fixture(&[Cohort::Evolving], reason);
+        rows.retain(|row| row["kind"] != "event");
+        rows[1]["data"]["ticks"] = serde_json::json!("0");
+        rows[1]["data"]["cohorts"][0]["counts"] = serde_json::to_value(Counts::default()).unwrap();
+        rows
+    }
+
+    #[test]
+    fn native_v1_export_and_summary_keep_original_shape() {
+        let bytes = fixture();
+        let rows = records(&bytes);
+        let header = &rows[0]["data"];
+        let footer = &rows.last().unwrap()["data"];
+        assert_eq!(header["schema_version"], 1);
+        assert_eq!(
+            header["cohorts"],
+            serde_json::json!(["evolving", "random_control"])
+        );
+        assert_eq!(header["ticks"], "100");
+        assert_eq!(header["drain_every"], "10");
+        assert!(header.get("run_id").is_none());
+        assert!(footer.get("run_id").is_none());
+        assert!(footer.get("capture_end").is_none());
+        let summary = parse(Cursor::new(bytes)).unwrap();
+        assert_eq!(serde_json::to_value(&summary).unwrap(), *footer);
+        let mut output = Vec::new();
+        write_summary(&mut output, &summary).unwrap();
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .starts_with("completed 100 ticks;")
+        );
+        for (row, field) in [(0, "run_id"), (5, "run_id"), (5, "capture_end")] {
+            for value in [serde_json::Value::Null, serde_json::json!("snapshot")] {
+                let mut bad = rows.clone();
+                bad[row]["data"][field] = value;
+                assert!(parse(Cursor::new(encode(&bad))).is_err());
+            }
+        }
+        for field in ["ticks", "drain_every"] {
+            let mut bad = rows.clone();
+            bad[0]["data"][field] = serde_json::Value::Null;
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+        }
+        let mut bad = rows.clone();
+        bad[5]["data"]["cohorts"][0]["final_state_hash"] = serde_json::Value::Null;
+        assert!(parse(Cursor::new(encode(&bad))).is_err());
+    }
+
+    #[test]
+    fn browser_single_world_and_paired_cohorts_preserve_capture_end_semantics() {
+        for cohorts in [
+            &[Cohort::Evolving][..],
+            &[Cohort::RandomControl][..],
+            &Cohort::ALL[..],
+        ] {
+            for reason in [
+                CaptureEnd::Finished,
+                CaptureEnd::Snapshot,
+                CaptureEnd::Stopped,
+                CaptureEnd::Reseeded,
+                CaptureEnd::ParamsChanged,
+                CaptureEnd::Unfinalized,
+                CaptureEnd::StorageLimit,
+                CaptureEnd::StorageError,
+                CaptureEnd::CaptureError,
+            ] {
+                let rows = browser_fixture(cohorts, reason);
+                let summary = parse(Cursor::new(encode(&rows))).unwrap();
+                assert_eq!(summary.capture_end, Some(reason));
+                assert_eq!(summary.run_id.as_deref(), Some("browser-run-1"));
+                assert_eq!(summary.cohorts.len(), cohorts.len());
+                let json = serde_json::to_value(&summary).unwrap();
+                assert_eq!(json, rows.last().unwrap()["data"]);
+                for (row, &cohort) in summary.cohorts.iter().zip(cohorts) {
+                    assert_eq!(row.cohort, cohort);
+                    assert_eq!(row.counts.events.0, 2);
+                    assert_eq!(row.history_complete, !reason.is_incomplete());
+                    assert_eq!(row.final_state_hash.is_none(), reason.is_incomplete());
+                }
+                let mut output = Vec::new();
+                write_summary(&mut output, &summary).unwrap();
+                let text = String::from_utf8(output).unwrap();
+                if reason == CaptureEnd::Finished {
+                    assert!(text.starts_with("completed 10 ticks;"));
+                } else {
+                    assert!(!text.contains("completed"));
+                    assert!(text.contains("capture prefix through 10 ticks"));
+                    assert!(text.contains(reason.as_str()));
+                    assert_eq!(text.starts_with("incomplete "), reason.is_incomplete());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn browser_root_only_snapshot_preserves_the_zero_tick_seeding_exception() {
+        let mut rows = browser_fixture(&[Cohort::RandomControl], CaptureEnd::Snapshot);
+        rows.remove(2);
+        rows[2]["data"]["ticks"] = serde_json::json!("0");
+        rows[2]["data"]["cohorts"][0]["counts"] = serde_json::json!({
+            "next_sequence":"1", "events":"1", "dropped_events":"0",
+            "gaps":"0", "origins":"1", "extinctions":"0"
+        });
+        for planned in [
+            serde_json::Value::Null,
+            serde_json::json!("0"),
+            serde_json::json!("100"),
+        ] {
+            rows[0]["data"]["ticks"] = planned;
+            let summary = parse(Cursor::new(encode(&rows))).unwrap();
+            assert_eq!(summary.ticks.0, 0);
+        }
+        rows[0]["data"]["ticks"] = serde_json::Value::Null;
+        for parent in [
+            serde_json::json!({"status":"unavailable"}),
+            serde_json::json!({"status":"observed","birth_id":"0","species_id":null}),
+        ] {
+            let mut bad = rows.clone();
+            bad[1]["data"]["event"]["founder_birth_id"] = serde_json::json!("1");
+            bad[1]["data"]["event"]["parent_a"] = parent;
+            let error = parse(Cursor::new(encode(&bad))).unwrap_err();
+            assert!(
+                error.to_string().contains("captured tick boundary"),
+                "{error}"
+            );
+        }
+        let mut bad = rows.clone();
+        bad[1]["data"]["tick"] = serde_json::json!("1");
+        assert!(parse(Cursor::new(encode(&bad))).is_err());
+        let mut bad = browser_fixture(&[Cohort::Evolving], CaptureEnd::Snapshot);
+        bad[2]["data"]["tick"] = serde_json::json!("0");
+        bad[3]["data"]["ticks"] = serde_json::json!("0");
+        let error = parse(Cursor::new(encode(&bad))).unwrap_err();
+        assert!(
+            error.to_string().contains("captured tick boundary"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn incomplete_browser_prefix_can_contain_only_header_and_footer() {
+        for reason in [
+            CaptureEnd::Unfinalized,
+            CaptureEnd::StorageLimit,
+            CaptureEnd::StorageError,
+            CaptureEnd::CaptureError,
+        ] {
+            let rows = empty_browser_fixture(reason);
+            let summary = parse(Cursor::new(encode(&rows))).unwrap();
+            assert_eq!(summary.cohorts[0].counts, Counts::default());
+            assert!(!summary.cohorts[0].history_complete);
+            assert_eq!(summary.cohorts[0].final_state_hash, None);
+            assert!(parse(Cursor::new(encode(&rows[..1]))).is_err());
+            let mut bad = rows.clone();
+            bad[1]["data"]["cohorts"][0]["history_complete"] = serde_json::json!(true);
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+            let mut with_hash = rows.clone();
+            with_hash[1]["data"]["cohorts"][0]["final_state_hash"] =
+                serde_json::json!("0123456789abcdef");
+            parse(Cursor::new(encode(&with_hash))).unwrap();
+        }
+        for reason in [
+            CaptureEnd::Finished,
+            CaptureEnd::Snapshot,
+            CaptureEnd::Stopped,
+            CaptureEnd::Reseeded,
+            CaptureEnd::ParamsChanged,
+        ] {
+            let mut rows = empty_browser_fixture(reason);
+            rows[0]["data"]["ticks"] = serde_json::json!("0");
+            assert!(parse(Cursor::new(encode(&rows))).is_err());
+            rows[0]["data"]["params"]["species"]["capacity"] = serde_json::json!(0);
+            parse(Cursor::new(encode(&rows))).unwrap();
+        }
+    }
+
+    #[test]
+    fn browser_gap_prefix_counts_are_exact_and_limit_parent_certainty() {
+        for reason in [CaptureEnd::Snapshot, CaptureEnd::StorageLimit] {
+            let mut rows = browser_fixture(&[Cohort::Evolving], reason);
+            rows[1] = serde_json::json!({"kind":"gap","data":{
+                "cohort":"evolving","first_sequence":"0","last_sequence":"0"
+            }});
+            rows[3]["data"]["cohorts"][0]["counts"] = serde_json::json!({
+                "next_sequence":"2", "events":"1", "dropped_events":"1",
+                "gaps":"1", "origins":"0", "extinctions":"1"
+            });
+            rows[3]["data"]["cohorts"][0]["history_complete"] = serde_json::json!(false);
+            parse(Cursor::new(encode(&rows))).unwrap();
+            for field in [
+                "next_sequence",
+                "events",
+                "dropped_events",
+                "gaps",
+                "origins",
+                "extinctions",
+            ] {
+                let mut bad = rows.clone();
+                bad[3]["data"]["cohorts"][0]["counts"][field] = serde_json::json!("9");
+                assert!(parse(Cursor::new(encode(&bad))).is_err(), "{field}");
+            }
+            let mut bad = rows.clone();
+            bad[1]["data"]["cohort"] = serde_json::json!("random_control");
+            let error = parse(Cursor::new(encode(&bad))).unwrap_err();
+            assert!(error.to_string().contains("absent from header"), "{error}");
+        }
+    }
+
+    #[test]
+    fn browser_requires_matching_cohorts_run_identity_and_required_nullable_metadata() {
+        let original = browser_fixture(&[Cohort::Evolving], CaptureEnd::Snapshot);
+        let mutations = [
+            ("/0/data/schema_version", serde_json::json!(3)),
+            ("/0/data/run_id", serde_json::json!("")),
+            ("/0/data/run_id", serde_json::json!("x".repeat(129))),
+            ("/0/data/run_id", serde_json::Value::Null),
+            ("/0/data/cohorts", serde_json::json!([])),
+            (
+                "/0/data/cohorts",
+                serde_json::json!(["evolving", "evolving"]),
+            ),
+            (
+                "/0/data/cohorts",
+                serde_json::json!(["random_control", "evolving"]),
+            ),
+            (
+                "/0/data/cohorts",
+                serde_json::json!(["evolving", "random_control", "evolving"]),
+            ),
+            ("/0/data/drain_every", serde_json::json!("0")),
+            ("/0/data/capacity_per_cohort", serde_json::json!(u32::MAX)),
+            ("/0/data/params/world", serde_json::json!({})),
+            ("/1/data/cohort", serde_json::json!("random_control")),
+            ("/3/data/run_id", serde_json::json!("different-run")),
+            ("/3/data/run_id", serde_json::Value::Null),
+            ("/3/data/schema_version", serde_json::json!(1)),
+            ("/3/data/capture_end", serde_json::json!("crashed")),
+            ("/3/data/capture_end", serde_json::Value::Null),
+            ("/3/data/provenance/seed", serde_json::json!("1")),
+            ("/3/data/cohorts", serde_json::json!([])),
+            (
+                "/3/data/cohorts/0/cohort",
+                serde_json::json!("random_control"),
+            ),
+            (
+                "/3/data/cohorts/0/final_state_hash",
+                serde_json::Value::Null,
+            ),
+            (
+                "/3/data/cohorts/0/final_state_hash",
+                serde_json::json!("0123456789ABCDEF"),
+            ),
+            (
+                "/3/data/cohorts/0/final_state_hash",
+                serde_json::json!("0123456789abcde"),
+            ),
+        ];
+        for (pointer, replacement) in mutations {
+            let mut value = serde_json::Value::Array(original.clone());
+            *value.pointer_mut(pointer).unwrap() = replacement.clone();
+            assert!(
+                parse(Cursor::new(encode(value.as_array().unwrap()))).is_err(),
+                "accepted {pointer} = {replacement}"
+            );
+        }
+        for (row, field) in [
+            (0, "run_id"),
+            (0, "ticks"),
+            (0, "drain_every"),
+            (3, "run_id"),
+            (3, "capture_end"),
+        ] {
+            let mut rows = original.clone();
+            rows[row]["data"].as_object_mut().unwrap().remove(field);
+            assert!(
+                parse(Cursor::new(encode(&rows))).is_err(),
+                "missing {field}"
+            );
+        }
+        let mut rows = original.clone();
+        rows[3]["data"]["cohorts"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("final_state_hash");
+        assert!(parse(Cursor::new(encode(&rows))).is_err());
+        let mut rows = browser_fixture(&Cohort::ALL, CaptureEnd::Snapshot);
+        rows.last_mut().unwrap()["data"]["cohorts"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        assert!(parse(Cursor::new(encode(&rows))).is_err());
+        let mut rows = original.clone();
+        let extra = rows[3]["data"]["cohorts"][0].clone();
+        rows[3]["data"]["cohorts"]
+            .as_array_mut()
+            .unwrap()
+            .push(extra);
+        assert!(parse(Cursor::new(encode(&rows))).is_err());
+        let mut rows = original;
+        for row in [0, 3] {
+            rows[row]["data"]["run_id"] = serde_json::json!("x".repeat(128));
+        }
+        rows[0]["data"]["drain_every"] = serde_json::json!("1");
+        parse(Cursor::new(encode(&rows))).unwrap();
+    }
+
+    #[test]
+    fn browser_run_ids_count_unicode_scalars_and_reject_unpaired_surrogates() {
+        let original = browser_fixture(&[Cohort::Evolving], CaptureEnd::Snapshot);
+        for (id, accepted) in [
+            (" ".to_owned(), true),
+            ("opaque/not-a-uuid".to_owned(), true),
+            ("\u{1f9ec}".repeat(128), true),
+            ("\u{1f9ec}".repeat(129), false),
+        ] {
+            let mut rows = original.clone();
+            for index in [0, 3] {
+                rows[index]["data"]["run_id"] = serde_json::json!(id);
+            }
+            assert_eq!(
+                parse(Cursor::new(encode(&rows))).is_ok(),
+                accepted,
+                "{} Unicode scalars",
+                id.chars().count()
+            );
+        }
+        for pointer in [
+            "/run_id",
+            "/provenance/sim_version",
+            "/provenance/source_revision",
+        ] {
+            let mut rows = original.clone();
+            for index in [0, 3] {
+                *rows[index]["data"].pointer_mut(pointer).unwrap() =
+                    serde_json::json!("WIRE_SURROGATE");
+            }
+            parse(Cursor::new(encode(&rows))).unwrap();
+            let text = String::from_utf8(encode(&rows)).unwrap();
+            for escaped in [r#""\ud800""#, r#""\udfff""#] {
+                let invalid = text.replace("\"WIRE_SURROGATE\"", escaped);
+                let error = parse(Cursor::new(invalid)).unwrap_err();
+                assert!(error.to_string().contains("history line 1:"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn browser_footer_validates_planned_and_captured_tick_boundaries_and_hashes() {
+        for reason in [
+            CaptureEnd::Finished,
+            CaptureEnd::Snapshot,
+            CaptureEnd::Stopped,
+            CaptureEnd::Reseeded,
+            CaptureEnd::ParamsChanged,
+            CaptureEnd::Unfinalized,
+            CaptureEnd::StorageLimit,
+            CaptureEnd::StorageError,
+            CaptureEnd::CaptureError,
+        ] {
+            let original = browser_fixture(&[Cohort::Evolving], reason);
+            for boundary in ["0", "1", "9"] {
+                let mut bad = original.clone();
+                bad[3]["data"]["ticks"] = serde_json::json!(boundary);
+                assert!(
+                    parse(Cursor::new(encode(&bad))).is_err(),
+                    "{reason:?}, {boundary}"
+                );
+            }
+            let mut bad = original.clone();
+            bad[0]["data"]["ticks"] = serde_json::json!("9");
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+            let mut bad = original.clone();
+            bad[0]["data"]["ticks"] = serde_json::json!("10");
+            bad[3]["data"]["ticks"] = serde_json::json!("11");
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+            let mut bad = original.clone();
+            bad[2]["data"]["tick"] = serde_json::json!("10");
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+            let mut bad = original.clone();
+            bad[3]["data"]["cohorts"][0]["final_state_hash"] = serde_json::json!("not a hash");
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+            let mut rows = original.clone();
+            rows[3]["data"]["cohorts"][0]["final_state_hash"] = serde_json::Value::Null;
+            assert_eq!(
+                parse(Cursor::new(encode(&rows))).is_ok(),
+                reason.is_incomplete()
+            );
+            let mut rows = original.clone();
+            rows[0]["data"]["ticks"] = serde_json::json!("11");
+            assert_eq!(
+                parse(Cursor::new(encode(&rows))).is_ok(),
+                reason != CaptureEnd::Finished
+            );
+            rows[0]["data"]["ticks"] = serde_json::Value::Null;
+            assert_eq!(
+                parse(Cursor::new(encode(&rows))).is_ok(),
+                reason != CaptureEnd::Finished
+            );
+        }
+    }
+
+    #[test]
+    fn browser_ids_ticks_and_gap_sequences_remain_exact_beyond_javascript_integers() {
+        let big = (1u64 << 53) + 1;
+        let mut rows = browser_fixture(&[Cohort::Evolving], CaptureEnd::Snapshot);
+        rows[1] = serde_json::json!({"kind":"gap","data":{
+            "cohort":"evolving", "first_sequence":"0", "last_sequence":(big - 1).to_string()
+        }});
+        rows.insert(
+            2,
+            serde_json::json!({"kind":"event","data":{
+                "cohort":"evolving", "sequence":big.to_string(), "tick":big.to_string(),
+                "event":{
+                    "kind":"species_origin", "species_id":4,
+                    "founder_birth_id":(u64::MAX - 1).to_string(),
+                    "parent_a":{"status":"observed","birth_id":big.to_string(),"species_id":null},
+                    "parent_b":{"status":"unavailable"}
+                }
+            }}),
+        );
+        rows[3]["data"]["sequence"] = serde_json::json!((big + 1).to_string());
+        rows[3]["data"]["tick"] = serde_json::json!((u64::MAX - 1).to_string());
+        rows[3]["data"]["event"]["species_id"] = serde_json::json!(4);
+        rows[4]["data"]["ticks"] = serde_json::json!(u64::MAX.to_string());
+        rows[4]["data"]["cohorts"][0]["counts"] = serde_json::json!({
+            "next_sequence":(big + 2).to_string(), "events":"2", "dropped_events":big.to_string(),
+            "gaps":"1", "origins":"1", "extinctions":"1"
+        });
+        rows[4]["data"]["cohorts"][0]["history_complete"] = serde_json::json!(false);
+        let summary = parse(Cursor::new(encode(&rows))).unwrap();
+        assert_eq!(summary.ticks.0, u64::MAX);
+        assert_eq!(summary.provenance.seed.0, u64::MAX);
+        assert_eq!(summary.cohorts[0].counts.next_sequence.0, big + 2);
+        assert_eq!(summary.cohorts[0].counts.dropped_events.0, big);
+        for pointer in [
+            "/2/data/sequence",
+            "/2/data/tick",
+            "/2/data/event/founder_birth_id",
+            "/2/data/event/parent_a/birth_id",
+            "/4/data/ticks",
+        ] {
+            for invalid in [
+                serde_json::json!(big),
+                serde_json::json!("01"),
+                serde_json::json!("+1"),
+                serde_json::json!("18446744073709551616"),
+            ] {
+                let mut value = serde_json::Value::Array(rows.clone());
+                *value.pointer_mut(pointer).unwrap() = invalid;
+                assert!(
+                    parse(Cursor::new(encode(value.as_array().unwrap()))).is_err(),
+                    "{pointer}"
+                );
+            }
+        }
+        let mut bad = rows.clone();
+        bad[2]["data"]["event"]["founder_birth_id"] = serde_json::json!(u64::MAX.to_string());
+        assert!(parse(Cursor::new(encode(&bad))).is_err());
+        for field in ["birth_id", "species_id"] {
+            let mut bad = rows.clone();
+            bad[2]["data"]["event"]["parent_a"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert!(parse(Cursor::new(encode(&bad))).is_err());
+        }
+        let mut valid = rows;
+        valid[2]["data"]["event"]["founder_birth_id"] = serde_json::Value::Null;
+        valid[2]["data"]["event"]["parent_a"]["birth_id"] = serde_json::Value::Null;
+        parse(Cursor::new(encode(&valid))).unwrap();
+    }
+
+    #[test]
+    fn browser_line_limit_includes_the_newline() {
+        let mut rows = browser_fixture(&[Cohort::Evolving], CaptureEnd::Snapshot);
+        let current_length = serde_json::to_vec(&rows[0]).unwrap().len() + 1;
+        let current_revision = rows[0]["data"]["provenance"]["source_revision"]
+            .as_str()
+            .unwrap()
+            .len();
+        let revision = "x".repeat(MAX_LINE_BYTES as usize - current_length + current_revision);
+        for index in [0, 3] {
+            rows[index]["data"]["provenance"]["source_revision"] = serde_json::json!(revision);
+        }
+        assert_eq!(
+            serde_json::to_vec(&rows[0]).unwrap().len() + 1,
+            MAX_LINE_BYTES as usize
+        );
+        parse(Cursor::new(encode(&rows))).unwrap();
+        rows[0]["data"]["provenance"]["source_revision"] =
+            serde_json::json!(format!("{revision}x"));
+        let error = parse(Cursor::new(encode(&rows))).unwrap_err();
+        assert!(error.to_string().contains("exceeds 1 MiB"), "{error}");
+    }
+
+    #[test]
+    fn shared_interoperability_fixtures_parse_and_native_export_is_byte_identical() {
+        let native = include_bytes!("../tests/fixtures/history-v1.ndjson");
+        let root = parse(Cursor::new(include_bytes!(
+            "../tests/fixtures/history-v2-root.ndjson"
+        )))
+        .unwrap();
+        assert_eq!(root.capture_end, Some(CaptureEnd::Snapshot));
+        assert_eq!(root.cohorts.len(), 1);
+        assert_eq!(root.cohorts[0].cohort, Cohort::RandomControl);
+        let prefix = parse(Cursor::new(include_bytes!(
+            "../tests/fixtures/history-v2-prefix.ndjson"
+        )))
+        .unwrap();
+        assert_eq!(prefix.capture_end, Some(CaptureEnd::StorageLimit));
+        assert_eq!(prefix.cohorts[0].counts.dropped_events.0, (1u64 << 53) + 1);
+        assert_eq!(prefix.cohorts[0].final_state_hash, None);
+
+        let summary = parse(Cursor::new(native)).unwrap();
+        let rows = records(native);
+        let header: Header = serde_json::from_value(rows[0]["data"].clone()).unwrap();
+        let run = RunHeader {
+            sim_version: header.provenance.sim_version,
+            source_revision: header.provenance.source_revision,
+            phase: header.provenance.phase,
+            seed: header.provenance.seed.0.to_string(),
+            control: header.provenance.control,
+            ticks: header.ticks.unwrap().0,
+            founders: header.founders,
+            sample_every: header.drain_every.unwrap().0,
+            params: header.params,
+            ..self::header()
+        };
+        let mut bytes = Vec::new();
+        let mut capture = Capture::new(header.capacity_per_cohort).unwrap();
+        for recorder in &mut capture.recorders {
+            record(recorder, origin(0, 0));
+        }
+        ArchiveWriter::new(&mut bytes, &run, header.capacity_per_cohort)
+            .unwrap()
+            .finish(
+                &mut capture,
+                &StateHashes {
+                    evolving: summary.cohorts[0].final_state_hash.clone().unwrap(),
+                    random_control: summary.cohorts[1].final_state_hash.clone().unwrap(),
+                },
+            )
+            .unwrap();
+        assert_eq!(bytes, native);
     }
 
     #[test]

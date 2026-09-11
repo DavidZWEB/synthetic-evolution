@@ -522,7 +522,8 @@ are opened before either is truncated. I/O and flush failures fail the command.
 This is streaming output, not an atomic two-file transaction or protection against
 concurrent filesystem renames.
 
-History uses its own **schema 1** JSONL protocol; metrics remain **schema 7**, phase 2,
+Native writing uses history **schema 1** JSONL; readback also accepts browser **schema 2**.
+Metrics remain **schema 7**, phase 2,
 with **`randomized_at_birth_v3`** unchanged. Each line is a `kind`/`data` envelope:
 
 | `kind` | Contents |
@@ -538,6 +539,11 @@ cohort; u64::MAX is not issued, although `next_sequence` can reach it. Species I
 u32 numbers, excluding the null sentinel. Birth IDs use the core's exact decimal
 string/null representation. Never convert these values to JavaScript `Number`.
 
+`SimParams` retains its existing JSON shape, including the numeric
+`storage.max_memory_bytes` budget. Browser imports reject that budget above
+JavaScript's safe-integer range rather than silently rounding it; native-only
+archives using such an oversized budget remain readable by the native tool.
+
 An origin includes the historical species ID, the founding individual's `founder_birth_id`,
 and explicit `parent_a`/`parent_b` records. Each parent's `status` is `absent` (no parent
 declared), `unavailable` (declared but not observable at admission), or `observed`
@@ -549,7 +555,7 @@ World stamps events with the tick being processed: seeding is tick zero, and eve
 during N executed ticks have ticks 0 through N-1. Metrics samples instead label
 completed tick boundaries.
 
-The completion marker means execution finished and both cohort histories were drained.
+In schema 1 the completion marker means execution finished and both cohort histories were drained.
 `history_complete: false` means execution completed **with capture gaps**, not a
 truncated execution. Footer totals count retained origins/extinctions separately from
 unknown dropped event kinds. Final hashes match the metrics final sample when both
@@ -568,7 +574,64 @@ at most the configured active species per cohort, not the archive. After a gap, 
 origins or extinctions cannot be reconstructed or fully cross-checked. The summary
 does not certify biological ancestry: members clustered into one species are **not**
 all descendants of the founding individual. Per-organism life histories, full genealogy,
-browser persistence/pruning, graph/viewer UI, and checkpoint/resume are deferred.
+graph/viewer UI, and checkpoint/resume are deferred.
+
+### Browser species-history archives (M5)
+
+Open **history**, enable **record the next new / reseeded run**, then reseed.
+Capture is off by default on page load; enabling it never attaches halfway through
+an existing World. Play/pause/step keep the same archive; each new/reseeded World,
+even with the same seed and parameters, gets a unique run ID. The panel lists local
+archives and supports export, JSONL import, explicit deletion, and stopping capture.
+Selecting/importing history does not construct a World or resume an old one.
+
+The worker drains the 4,096-record FIFO independently of snapshot publication and
+keeps only one unacknowledged batch outside WASM. Acknowledgement follows the
+IndexedDB transaction, not receipt of the worker message. Slow storage allows the
+simulation to continue; overflow remains explicit gap records. Exporting an active
+run obtains a consistent snapshot prefix and hash without stopping its simulation
+or capture. Reseeding and successful live parameter changes close the old capture;
+retuning uses a pre-change boundary so the saved parameters remain truthful.
+
+Default local limits are **10 MiB per run, 50 MiB total, and 20 saved runs**.
+These count serialized archive bytes (including reserved completion space for open
+captures), not browser-internal database overhead. The browser's quota may be lower.
+Quota accounting is transactional across tabs. There is **no automatic pruning or
+deletion**. A limit or storage error stops recording, not simulation, and preserves
+the committed prefix. If storage also refuses its error-status update, that prefix
+stays open/unfinalized rather than being labeled complete.
+
+Open saved runs are **unfinalized / possibly active**, not assumed crashed: another
+tab may still own one. Reload loads the archive list, not the World. Browser data
+may be cleared or evicted; export important records to files. Deleting an active
+local capture stops it first. Deleting another tab's archive causes its stale writer
+to fail rather than recreate it. Importing the same file creates a separate local
+archive, preserving its original wire run ID and cohort identities.
+
+Browser exports use **schema 2**, readable by `cargo run -p native -- history PATH`.
+The header adds a nonempty opaque `run_id` (at most 128 characters), explicitly lists
+`["evolving"]`, `["random_control"]`, or `["evolving","random_control"]`, and allows
+`ticks` and `drain_every` to be explicitly null. Browser Worlds capture only their
+selected heredity cohort; imports never invent its missing counterpart. The
+provenance source revision is suffixed `-development` for dev servers and `-dirty`
+for modified production builds. Params are complete normalized `SimParams`.
+
+The footer repeats run ID/provenance/cohorts and supplies the actual captured tick,
+exact totals, required nullable hashes, and `capture_end`:
+
+| `capture_end` | Meaning |
+|---|---|
+| `finished` | Planned execution finished; final hashes required |
+| `snapshot`, `stopped`, `reseeded`, `params_changed` | Intentional capture prefix with boundary hashes, not a completed simulation |
+| `unfinalized`, `storage_limit`, `storage_error`, `capture_error` | Incomplete saved prefix; hashes may be null, and `history_complete` is false even without gaps |
+
+For intentional prefixes, `history_complete` means there are no dropped events,
+not complete genealogy. Incomplete prefixes may contain no event rows if initial
+persistence failed. Counts and event ticks must fit the saved boundary, never a
+newer simulation frame. Both versions retain canonical decimal u64 strings, exact
+nullable parent identities, strict lifecycle/sequence validation, and the 1 MiB
+encoded-line limit. Both currently validate against `LayoutEra::BirthIdentities`.
+Native schema 1 output and historical experiment reading remain unchanged.
 
 ### Telemetry protocol and observations
 

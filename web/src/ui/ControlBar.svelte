@@ -19,6 +19,9 @@
     onreseed,
     oncopy,
     onreset,
+    onhistory,
+    captureStatus,
+    transitioning,
   } = $props();
 </script>
 
@@ -65,11 +68,13 @@
       <option value="randomized_at_birth">scalar control</option>
     </select>
   </label>
-  <button onclick={onreseed}>reseed</button>
+  <button onclick={onreseed} disabled={transitioning}>reseed</button>
   <button onclick={oncopy} disabled={!ready || !shareUrl}>
     {linkCopied ? 'copied' : 'copy link'}
   </button>
   <button onclick={onreset}>reset view</button>
+  <button onclick={onhistory}>history{captureStatus === 'recording' ? ' (recording)' : ''}</button>
+  {#if captureStatus === 'incomplete'}<span role="status">history incomplete</span>{/if}
 </footer>
 
 <style>

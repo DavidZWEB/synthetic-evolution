@@ -1,39 +1,21 @@
-//! Version-one species-history wire records, independent of metrics and core serde.
+//! Versioned species-history archive records, independent of metrics and core serde.
 //!
-//! Identities and counters remain exact in JSON consumers; origins describe only
-//! the founding admission, not the ancestry of every member of a species.
+//! Native export remains version one; version two also describes browser capture
+//! prefixes. Shared events describe founding admissions, not complete genealogy.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
-use sim_core::history::{EventKind, Parent};
-use sim_core::ids::{BirthId, SpeciesId};
+use serde::{Deserialize, Deserializer, Serialize};
 use sim_core::params::SimParams;
 
 use crate::metrics::RunHeader;
 
+#[path = "../../shared/history_event_wire.rs"]
+mod history_event_wire;
+use history_event_wire::required_option;
+pub(crate) use history_event_wire::{Decimal, EventRecord, ParentRecord};
+
 pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const BROWSER_SCHEMA_VERSION: u32 = 2;
 pub(crate) const MAX_LINE_BYTES: u64 = 1024 * 1024;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Decimal(pub u64);
-
-impl Serialize for Decimal {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for Decimal {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        if text.is_empty()
-            || (text.len() > 1 && text.starts_with('0'))
-            || !text.bytes().all(|byte| byte.is_ascii_digit())
-        {
-            return Err(de::Error::custom("expected a canonical decimal u64 string"));
-        }
-        text.parse().map(Self).map_err(de::Error::custom)
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -67,11 +49,19 @@ pub(crate) struct Provenance {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Header {
     pub schema_version: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub run_id: Option<String>,
     pub provenance: Provenance,
-    pub cohorts: [Cohort; 2],
-    pub ticks: Decimal,
+    pub cohorts: Vec<Cohort>,
+    #[serde(deserialize_with = "required_option")]
+    pub ticks: Option<Decimal>,
     pub founders: u32,
-    pub drain_every: Decimal,
+    #[serde(deserialize_with = "required_option")]
+    pub drain_every: Option<Decimal>,
     pub capacity_per_cohort: u32,
     pub params: SimParams,
 }
@@ -80,6 +70,7 @@ impl Header {
     pub fn new(run: &RunHeader, capacity: u32) -> crate::Result<Self> {
         Ok(Self {
             schema_version: SCHEMA_VERSION,
+            run_id: None,
             provenance: Provenance {
                 sim_version: run.sim_version.clone(),
                 source_revision: run.source_revision.clone(),
@@ -87,87 +78,13 @@ impl Header {
                 seed: Decimal(run.seed.parse()?),
                 control: run.control.clone(),
             },
-            cohorts: Cohort::ALL,
-            ticks: Decimal(run.ticks),
+            cohorts: Cohort::ALL.to_vec(),
+            ticks: Some(Decimal(run.ticks)),
             founders: run.founders,
-            drain_every: Decimal(run.sample_every),
+            drain_every: Some(Decimal(run.sample_every)),
             capacity_per_cohort: capacity,
             params: run.params.clone(),
         })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum ParentRecord {
-    Absent {},
-    Unavailable {},
-    Observed {
-        #[serde(deserialize_with = "required_birth_id")]
-        birth_id: BirthId,
-        // A required nullable field: omitted metadata must not imply unclassified.
-        #[serde(deserialize_with = "required_option")]
-        species_id: Option<SpeciesId>,
-    },
-}
-
-fn required_option<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-    deserializer: D,
-) -> Result<Option<T>, D::Error> {
-    Option::deserialize(deserializer)
-}
-
-fn required_birth_id<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BirthId, D::Error> {
-    BirthId::deserialize(deserializer)
-}
-
-impl From<Parent> for ParentRecord {
-    fn from(parent: Parent) -> Self {
-        match parent {
-            Parent::Absent => Self::Absent {},
-            Parent::Unavailable => Self::Unavailable {},
-            Parent::Observed {
-                birth_id,
-                species_id,
-            } => Self::Observed {
-                birth_id,
-                species_id,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum EventRecord {
-    SpeciesOrigin {
-        species_id: SpeciesId,
-        #[serde(deserialize_with = "required_birth_id")]
-        founder_birth_id: BirthId,
-        parent_a: ParentRecord,
-        parent_b: ParentRecord,
-    },
-    SpeciesExtinct {
-        species_id: SpeciesId,
-    },
-}
-
-impl From<EventKind> for EventRecord {
-    fn from(event: EventKind) -> Self {
-        match event {
-            EventKind::SpeciesOrigin {
-                species_id,
-                founder_birth_id,
-                parent_a,
-                parent_b,
-            } => Self::SpeciesOrigin {
-                species_id,
-                founder_birth_id,
-                parent_a: parent_a.into(),
-                parent_b: parent_b.into(),
-            },
-            EventKind::SpeciesExtinct { species_id } => Self::SpeciesExtinct { species_id },
-        }
     }
 }
 
@@ -188,16 +105,73 @@ pub(crate) struct CohortCompletion {
     pub cohort: Cohort,
     pub counts: Counts,
     pub history_complete: bool,
-    pub final_state_hash: String,
+    #[serde(deserialize_with = "required_option")]
+    pub final_state_hash: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CaptureEnd {
+    Finished,
+    Snapshot,
+    Stopped,
+    Reseeded,
+    ParamsChanged,
+    Unfinalized,
+    StorageLimit,
+    StorageError,
+    CaptureError,
+}
+
+impl CaptureEnd {
+    pub fn is_incomplete(self) -> bool {
+        matches!(
+            self,
+            Self::Unfinalized | Self::StorageLimit | Self::StorageError | Self::CaptureError
+        )
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Finished => "finished",
+            Self::Snapshot => "snapshot",
+            Self::Stopped => "stopped",
+            Self::Reseeded => "reseeded",
+            Self::ParamsChanged => "params_changed",
+            Self::Unfinalized => "unfinalized",
+            Self::StorageLimit => "storage_limit",
+            Self::StorageError => "storage_error",
+            Self::CaptureError => "capture_error",
+        }
+    }
+}
+
+// Version-specific optional fields may be absent in v1, but never explicitly null.
+fn present_value<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Completion {
     pub schema_version: u32,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub run_id: Option<String>,
     pub provenance: Provenance,
     pub ticks: Decimal,
-    pub cohorts: [CohortCompletion; 2],
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub capture_end: Option<CaptureEnd>,
+    pub cohorts: Vec<CohortCompletion>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

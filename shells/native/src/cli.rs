@@ -17,7 +17,7 @@ pub struct Cli {
 pub enum Command {
     /// Diagnose known failure signatures in a metrics JSONL file.
     Diagnose(DiagnoseArgs),
-    /// Validate and summarize a completed species-history JSONL archive.
+    /// Validate and summarize a species-history archive or explicit capture prefix.
     History(HistoryArgs),
 }
 

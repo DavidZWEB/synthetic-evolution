@@ -1,0 +1,101 @@
+<script>
+  let {
+    captureNext, oncapture, runs, activeId, captureStatus, message, busy,
+    onclose, onrefresh, onimport, onexport, ondelete, onstop,
+  } = $props();
+</script>
+
+<section aria-label="Species history" class="history-panel">
+  <header>
+    <strong>Species history</strong>
+    <button onclick={onclose} aria-label="Close species history">close</button>
+  </header>
+  <label class="capture">
+    <input type="checkbox" checked={captureNext}
+      onchange={(event) => oncapture(event.currentTarget.checked)} />
+    record the next new / reseeded run
+  </label>
+  <p>Capture: <strong>{captureStatus}</strong>. Species origins and extinctions only.</p>
+  {#if captureStatus === 'recording'}
+    <button onclick={onstop} disabled={busy}>stop recording</button>
+  {/if}
+  {#if message}<p class="notice" role="status">{message}</p>{/if}
+  <p class="help">
+    Saved locally per run, not per seed. Reload restores these archives, not the simulation.
+    Open archives may still be active in another tab; exported open archives are incomplete.
+  </p>
+  <p class="help">
+    Limits: 10 MiB / run, 50 MiB total, 20 runs (serialized data).
+    No automatic deletion. Browser storage can be cleared or evicted: export important runs.
+  </p>
+  <div class="actions">
+    <label class="import">
+      import JSONL
+      <input type="file" accept=".jsonl,application/x-ndjson,application/json"
+        disabled={busy}
+        onchange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) onimport(file);
+          event.currentTarget.value = '';
+        }} />
+    </label>
+    <button onclick={onrefresh} disabled={busy}>refresh saved runs</button>
+  </div>
+  {#if runs.length === 0}
+    <p>No saved histories.</p>
+  {/if}
+  <ul>
+    {#each runs as run (run.id)}
+      <li>
+        <strong>seed {run.seed}</strong>
+        <span>{run.cohorts.join(' + ')}</span>
+        <span class="identity" title={run.id}>archive {run.id}</span>
+        <span>{run.captureEnd ?? (run.id === activeId && captureStatus === 'recording'
+          ? 'recording in this tab' : 'unfinalized / possibly active')}</span>
+        <span>{run.eventCount} events · {run.gapCount} gaps · {(run.bytes / 1024).toFixed(1)} KiB</span>
+        <div class="actions">
+          <button disabled={busy} onclick={() => onexport(run.id)}>
+            {run.id === activeId && captureStatus === 'recording' ? 'export snapshot' : 'export'}
+          </button>
+          <button disabled={busy} onclick={() => ondelete(run.id)}>delete</button>
+        </div>
+      </li>
+    {/each}
+  </ul>
+</section>
+
+<style>
+  .history-panel {
+    position: absolute;
+    z-index: 4;
+    inset: 0.75rem 0.75rem 0.75rem auto;
+    width: min(32rem, calc(100% - 1.5rem));
+    box-sizing: border-box;
+    overflow: auto;
+    padding: 1rem;
+    background: #14161af5;
+    border: 1px solid #3b4252;
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+  .capture { display: flex; gap: 0.5rem; margin-top: 1rem; align-items: center; }
+  .help { color: #a8b0bf; }
+  .notice { color: #eacb8a; }
+  ul { padding: 0; list-style: none; }
+  li { display: grid; gap: 0.3rem; border-top: 1px solid #3b4252; padding: 0.8rem 0; }
+  .identity { font-size: 0.8rem; color: #a8b0bf; }
+  .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  button, .import {
+    font: inherit;
+    color: #d8dee9;
+    background: #1c1f26;
+    border: 1px solid #3b4252;
+    border-radius: 3px;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .import { min-width: 0; max-width: 100%; }
+  .import input { display: block; max-width: 100%; font: inherit; margin-top: 0.3rem; }
+</style>

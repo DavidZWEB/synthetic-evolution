@@ -1,4 +1,4 @@
-//! Streaming validation of completed version-one species-history archives.
+//! Streaming validation of species-history archives and explicit capture prefixes.
 //!
 //! Retains counters and at most the configured active species per cohort, not an
 //! archive or genealogy. Gaps explicitly limit which lifecycle links can be checked.
@@ -14,8 +14,8 @@ use sim_core::ids::{BirthId, SpeciesId};
 
 use crate::Result;
 use crate::history_wire::{
-    ArchiveRecord, Cohort, Completion, Counts, Decimal, EventRecord, Header, MAX_LINE_BYTES,
-    ParentRecord, SCHEMA_VERSION,
+    ArchiveRecord, BROWSER_SCHEMA_VERSION, CaptureEnd, Cohort, Completion, Counts, Decimal,
+    EventRecord, Header, MAX_LINE_BYTES, ParentRecord, SCHEMA_VERSION,
 };
 
 pub(crate) fn read(path: &Path) -> Result<Completion> {
@@ -75,6 +75,7 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
                     let header = header
                         .as_ref()
                         .ok_or_else(|| invalid("history header must be first"))?;
+                    validate_cohort(header, cohort)?;
                     states[cohort.index()].event(header, sequence.0, tick.0, event)?;
                 }
                 ArchiveRecord::Gap {
@@ -85,6 +86,7 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
                     let header = header
                         .as_ref()
                         .ok_or_else(|| invalid("history header must be first"))?;
+                    validate_cohort(header, cohort)?;
                     if header.params.species.capacity == 0 {
                         return Err(
                             invalid("disabled classification cannot have history gaps").into()
@@ -114,8 +116,25 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
 }
 
 fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
-    if header.schema_version != SCHEMA_VERSION
-        || header.cohorts != Cohort::ALL
+    let supported_schema = match header.schema_version {
+        SCHEMA_VERSION => {
+            header.run_id.is_none()
+                && header.cohorts == Cohort::ALL
+                && header.ticks.is_some()
+                && header.drain_every.is_some()
+        }
+        BROWSER_SCHEMA_VERSION => {
+            header
+                .run_id
+                .as_ref()
+                .is_some_and(|id| !id.is_empty() && id.chars().count() <= 128)
+                && (header.cohorts == Cohort::ALL
+                    || header.cohorts == [Cohort::Evolving]
+                    || header.cohorts == [Cohort::RandomControl])
+        }
+        _ => false,
+    };
+    if !supported_schema
         || header.provenance.phase != 2
         || header.provenance.control != RANDOMIZED_AT_BIRTH_PROTOCOL
     {
@@ -125,7 +144,7 @@ fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
         || header.provenance.source_revision.trim().is_empty()
         || header.founders == 0
         || header.founders > header.params.world.max_agents
-        || header.drain_every.0 == 0
+        || header.drain_every.is_some_and(|interval| interval.0 == 0)
         || header.capacity_per_cohort == 0
         || u64::from(header.capacity_per_cohort)
             * size_of::<Option<sim_core::history::Record>>() as u64
@@ -143,6 +162,13 @@ fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
     header
         .params
         .validate_for_layout(LayoutEra::BirthIdentities)?;
+    Ok(())
+}
+
+fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
+    if !header.cohorts.contains(&cohort) {
+        return Err(invalid("history row cohort is absent from header").into());
+    }
     Ok(())
 }
 
@@ -170,6 +196,7 @@ struct CohortState {
     birth_ids_exhausted: bool,
     active: BTreeMap<SpeciesId, BirthId>,
     has_gap: bool,
+    has_nonseeding_event: bool,
 }
 
 impl CohortState {
@@ -183,7 +210,10 @@ impl CohortState {
         if sequence != self.counts.next_sequence.0 || sequence == u64::MAX {
             return Err(invalid("history event sequence is not contiguous").into());
         }
-        if tick > header.ticks.0.saturating_sub(1) || self.last_tick.is_some_and(|last| tick < last)
+        if header
+            .ticks
+            .is_some_and(|end| tick > end.0.saturating_sub(1))
+            || self.last_tick.is_some_and(|last| tick < last)
         {
             return Err(invalid("history event tick is out of order or outside the run").into());
         }
@@ -250,12 +280,12 @@ impl CohortState {
                 {
                     return Err(invalid("origin names the same observed parent twice").into());
                 }
-                if header.ticks.0 == 0
-                    && (parent_a != (ParentRecord::Absent {})
-                        || parent_b != (ParentRecord::Absent {}))
-                {
+                let has_parent =
+                    parent_a != (ParentRecord::Absent {}) || parent_b != (ParentRecord::Absent {});
+                if header.ticks == Some(Decimal(0)) && has_parent {
                     return Err(invalid("a seeding-only run cannot have parental origins").into());
                 }
+                self.has_nonseeding_event |= has_parent;
                 self.greatest_species = Some(species_id);
                 if !founder_birth_id.is_null() {
                     self.last_founder = Some(founder_birth_id);
@@ -271,7 +301,7 @@ impl CohortState {
                 self.counts.origins.0 += 1;
             }
             EventRecord::SpeciesExtinct { species_id } => {
-                if species_id.is_null() || header.ticks.0 == 0 {
+                if species_id.is_null() || header.ticks == Some(Decimal(0)) {
                     return Err(invalid("invalid species extinction").into());
                 }
                 if self.active.remove(&species_id).is_none() && !self.has_gap {
@@ -282,6 +312,7 @@ impl CohortState {
                         .map_or(species_id, |last| last.max(species_id)),
                 );
                 self.counts.extinctions.0 += 1;
+                self.has_nonseeding_event = true;
             }
         }
         self.counts.next_sequence = Decimal(sequence + 1);
@@ -325,22 +356,49 @@ fn validate_completion(
 ) -> Result<()> {
     if completion.schema_version != header.schema_version
         || completion.provenance != header.provenance
-        || completion.ticks != header.ticks
+        || completion.run_id != header.run_id
     {
         return Err(invalid("history completion provenance does not match header").into());
     }
-    for cohort in Cohort::ALL {
-        let row = &completion.cohorts[cohort.index()];
-        let counts = &states[cohort.index()].counts;
+    let incomplete = match (header.schema_version, completion.capture_end) {
+        (SCHEMA_VERSION, None) if header.ticks == Some(completion.ticks) => false,
+        (BROWSER_SCHEMA_VERSION, Some(reason))
+            if header
+                .ticks
+                .is_none_or(|planned| completion.ticks.0 <= planned.0)
+                && (reason != CaptureEnd::Finished || header.ticks == Some(completion.ticks)) =>
+        {
+            reason.is_incomplete()
+        }
+        _ => return Err(invalid("invalid history capture end reason or tick boundary").into()),
+    };
+    if completion.cohorts.len() != header.cohorts.len() {
+        return Err(invalid("history completion cohorts do not match header").into());
+    }
+    for (&cohort, row) in header.cohorts.iter().zip(&completion.cohorts) {
+        let state = &states[cohort.index()];
+        let counts = &state.counts;
+        let valid_hash = match &row.final_state_hash {
+            Some(hash) => {
+                hash.len() == 16
+                    && hash
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            }
+            None => incomplete,
+        };
+        if state
+            .last_tick
+            .is_some_and(|tick| tick > completion.ticks.0.saturating_sub(1))
+            || (completion.ticks.0 == 0 && state.has_nonseeding_event)
+        {
+            return Err(invalid("history events are outside the captured tick boundary").into());
+        }
         if row.cohort != cohort
-            || (header.params.species.capacity > 0 && counts.next_sequence.0 == 0)
+            || (!incomplete && header.params.species.capacity > 0 && counts.next_sequence.0 == 0)
             || row.counts != *counts
-            || row.history_complete != (counts.dropped_events.0 == 0)
-            || row.final_state_hash.len() != 16
-            || !row
-                .final_state_hash
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || row.history_complete != (!incomplete && counts.dropped_events.0 == 0)
+            || !valid_hash
         {
             return Err(invalid(
                 "invalid history completion cohort, totals, completeness, or hash",
