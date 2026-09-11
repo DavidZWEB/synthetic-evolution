@@ -17,6 +17,7 @@ export function createHistorySession({
   let chain = Promise.resolve();
   let requestSerial = 0;
   let boundaryWork = null;
+  let closingWork = null;
   let nextSequence = 0n;
   let droppedEvents = 0n;
   const requests = new Map();
@@ -58,6 +59,28 @@ export function createHistorySession({
         : error.code === 'storage_limit' ? 'storage_limit' : 'storage_error';
       await incomplete(reason, String(error));
     });
+    return chain;
+  }
+
+  function timeoutCapture() {
+    const message = 'History storage did not respond; capture stopped, simulation continues';
+    sim.stopHistory(message);
+    // Do not wait for a blocked IndexedDB request to release the UI/world.
+    void incomplete('storage_error', message);
+    return new Error(message);
+  }
+
+  function waitForClosing() {
+    let timer;
+    return Promise.race([
+      closingWork,
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          if (state === 'starting' || state === 'recording') reject(timeoutCapture());
+          else resolve();
+        }, timeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
   }
 
   const unsubscribe = [
@@ -73,7 +96,7 @@ export function createHistorySession({
       });
     }),
     sim.on('historyBatch', (batch) => {
-      enqueue(async () => {
+      const work = enqueue(async () => {
         if (state !== 'recording') return;
         const store = await getStore();
         let next = nextSequence;
@@ -110,6 +133,9 @@ export function createHistorySession({
             exported = encodeArchive({ header, rows: archive.rows, completion });
           } else {
             await store.finalize(id, completion);
+            if (requests.get(batch.requestId)?.captureEnd === 'snapshot') {
+              exported = encodeArchive({ header, rows: archive.rows, completion });
+            }
             report(batch.captureEnd === 'capture_error' ? 'incomplete' : 'stopped',
               batch.captureEnd === 'capture_error' ? 'History sequence space exhausted' : batch.captureEnd);
           }
@@ -120,10 +146,25 @@ export function createHistorySession({
         settle(batch.requestId, null, exported);
         await onSaved();
       });
+      if (batch.captureEnd && batch.captureEnd !== 'snapshot') closingWork = work;
     }),
     sim.on('historyError', ({ message, requestIds = [], requestOnly = false }) => {
       if (requestOnly) {
-        for (const requestId of requestIds) settle(requestId, new Error(message));
+        for (const requestId of requestIds) {
+          if (!closingWork) {
+            settle(requestId, new Error(message));
+            continue;
+          }
+          // A retune may close the worker just before it receives a requested
+          // barrier. Its already-delivered closure still owns the saved footer.
+          void closingWork.then(async () => {
+            const request = requests.get(requestId);
+            if (!request) return;
+            const exported = request.captureEnd === 'snapshot'
+              ? await (await getStore()).exportArchive(id) : null;
+            settle(requestId, null, exported);
+          }).catch((error) => settle(requestId, error));
+        }
       } else {
         enqueue(async () => {
           if (state !== 'incomplete') await incomplete('capture_error', message);
@@ -135,7 +176,10 @@ export function createHistorySession({
   return {
     get id() { return id; },
     get active() { return state === 'starting' || state === 'recording'; },
-    waitForBoundary() { return boundaryWork ?? Promise.resolve(); },
+    async waitForBoundary() {
+      await boundaryWork;
+      if (closingWork && (state === 'starting' || state === 'recording')) await waitForClosing();
+    },
     boundary(captureEnd) {
       if (state !== 'starting' && state !== 'recording') {
         return Promise.reject(new Error('History capture is not active'));
@@ -143,13 +187,8 @@ export function createHistorySession({
       if (requests.size) return Promise.reject(new Error('A history operation is already pending'));
       const requestId = ++requestSerial;
       const work = new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          const message = 'History storage did not respond; capture stopped, simulation continues';
-          sim.stopHistory(message);
-          // Do not wait for a blocked IndexedDB request to release the UI/world.
-          void incomplete('storage_error', message);
-        }, timeoutMs);
-        requests.set(requestId, { resolve, reject, timer });
+        const timer = setTimeout(timeoutCapture, timeoutMs);
+        requests.set(requestId, { resolve, reject, timer, captureEnd });
         ready.then(() => {
           if (requests.has(requestId)) sim.historyBoundary(captureEnd, requestId);
         });

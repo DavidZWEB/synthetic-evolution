@@ -281,3 +281,84 @@ test('reseed waits for an in-progress snapshot before finalizing the old capture
       }),
     });
   });
+
+test('a real retune footer survives reseed while its IndexedDB append is delayed',
+  { timeout: 60_000 }, async () => {
+    await withPage('development', async (page) => {
+      const result = await page.evaluate(async (params) => {
+        const { createSim } = await import('/src/sim/client.js');
+        const { createHistorySession } = await import('/src/history/controller.js');
+        const { openHistoryStore } = await import('/src/history/store.js');
+        const store = await openHistoryStore();
+        let firstCommit;
+        let closingStarted;
+        let release;
+        const first = new Promise((resolve) => { firstCommit = resolve; });
+        const closing = new Promise((resolve) => { closingStarted = resolve; });
+        const gate = new Promise((resolve) => { release = resolve; });
+        let appends = 0;
+        const delayedStore = {
+          ...store,
+          async append(...args) {
+            const count = ++appends;
+            if (count === 2) { closingStarted(); await gate; }
+            const result = await store.append(...args);
+            if (count === 1) firstCommit();
+            return result;
+          },
+        };
+        const sim = createSim({
+          seed: '42', founders: 32, params: JSON.stringify(params), historyRunId: crypto.randomUUID(),
+        });
+        const session = createHistorySession({
+          sim, getStore: async () => delayedStore, onChange() {}, onSaved: async () => {},
+        });
+        try {
+          const { run } = await new Promise((resolve) => sim.on('ready', resolve));
+          await first;
+          const normalized = JSON.parse(run.params);
+          sim.setParams(JSON.stringify({
+            ...normalized, metabolism: { ...normalized.metabolism, base: 0.1 },
+          }));
+          await closing;
+          let replaced = false;
+          let error = null;
+          const reseed = (async () => {
+            try {
+              await session.waitForBoundary();
+              if (session.active) await session.boundary('reseeded');
+            } catch (failure) {
+              error = String(failure);
+            }
+            session.detach();
+            sim.destroy();
+            replaced = true;
+          })();
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          const replacedBeforeCommit = replaced;
+          release();
+          await reseed;
+          const archive = await store.get(session.id);
+          return {
+            replacedBeforeCommit, replaced, error, status: archive.status,
+            captureEnd: archive.completion?.data.capture_end,
+            hash: archive.completion?.data.cohorts[0].final_state_hash,
+            originalBase: archive.header.data.params.metabolism.base,
+          };
+        } finally {
+          release();
+          session.detach();
+          sim.destroy();
+          if (session.id) await store.delete(session.id);
+          store.close();
+        }
+      }, params);
+      assert.equal(result.replacedBeforeCommit, false);
+      assert.equal(result.replaced, true);
+      assert.equal(result.error, null);
+      assert.equal(result.status, 'closed');
+      assert.equal(result.captureEnd, 'params_changed');
+      assert.equal(result.originalBase, 0.05);
+      assert.match(result.hash, /^[0-9a-f]{16}$/);
+    });
+  });

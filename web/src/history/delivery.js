@@ -28,7 +28,8 @@ export function createHistoryDelivery({ sim, cohort, send }) {
         // Retuning may fail without changing the world. In that case keep capture
         // active and let the command's caller report its validation error.
         if (boundary.apply && !boundary.apply()) {
-          pending = null;
+          pending = boundary.fallbackEnd
+            ? { captureEnd: boundary.fallbackEnd, requestId: boundary.requestId } : null;
           pump();
           return;
         }
@@ -79,6 +80,13 @@ export function createHistoryDelivery({ sim, cohort, send }) {
       pump();
     },
     boundary(captureEnd, requestId, apply) {
+      // One requested barrier can share a queued retune's prefix. If the retune
+      // fails validation, that request still needs its own boundary.
+      if (active && pending?.apply && pending.requestId == null && !apply && requestId != null) {
+        pending.requestId = requestId;
+        pending.fallbackEnd = captureEnd;
+        return true;
+      }
       if (!active || pending) {
         send({
           kind: 'historyError',

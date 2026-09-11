@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHistorySession } from './controller.js';
+import { createHistoryDelivery } from './delivery.js';
+import { encodeArchive, parseArchive } from './archive.js';
+import { fixtureHeader, origin } from './fixtures.js';
 
 const turn = () => new Promise((resolve) => setImmediate(resolve));
 const emptyBatch = {
@@ -108,4 +111,134 @@ test('detaching rejects pending requests and never claims a completed archive', 
   await turn();
   assert.equal(f.appended.length, 0);
   assert.deepEqual(f.marked, []);
+});
+
+async function closingPipeline(timeoutMs = 1000) {
+  const listeners = new Map();
+  const archive = { header: fixtureHeader(), rows: [], completion: null };
+  let release;
+  let appends = 0;
+  let records = [origin()];
+  const marked = [];
+  const stops = [];
+  const store = {
+    create: async () => 'local-id',
+    append: async (_id, rows) => {
+      if (++appends === 2) await new Promise((resolve) => { release = resolve; });
+      archive.rows.push(...rows);
+    },
+    get: async () => archive,
+    finalize: async (_id, completion) => { archive.completion = completion; },
+    markIncomplete: async (_id, reason) => { marked.push(reason); },
+    exportArchive: async () => encodeArchive(archive),
+  };
+  const wasm = {
+    history_pending: () => records.length > 0,
+    disable_history() {},
+    state_hash: () => 42n,
+    drain_history: () => {
+      const batch = records;
+      records = [];
+      return JSON.stringify({
+        records: batch, through_tick: '1', next_sequence: '1',
+        dropped_events: '0', sequence_exhausted: false,
+      });
+    },
+  };
+  const delivery = createHistoryDelivery({
+    sim: wasm, cohort: 'evolving',
+    send: (message) => queueMicrotask(() => listeners.get(message.kind)?.(message)),
+  });
+  const client = {
+    on(kind, callback) {
+      listeners.set(kind, callback);
+      return () => listeners.delete(kind);
+    },
+    historyBoundary: (end, requestId) => queueMicrotask(() => delivery.boundary(end, requestId)),
+    acknowledgeHistory: (id) => queueMicrotask(() => delivery.acknowledge(id)),
+    stopHistory: (message) => { stops.push(message); delivery.stop(message); },
+  };
+  const session = createHistorySession({
+    sim: client, getStore: async () => store, onChange() {}, onSaved: async () => {}, timeoutMs,
+  });
+  listeners.get('historyReady')({ header: archive.header });
+  delivery.pump(true);
+  await turn();
+  assert.equal(archive.rows.length, 1);
+  return {
+    session, delivery, archive, marked, stops,
+    commit: () => release(),
+  };
+}
+
+test('reseed waits for a worker-initiated retune closure to commit its footer', async () => {
+  const f = await closingPipeline();
+  f.delivery.boundary('params_changed', null, () => true);
+  await turn();
+  let switched = false;
+  const reseed = (async () => {
+    await f.session.waitForBoundary();
+    if (f.session.active) await f.session.boundary('reseeded');
+    f.session.detach();
+    switched = true;
+  })();
+  await turn();
+  assert.equal(switched, false, 'World was replaced while its final append was pending');
+  f.commit();
+  await reseed;
+  assert.equal(f.archive.completion.data.capture_end, 'params_changed');
+  assert.equal(f.archive.completion.data.cohorts[0].final_state_hash, '000000000000002a');
+  assert.deepEqual(f.stops, []);
+});
+
+for (const captureEnd of ['reseeded', 'snapshot']) {
+  test(`a ${captureEnd} request crossing the retune message joins its committed closure`, async () => {
+    const f = await closingPipeline();
+    f.delivery.boundary('params_changed', null, () => true);
+    let settled = false;
+    const requested = f.session.boundary(captureEnd).then((value) => {
+      settled = true;
+      return value;
+    });
+    await turn();
+    assert.equal(settled, false);
+    f.commit();
+    const result = await requested;
+    await f.session.waitForBoundary();
+    assert.equal(f.session.active, false);
+    assert.equal(f.archive.completion.data.capture_end, 'params_changed');
+    if (captureEnd === 'snapshot') {
+      assert.equal((await parseArchive(result)).completion.data.capture_end, 'params_changed');
+    }
+    assert.deepEqual(f.stops, []);
+    f.session.detach();
+  });
+}
+
+test('a blocked implicit closure times out without hanging reseed or later claiming completeness', async () => {
+  const f = await closingPipeline(10);
+  f.delivery.boundary('params_changed', null, () => true);
+  await turn();
+  await assert.rejects(f.session.waitForBoundary(), /storage did not respond/);
+  assert.equal(f.session.active, false);
+  f.commit();
+  await turn();
+  assert.equal(f.archive.completion, null);
+  assert.deepEqual(f.marked, ['storage_error']);
+  f.session.detach();
+});
+
+test('a snapshot sharing a retune queued behind an earlier append exports the closed prefix', async () => {
+  const f = await closingPipeline();
+  f.delivery.pump(true);
+  f.delivery.boundary('params_changed', null, () => true);
+  const requested = f.session.boundary('snapshot');
+  await turn();
+  assert.equal(f.archive.completion, null);
+  f.commit();
+  const exported = await parseArchive(await requested);
+  assert.equal(exported.completion.data.capture_end, 'params_changed');
+  assert.deepEqual(exported.completion, f.archive.completion);
+  assert.deepEqual(f.stops, []);
+  f.session.detach();
 });

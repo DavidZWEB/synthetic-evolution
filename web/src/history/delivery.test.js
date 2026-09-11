@@ -137,3 +137,19 @@ test('sequence exhaustion produces an explicitly incomplete final prefix', () =>
   assert.equal(f.sent[0].stateHash, null);
   assert.equal(f.delivery.active, false);
 });
+
+for (const accepted of [true, false]) {
+  test(`a reseed sharing a queued retune retains its barrier when retune acceptance is ${accepted}`, () => {
+    const f = fixture();
+    f.step();
+    f.delivery.pump();
+    f.delivery.boundary('params_changed', null, () => accepted);
+    assert.equal(f.delivery.boundary('reseeded', 3), true);
+    assert.equal(f.sent.length, 1);
+    f.delivery.acknowledge(1);
+    assert.equal(f.sent[1].captureEnd, accepted ? 'params_changed' : 'reseeded');
+    assert.equal(f.sent[1].requestId, 3);
+    assert.equal(f.sent[1].stateHash, '0000000000000001');
+    assert.equal(f.delivery.active, false);
+  });
+}
