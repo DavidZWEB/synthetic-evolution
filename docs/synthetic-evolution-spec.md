@@ -571,7 +571,7 @@ A limit, quota, or capture failure stops recording only, preserving the last
 committed prefix and visibly marking it incomplete. A storage failure may also
 prevent updating its status; an open/unfinalized record is never a completed run.
 Open records can still belong to another tab, so reload must not invent a crash.
-Reload restores archived history, not World state or simulation continuation.
+Page reload restores archived history, not World state or simulation continuation.
 Browser data may be evicted or cleared; an exported file is the user's backup.
 
 Archive schema 2 extends schema 1 without relabeling old files. Headers declare an
@@ -1208,13 +1208,19 @@ checkpoints remain required before Phase 2 is complete. A checkpoint preserves a
 complete running world at a between-ticks boundary; an exported phylogeny preserves
 history and is not a substitute for resumable state.
 
-Use one versioned format shared by the native and browser shells. Native file
+**DECIDED save/load packaging:** the normal **Save run / Load run** workflow uses
+one portable, versioned saved-run bundle containing the full-world checkpoint and
+its available history prefix. Keep resumable state and history as distinct internal
+components, but do not require users to manage two unrelated saves. History-only
+import/export remains a secondary analysis option and does not resume a World.
+
+Use one bundle format shared by the native and browser shells. Native file
 save/load and browser download/import must interoperate when their simulation
 compatibility identities match and the receiving host can accommodate the world.
 The identity describes format and simulation compatibility, not a target-specific
 binary hash. Reject incompatible versions explicitly; Phase 2 promises no
 cross-version migration. Retain the originating seed/run provenance in the
-checkpoint metadata.
+checkpoint metadata and associate the history with its originating run/cohort.
 
 Preserve parameters, heredity protocol, RNG state, tick, authoritative physical and
 genetic state, recurrent neural values, compensated energy and its ledger, future
@@ -1225,18 +1231,30 @@ changing continuation; live recurrent neural values are not derivable from a gen
 Saving must not advance simulation time or consume randomness. Continuation must
 satisfy §7.8.
 
-The core owns in-memory encoding/decoding, not I/O. Shells schedule capture/load
-outside a step and own files and browser interactions. Treat imported bytes as
-untrusted: enforce bounded decoding and resource limits, validate structural and
-numeric invariants, and reject malformed or incompatible state before replacing a
-live world. A rejected load leaves the existing world intact. Browser loads begin
-paused and invalidate old worker responses, selections, and render-buffer leases.
+Capture the checkpoint and active history at the same between-ticks boundary.
+Include only the matching history prefix up to that boundary, never the original
+run's later events. Preserve recorded gaps and capture status. If capture was
+disabled, stopped, or failed earlier, include whatever earlier prefix is available
+with its original end boundary/status, or explicitly declare history unavailable.
+Missing or incomplete history does not make a checkpoint unresumable; a saved run
+must not claim or reconstruct historical observations it never captured.
 
-External history archives remain separate from the checkpoint. A resumed run must
-identify its checkpoint origin and begin a distinct history segment rather than
-silently appending after the original run's later events. Resuming paired
-experiments requires both worlds at the same tick with the original control
-protocol; a freshly seeded control is not a continuation.
+The core owns in-memory checkpoint encoding/decoding, not I/O or the history archive.
+Shells assemble the saved-run bundle, schedule capture/load outside a step, and own
+files and browser interactions. Treat imported bytes as
+untrusted: enforce bounded decoding and resource limits, validate structural and
+numeric invariants, and validate both components and their run/cohort/boundary
+association before replacing a live world. A rejected load leaves the existing world
+and displayed history intact. Browser loads restore the world paused together with
+its historical context and invalidate old worker responses, selections, and
+render-buffer leases.
+
+A resumed run must identify its checkpoint origin and restored history prefix,
+then begin a distinct history segment rather than silently appending after the
+original run's later events. Loading an older saved run must not attach history from
+that later future. Resuming paired experiments requires both worlds at the same
+tick with the original control protocol and matching history prefixes; a freshly
+seeded control is not a continuation.
 
 Periodic autosaves and retention scheduling remain Phase 7 work. Cross-version
 migration, timeline scrubbing/indexing, compression, and storage optimization are
