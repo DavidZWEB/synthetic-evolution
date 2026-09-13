@@ -1211,8 +1211,17 @@ history and is not a substitute for resumable state.
 **DECIDED save/load packaging:** the normal **Save run / Load run** workflow uses
 one portable, versioned saved-run bundle containing the full-world checkpoint and
 its available history prefix. Keep resumable state and history as distinct internal
-components, but do not require users to manage two unrelated saves. History-only
-import/export remains a secondary analysis option and does not resume a World.
+components, but do not require users to manage two unrelated saves.
+
+**DECIDED UI/CLI split:** browser **Save run** downloads the complete saved-run
+bundle, and **Load run** uploads it and restores the world paused with its available
+history. The browser continues to display history but exposes no standalone
+history-file import/export actions, including advanced options. M7 replaces the
+interim M5 browser history-file controls with this combined workflow.
+
+Standalone history export and import/readback are CLI-only analysis tools, retained
+alongside CLI support for complete saved-run bundles. History-only analysis does not
+start or resume a World.
 
 Use one bundle format shared by the native and browser shells. Native file
 save/load and browser download/import must interoperate when their simulation

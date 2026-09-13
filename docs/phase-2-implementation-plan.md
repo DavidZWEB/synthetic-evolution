@@ -361,8 +361,9 @@ buffer. Native and browser shells drain events between step batches and own arch
 I/O; browser history can persist in IndexedDB, native history in exported records.
 This is history persistence, not full-world checkpointing or resumption. M7 owns
 that separate capability and will bundle the available history with a checkpoint
-for normal Save run / Load run. History-only import/export remains an analysis
-option; exporting M5's ancestry graph alone cannot resume a world.
+for normal Save run / Load run. When M7 lands, standalone history import/export
+becomes a CLI-only analysis option, replacing the interim M5 browser history-file
+controls. Exporting M5's ancestry graph alone cannot resume a world.
 
 Overflow is an explicit gap/truncation marker, never altered ecology or a silently
 complete-looking tree. If pruning is introduced later, it must preserve referenced
@@ -660,7 +661,15 @@ evidence; completing M7 is still required before M9 declares Phase 2 complete.
 a portable, versioned bundle containing the full-world checkpoint and its available
 history prefix. Users should not have to manage two unrelated saves. Keep simulation
 state and history as distinct internal components; the shells assemble the bundle.
-History-only import/export remains a secondary analysis workflow, not a resume action.
+
+**Approved UI/CLI split:** browser **Save run** downloads the complete saved-run
+bundle; **Load run** uploads it and restores the world paused with its available
+history. The browser has no standalone history-file import/export actions, including
+advanced options. It still displays history. Replace the interim M5 browser
+history-file controls when this combined workflow lands.
+
+Standalone history export and import/readback remain **CLI-only** analysis tools,
+alongside CLI support for complete saved-run bundles. They do not resume a World.
 
 Implement spec section 7.10's shared native/browser format. The native shell
 reads/writes saved-run files; the browser offers download/import through the
@@ -711,7 +720,9 @@ native-produced saved run restores both the checkpoint and available history in 
 browser and continues without replaying from its seed. Include pre-checkpoint
 extinctions, absent/incomplete history, and loading an older checkpoint after the
 original run has advanced: later events must not leak into the restored prefix or
-its new continuation segment. History-only imports must still leave the World alone.
+its new continuation segment. Browser save/load must expose only saved-run bundles,
+with no standalone history-file import/export controls. History-only CLI analysis
+must remain available without starting or resuming a World.
 
 Periodic autosaves, retention scheduling, cross-version migration, timeline
 scrubbing/indexing, compression, and storage optimization remain deferred. This
