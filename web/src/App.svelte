@@ -134,9 +134,11 @@
       if (file.size > DEFAULT_LIMITS.perRunBytes) {
         throw new Error('History file exceeds the 10 MiB per-run limit');
       }
+      const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
+        .decode(await file.arrayBuffer());
       const { default: init, validate_params } = await import('./wasm/wasm.js');
       await init();
-      const archive = await parseArchive(await file.text(), (params) =>
+      const archive = await parseArchive(text, (params) =>
         JSON.parse(validate_params(JSON.stringify(params))));
       await (await getHistoryStore()).importArchive(archive);
       historyMessage = 'History imported. No simulation was started or resumed.';
@@ -270,17 +272,19 @@
     activeHistoryId = null;
     captureStatus = historyRunId ? 'starting' : 'off';
     if (historyRunId) {
-      historySession = createHistorySession({
+      const nextHistorySession = createHistorySession({
         sim: nextSim,
         getStore: getHistoryStore,
         onChange: ({ id, status, message }) => {
-          if (sim !== nextSim) return;
+          // Queued aborts outlive the worker, but must not update a replacement session.
+          if (disposed || historySession !== nextHistorySession) return;
           activeHistoryId = id;
           captureStatus = status;
           if (message) historyMessage = message;
         },
         onSaved: refreshHistory,
       });
+      historySession = nextHistorySession;
     }
 
     nextSim.on('ready', ({ transport: kind, hints, run }) => {

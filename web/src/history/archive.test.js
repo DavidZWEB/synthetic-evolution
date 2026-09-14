@@ -228,6 +228,75 @@ test('event ticks use the completed boundary with only the founder tick-zero exc
   ], { tick: '3' }), /out of order/);
 });
 
+for (const version of [1, 2]) {
+  test(`v${version} zero-tick origins need available birth IDs below the requested founders`, async () => {
+    const header = fixtureArchive(version).header;
+    if (version === 1) header.data.ticks = '0';
+    for (const withGaps of [false, true]) {
+      const rows = header.data.cohorts.flatMap((cohort) => withGaps
+        ? [gap('0', '0', cohort), origin('1', 0, '3', cohort), gap('2', '2', cohort)]
+        : [origin('0', 0, '3', cohort)]);
+      const completion = completionFor(header, rows, {
+        tick: '0', captureEnd: 'snapshot', stateHash: '0123456789abcdef',
+      });
+      await assert.doesNotReject(parseArchive(raw({ header, rows, completion })));
+      for (const cohort of header.data.cohorts) {
+        for (const birth of ['4', '9007199254740993', '18446744073709551614', null]) {
+          const invalid = structuredClone(rows);
+          invalid.find((row) => row.kind === 'event' && row.data.cohort === cohort)
+            .data.event.founder_birth_id = birth;
+          assert.throws(() => validatePrefix(header, invalid, { tick: '0' }), /seeding-only/);
+          assert.throws(() => completionFor(header, invalid, {
+            tick: '0', captureEnd: 'snapshot', stateHash: '0123456789abcdef',
+          }), /seeding-only/);
+          await assert.rejects(parseArchive(raw({ header, rows: invalid, completion })), /seeding-only/);
+          if (version === 1) assert.throws(() => countsFor(header, invalid), /seeding-only/);
+          else assert.doesNotThrow(() => countsFor(header, invalid));
+        }
+      }
+    }
+  });
+
+  test(`v${version} tick-zero events in later captures retain high and unavailable identities`, async () => {
+    const header = fixtureArchive(version).header;
+    for (const birth of ['4', '9007199254740993', '18446744073709551614', null]) {
+      for (const status of ['absent', 'unavailable']) {
+        const rows = header.data.cohorts.map((cohort) => {
+          const row = origin('0', 0, birth, cohort);
+          row.data.event.parent_a = { status };
+          return row;
+        });
+        const completion = completionFor(header, rows, {
+          tick: '1', captureEnd: 'snapshot', stateHash: '0123456789abcdef',
+        });
+        const archive = { header, rows, completion };
+        assert.deepEqual(await parseArchive(encodeArchive(archive)), archive);
+      }
+    }
+  });
+}
+
+test('v2 zero-boundary incomplete prefixes enforce founder limits despite gaps or open plans', async () => {
+  for (const planned of [null, '0', '8']) {
+    for (const captureEnd of INCOMPLETE_ENDS) {
+      const header = fixtureHeader();
+      header.data.ticks = planned;
+      const rows = [gap(), origin('1', 1, '3'), gap('2', '2')];
+      const completion = completionFor(header, rows, { tick: '0', captureEnd });
+      await assert.doesNotReject(parseArchive(raw({ header, rows, completion })));
+      assert.doesNotThrow(() => completionFor(header, [], { tick: '0', captureEnd }));
+      for (const birth of ['4', '9007199254740993', '18446744073709551614', null]) {
+        const invalid = structuredClone(rows);
+        invalid[1].data.event.founder_birth_id = birth;
+        await assert.rejects(parseArchive(raw({ header, rows: invalid, completion })), /seeding-only/);
+        assert.throws(() => validatePrefix(header, invalid, { tick: '0' }), /seeding-only/);
+        if (planned === '0') assert.throws(() => countsFor(header, invalid), /seeding-only/);
+        else assert.doesNotThrow(() => countsFor(header, invalid));
+      }
+    }
+  }
+});
+
 test('completion validates exact totals, membership, provenance and required null/hash fields', async () => {
   for (const change of [
     (a) => { a.completion.data.run_id = 'other'; },

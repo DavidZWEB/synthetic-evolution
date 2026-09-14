@@ -26,7 +26,7 @@ function parent(value, species, founder) {
   return { birth, species: id };
 }
 
-function origin(state, event, params, boundary) {
+function origin(state, event, params, boundary, founders) {
   object(event, ['kind', 'species_id', 'founder_birth_id', 'parent_a', 'parent_b'], 'origin');
   const species = speciesId(event.species_id);
   const founder = birthId(event.founder_birth_id);
@@ -56,6 +56,9 @@ function origin(state, event, params, boundary) {
   requireThat(!a || !b || a.birth === null || a.birth !== b.birth, 'same observed parent named twice');
   requireThat(boundary !== 0n || (event.parent_a.status === 'absent' && event.parent_b.status === 'absent'),
     'a seeding-only run cannot have parental origins');
+  // BirthIds start at zero and refused admissions consume no ID (spec §3.4).
+  requireThat(boundary !== 0n || (founder !== null && founder < BigInt(founders)),
+    'a seeding-only origin requires an available birth ID below the founder count');
   state.greatestSpecies = species;
   if (founder === null) state.birthIdsExhausted = true;
   else state.lastFounder = founder;
@@ -64,7 +67,7 @@ function origin(state, event, params, boundary) {
   state.counts.origins++;
 }
 
-export function acceptRow(state, row, params, boundary) {
+export function acceptRow(state, row, params, boundary, founders) {
   const data = row.data;
   requireThat(params.species.capacity > 0, 'disabled classification cannot emit history');
   if (row.kind === 'gap') {
@@ -91,7 +94,7 @@ export function acceptRow(state, row, params, boundary) {
     (state.lastTick === null || tick >= state.lastTick), 'history event tick is out of order or outside the run');
   requireThat(data.event && typeof data.event === 'object', 'event must be an object');
   if (data.event.kind === 'species_origin') {
-    origin(state, data.event, params, boundary);
+    origin(state, data.event, params, boundary, founders);
   } else {
     object(data.event, ['kind', 'species_id'], 'extinction');
     requireThat(data.event.kind === 'species_extinct', 'unknown species event kind');

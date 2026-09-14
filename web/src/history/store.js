@@ -164,6 +164,7 @@ export async function openHistoryStore({ limits: overrides = {} } = {}) {
       decimal(tick, 'batch tick');
       return update(id, (run, archive) => {
         requireThat(BigInt(tick) >= BigInt(run.tick), 'committed boundary cannot move backwards');
+        // Recheck the retained prefix too; an incremental check needs carried lifecycle state.
         const combined = archive.rows.concat(rows);
         const counts = validatePrefix(archive.header, combined, { tick });
         run.payloadBytes += rows.reduce((sum, row) => sum + byteLength(encodeLine(row)), 0);
@@ -195,11 +196,25 @@ export async function openHistoryStore({ limits: overrides = {} } = {}) {
       return transaction(db, 'readwrite', (stores, read, done) => {
         read(stores.runs.get(id), (run) => {
           writable(run);
-          run.status = 'closed';
-          run.captureEnd = reason;
-          run.readOnly = true;
-          stores.runs.put(run);
-          done(metadata(run));
+          read(stores.archives.get(id), (archive) => {
+            const completion = completionFor(archive.header, archive.rows, {
+              tick: run.tick, captureEnd: reason,
+            });
+            const footerBytes = byteLength(encodeLine(completion));
+            const bytes = run.payloadBytes + footerBytes;
+            requireThat(bytes <= run.bytes, 'incomplete footer exceeds reserved bytes');
+            read(stores.accounting.get('total'), (accounting) => {
+              const totalBytes = accounting.bytes - run.bytes + bytes;
+              run.status = 'closed';
+              run.captureEnd = reason;
+              run.readOnly = true;
+              run.reservedBytes = footerBytes;
+              run.bytes = bytes;
+              stores.runs.put(run);
+              stores.accounting.put({ bytes: totalBytes, runs: accounting.runs }, 'total');
+              done(metadata(run));
+            });
+          });
         });
       });
     },

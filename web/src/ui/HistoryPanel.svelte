@@ -46,6 +46,8 @@
   {/if}
   <ul>
     {#each runs as run (run.id)}
+      {@const exportLabel = run.id === activeId && captureStatus === 'recording'
+        ? 'export snapshot' : 'export'}
       <li>
         <strong>seed {run.seed}</strong>
         <span>{run.cohorts.join(' + ')}</span>
@@ -54,10 +56,12 @@
           ? 'recording in this tab' : 'unfinalized / possibly active')}</span>
         <span>{run.eventCount} events · {run.gapCount} gaps · {(run.bytes / 1024).toFixed(1)} KiB</span>
         <div class="actions">
-          <button disabled={busy} onclick={() => onexport(run.id)}>
-            {run.id === activeId && captureStatus === 'recording' ? 'export snapshot' : 'export'}
+          <button disabled={busy} onclick={() => onexport(run.id)}
+            aria-label={`${exportLabel} for archive ${run.id} (seed ${run.seed})`}>
+            {exportLabel}
           </button>
-          <button disabled={busy} onclick={() => ondelete(run.id)}>delete</button>
+          <button disabled={busy} onclick={() => ondelete(run.id)}
+            aria-label={`delete archive ${run.id} (seed ${run.seed})`}>delete</button>
         </div>
       </li>
     {/each}

@@ -73,7 +73,7 @@ function readPrefix(header, rows, tick) {
     object(row, ['kind', 'data'], 'record');
     encodeLine(row);
     requireThat(row.data && Object.hasOwn(states, row.data.cohort), 'row cohort is not declared in header');
-    acceptRow(states[row.data.cohort], row, header.data.params, boundary);
+    acceptRow(states[row.data.cohort], row, header.data.params, boundary, header.data.founders);
   }
   return states;
 }

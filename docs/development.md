@@ -553,7 +553,10 @@ be null if persistent identities are exhausted; that is distinct from an unobser
 parent. Extinction records carry the retired species ID, not an individual death.
 World stamps events with the tick being processed: seeding is tick zero, and events
 during N executed ticks have ticks 0 through N-1. Metrics samples instead label
-completed tick boundaries.
+completed tick boundaries. A capture ending at tick zero contains only seeding
+origins: their founding BirthIds must be available and below the requested founder
+count. This restriction does not apply merely because an event is stamped zero
+inside a capture that continued past seeding.
 
 In schema 1 the completion marker means execution finished and both cohort histories were drained.
 `history_complete: false` means execution completed **with capture gaps**, not a
@@ -593,13 +596,24 @@ run obtains a consistent snapshot prefix and hash without stopping its simulatio
 or capture. Reseeding and successful live parameter changes close the old capture;
 retuning uses a pre-change boundary so the saved parameters remain truthful.
 
+Current appends copy and revalidate the whole retained prefix: O(n) time/allocation
+per append, potentially quadratic work over a growing archive, bounded by the
+per-run limit. This deliberately checks new rows against the full lifecycle while
+the format is young. It runs on the main thread, not the simulation worker; slower
+commits may reduce UI responsiveness and increase explicit recorder gaps, but do not
+gate stepping or silently lose events. This is structural reasoning, not a timing
+measurement. As M6/M7 increase archive usage, measure before considering incremental
+validation with carried per-cohort state; retain full validation for import/readback.
+
 Default local limits are **10 MiB per run, 50 MiB total, and 20 saved runs**.
 These count serialized archive bytes (including reserved completion space for open
 captures), not browser-internal database overhead. The browser's quota may be lower.
 Quota accounting is transactional across tabs. There is **no automatic pruning or
 deletion**. A limit or storage error stops recording, not simulation, and preserves
-the committed prefix. If storage also refuses its error-status update, that prefix
-stays open/unfinalized rather than being labeled complete.
+the committed prefix. Closing an incomplete capture charges its actual serialized
+footer and releases unused reservation atomically with its status; this writes only
+small run/accounting metadata, not the archive payload. If storage also refuses that
+update, the prefix stays open/unfinalized rather than being labeled complete.
 
 Open saved runs are **unfinalized / possibly active**, not assumed crashed: another
 tab may still own one. Reload loads the archive list, not the World. Browser data

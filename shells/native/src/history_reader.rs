@@ -285,7 +285,16 @@ impl CohortState {
                 if header.ticks == Some(Decimal(0)) && has_parent {
                     return Err(invalid("a seeding-only run cannot have parental origins").into());
                 }
-                self.has_nonseeding_event |= has_parent;
+                // BirthIds start at zero and refused admissions consume no ID (spec §3.4).
+                let seeding_founder = !founder_birth_id.is_null()
+                    && founder_birth_id.raw() < u64::from(header.founders);
+                if header.ticks == Some(Decimal(0)) && !seeding_founder {
+                    return Err(invalid(
+                        "a seeding-only origin requires an available birth ID below the founder count",
+                    )
+                    .into());
+                }
+                self.has_nonseeding_event |= has_parent || !seeding_founder;
                 self.greatest_species = Some(species_id);
                 if !founder_birth_id.is_null() {
                     self.last_founder = Some(founder_birth_id);

@@ -472,6 +472,7 @@ mod tests {
             serde_json::json!({"status":"observed","birth_id":"0","species_id":null}),
         ] {
             let mut bad = rows.clone();
+            bad[0]["data"]["founders"] = serde_json::json!(2);
             bad[1]["data"]["event"]["founder_birth_id"] = serde_json::json!("1");
             bad[1]["data"]["event"]["parent_a"] = parent;
             let error = parse(Cursor::new(encode(&bad))).unwrap_err();
@@ -491,6 +492,127 @@ mod tests {
             error.to_string().contains("captured tick boundary"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn zero_tick_origins_require_available_ids_below_requested_founders() {
+        for fixture in [
+            &include_bytes!("../tests/fixtures/history-v1.ndjson")[..],
+            &include_bytes!("../tests/fixtures/history-v2-root.ndjson")[..],
+        ] {
+            let original = records(fixture);
+            let browser = original[0]["data"]["schema_version"] == 2;
+            for with_gaps in [false, true] {
+                let mut rows = vec![original[0].clone()];
+                rows[0]["data"]["founders"] = serde_json::json!(4);
+                for origin in &original[1..original.len() - 1] {
+                    let mut origin = origin.clone();
+                    origin["data"]["event"]["founder_birth_id"] = serde_json::json!("3");
+                    if with_gaps {
+                        rows.push(serde_json::json!({"kind":"gap","data":{
+                            "cohort":origin["data"]["cohort"],
+                            "first_sequence":"0", "last_sequence":"0"
+                        }}));
+                        origin["data"]["sequence"] = serde_json::json!("1");
+                    }
+                    rows.push(origin);
+                    if with_gaps {
+                        rows.push(serde_json::json!({"kind":"gap","data":{
+                            "cohort":rows.last().unwrap()["data"]["cohort"],
+                            "first_sequence":"2", "last_sequence":"2"
+                        }}));
+                    }
+                }
+                rows.push(original.last().unwrap().clone());
+                for cohort in rows.last_mut().unwrap()["data"]["cohorts"]
+                    .as_array_mut()
+                    .unwrap()
+                {
+                    if with_gaps {
+                        cohort["counts"] = serde_json::json!({
+                            "next_sequence":"3", "events":"1", "dropped_events":"2",
+                            "gaps":"2", "origins":"1", "extinctions":"0"
+                        });
+                        cohort["history_complete"] = serde_json::json!(false);
+                    }
+                }
+                let reasons: &[Option<CaptureEnd>] = if browser {
+                    &[
+                        Some(CaptureEnd::Snapshot),
+                        Some(CaptureEnd::Unfinalized),
+                        Some(CaptureEnd::StorageLimit),
+                        Some(CaptureEnd::StorageError),
+                        Some(CaptureEnd::CaptureError),
+                    ]
+                } else {
+                    &[None]
+                };
+                for &reason in reasons {
+                    let plans = if browser {
+                        vec![
+                            serde_json::Value::Null,
+                            serde_json::json!("0"),
+                            serde_json::json!("100"),
+                        ]
+                    } else {
+                        vec![serde_json::json!("0")]
+                    };
+                    for planned in plans {
+                        let mut valid = rows.clone();
+                        valid[0]["data"]["ticks"] = planned.clone();
+                        if let Some(reason) = reason {
+                            let footer = &mut valid.last_mut().unwrap()["data"];
+                            footer["capture_end"] = serde_json::to_value(reason).unwrap();
+                            for cohort in footer["cohorts"].as_array_mut().unwrap() {
+                                cohort["history_complete"] =
+                                    serde_json::json!(!with_gaps && !reason.is_incomplete());
+                                if reason.is_incomplete() {
+                                    cohort["final_state_hash"] = serde_json::Value::Null;
+                                }
+                            }
+                        }
+                        parse(Cursor::new(encode(&valid))).unwrap();
+                        for index in 1..valid.len() - 1 {
+                            if valid[index]["kind"] != "event" {
+                                continue;
+                            }
+                            for birth in [
+                                serde_json::json!("4"),
+                                serde_json::json!("9007199254740993"),
+                                serde_json::json!("18446744073709551614"),
+                                serde_json::Value::Null,
+                            ] {
+                                let mut bad = valid.clone();
+                                bad[index]["data"]["event"]["founder_birth_id"] = birth.clone();
+                                let error = parse(Cursor::new(encode(&bad))).unwrap_err();
+                                let expected_line =
+                                    if planned == "0" { index + 1 } else { bad.len() };
+                                assert!(
+                                    error
+                                        .to_string()
+                                        .contains(&format!("history line {expected_line}:")),
+                                    "{reason:?}, {planned}, {birth}: {error}"
+                                );
+                                assert!(
+                                    error.to_string().contains("seeding-only")
+                                        || error.to_string().contains("captured tick boundary"),
+                                    "{error}"
+                                );
+                                if !browser || planned == "0" {
+                                    bad[0]["data"]["ticks"] = serde_json::json!("1");
+                                }
+                                bad.last_mut().unwrap()["data"]["ticks"] = serde_json::json!("1");
+                                for status in ["absent", "unavailable"] {
+                                    bad[index]["data"]["event"]["parent_a"] =
+                                        serde_json::json!({"status":status});
+                                    parse(Cursor::new(encode(&bad))).unwrap();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

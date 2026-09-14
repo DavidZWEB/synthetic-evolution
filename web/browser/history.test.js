@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { writeRunUrl } from '../src/sim/seed-url.js';
-import { parseArchive } from '../src/history/archive.js';
+import { encodeArchive, parseArchive } from '../src/history/archive.js';
+import { fixtureArchive } from '../src/history/fixtures.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const params = {
@@ -58,6 +59,100 @@ async function download(page, button) {
   return readFile(await file.path(), 'utf8');
 }
 
+test('history file import rejects malformed UTF-8 and a leading BOM without normalizing bytes', async () => {
+  const archive = fixtureArchive();
+  archive.header.data.provenance.source_revision = 'revision~';
+  archive.completion.data.provenance.source_revision = 'revision~';
+  const valid = Buffer.from(encodeArchive(archive));
+  const malformed = Buffer.from(valid);
+  for (let i = 0; i < malformed.length; i++) {
+    if (malformed[i] === 0x7e) malformed[i] = 0xff;
+  }
+  await withPage('development', async (page) => {
+    await page.getByRole('button', { name: 'history', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Species history' });
+    for (const bytes of [malformed, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), valid])]) {
+      await panel.locator('input[type=file]').setInputFiles({
+        name: 'invalid.jsonl', mimeType: 'application/x-ndjson', buffer: bytes,
+      });
+      await panel.getByRole('status').waitFor();
+      assert.equal(await panel.getByRole('listitem').count(), 0, 'invalid bytes became a saved archive');
+      assert.doesNotMatch(await panel.getByRole('status').innerText(), /History imported/);
+    }
+    const replacementCharacter = Buffer.from(valid.toString('utf8').replaceAll('revision~', 'revision\uFFFD'));
+    await panel.locator('input[type=file]').setInputFiles({
+      name: 'valid.jsonl', mimeType: 'application/x-ndjson', buffer: replacementCharacter,
+    });
+    await panel.getByText('History imported. No simulation was started or resumed.').waitFor();
+    assert.equal(await panel.getByRole('listitem').count(), 1);
+  });
+});
+
+test('archive action accessible names identify distinct archives even for the same seed', async () => {
+  await withPage('development', async (page) => {
+    const panel = await openCapture(page);
+    await page.getByRole('button', { name: 'reseed', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
+    for (const row of await panel.getByRole('listitem').all()) {
+      const id = await row.locator('.identity').getAttribute('title');
+      const visibleExport = await row.locator('.actions button').first().innerText();
+      assert.equal(await row.getByRole('button', {
+        name: `${visibleExport} for archive ${id} (seed 42)`, exact: true,
+      }).count(), 1);
+      assert.equal(await row.getByRole('button', {
+        name: `delete archive ${id} (seed 42)`, exact: true,
+      }).count(), 1);
+    }
+  });
+});
+
+for (const failureKind of ['worker', 'renderer']) {
+  test(`fatal ${failureKind} failure reports the owning history session as incomplete`, async () => {
+    await withPage('development', async (page) => {
+      let panel;
+      if (failureKind === 'worker') {
+        panel = await openCapture(page);
+        await page.evaluate(() => globalThis.historyReviewWorkers.at(-1).onerror({
+          preventDefault() {}, message: 'forced history worker failure',
+        }));
+        await panel.getByRole('list').getByText('capture_error', { exact: true }).waitFor();
+      } else {
+        await page.getByRole('button', { name: 'history', exact: true }).click();
+        panel = page.getByRole('region', { name: 'Species history' });
+        await panel.getByRole('checkbox').check();
+        await page.evaluate(() => { globalThis.failHistoryRenderer = true; });
+        await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      }
+      await page.getByRole('alert').waitFor();
+      assert.equal(await panel.locator('p strong').first().innerText(), 'incomplete');
+      assert.equal(await page.getByText('history incomplete', { exact: true }).count(), 1);
+      await page.evaluate(() => { globalThis.failHistoryRenderer = false; });
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await page.getByRole('button', { name: 'history (recording)', exact: true }).waitFor();
+      await panel.getByText('recording in this tab', { exact: true }).waitFor();
+      assert.equal(await panel.locator('p strong').first().innerText(), 'recording');
+    }, {
+      beforeLoad: (page) => page.addInitScript(() => {
+        const RealWorker = globalThis.Worker;
+        globalThis.historyReviewWorkers = [];
+        globalThis.Worker = class extends RealWorker {
+          constructor(...args) {
+            super(...args);
+            globalThis.historyReviewWorkers.push(this);
+          }
+        };
+        const getContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function (kind, ...args) {
+          if (kind === 'webgl2' && globalThis.failHistoryRenderer) {
+            throw new Error('forced history renderer initialization failure');
+          }
+          return getContext.call(this, kind, ...args);
+        };
+      }),
+    });
+  });
+}
+
 for (const mode of ['development', 'transferable']) {
   test(`saved histories are per-run, round-trip prefixes, and never resume Worlds (${mode})`,
     { timeout: 60_000 }, async () => {
@@ -104,7 +199,7 @@ for (const mode of ['development', 'transferable']) {
           assert.equal(await panel.evaluate((node) => node.scrollWidth > node.clientWidth), false);
         }
 
-        await panel.getByRole('button', { name: 'delete', exact: true }).first().click();
+        await panel.getByRole('button', { name: /^delete archive / }).first().click();
         await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
       });
     });
@@ -241,7 +336,7 @@ test('quota errors leave an exportable incomplete prefix while the World keeps s
       await page.waitForFunction(() => [...document.querySelectorAll('header dt')]
         .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === '1');
       await page.evaluate(() => globalThis.restoreHistoryWrites());
-      const exported = await download(page, panel.getByRole('button', { name: 'export', exact: true }));
+      const exported = await download(page, panel.getByRole('button', { name: /^export for archive / }));
       const after = await parseArchive(exported);
       assert.equal(after.completion.data.capture_end, 'unfinalized');
       assert.equal(after.completion.data.cohorts[0].history_complete, false);

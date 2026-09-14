@@ -136,6 +136,123 @@ test('live per-run byte limits reserve export space and abort the whole rejected
   });
 });
 
+test('closed incomplete captures charge exact footer bytes and release total quota for another run', async () => {
+  await withPage(async (page) => {
+    const result = await page.evaluate(async () => {
+      const h = globalThis.historyTest;
+      const header = h.fixtureHeader();
+      const nextRunBytes = h.byteLength(h.encodeLine(header)) + h.footerAllowance(header);
+      const closedBytes = h.byteLength(h.encodeArchive({
+        header, rows: [h.origin()],
+        completion: h.completionFor(header, [h.origin()], { tick: '1', captureEnd: 'storage_limit' }),
+      }));
+      const store = await h.openHistoryStore({
+        limits: { totalBytes: closedBytes + nextRunBytes },
+      });
+      const id = await store.create(header);
+      await store.append(id, [h.origin()], { tick: '1' });
+      const before = await store.get(id);
+      let blocked;
+      try { await store.create(header); } catch (error) { blocked = error.code; }
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        if (this.name === 'archives') throw new Error('failure closure must not rewrite the archive');
+        return put.apply(this, args);
+      };
+      let closed;
+      try { closed = await store.markIncomplete(id, 'storage_limit'); }
+      finally { IDBObjectStore.prototype.put = put; }
+      const exportBytes = h.byteLength(await store.exportArchive(id));
+      const other = await h.openHistoryStore({ limits: { totalBytes: closedBytes + nextRunBytes } });
+      let created;
+      let error;
+      try { created = await other.create(header); } catch (caught) { error = caught.code; }
+      const saved = await other.list();
+      other.close();
+      store.close();
+      return { before, blocked, closed, exportBytes, closedBytes, created, error, saved };
+    });
+    assert.equal(result.blocked, 'storage_limit');
+    assert.ok(result.before.bytes > result.exportBytes);
+    assert.equal(result.closed.bytes, result.exportBytes);
+    assert.equal(result.closed.bytes, result.closedBytes);
+    assert.equal(result.error, undefined);
+    assert.ok(result.created);
+    assert.equal(result.saved.length, 2);
+  });
+});
+
+test('incomplete footer accounting preserves cohort totals and rolls back with status on write failure', async () => {
+  await withPage(async (page) => {
+    const result = await page.evaluate(async () => {
+      const h = globalThis.historyTest;
+      const header = h.fixtureHeader();
+      header.data.cohorts = ['evolving', 'random_control'];
+      const store = await h.openHistoryStore();
+      const id = await store.create(header);
+      const rows = [
+        h.origin(), h.origin('0', 0, '0', 'random_control'),
+        h.gap('1', '9007199254740993'),
+      ];
+      await store.append(id, rows, { tick: '9007199254740994' });
+      const before = await store.get(id);
+      const put = IDBObjectStore.prototype.put;
+      IDBObjectStore.prototype.put = function (...args) {
+        if (this.name === 'accounting') throw new DOMException('closing quota failure', 'QuotaExceededError');
+        return put.apply(this, args);
+      };
+      let code;
+      try { await store.markIncomplete(id, 'storage_error'); }
+      catch (error) { code = error.code; }
+      finally { IDBObjectStore.prototype.put = put; }
+      const retained = await store.get(id);
+      if (retained.status !== 'open') {
+        store.close();
+        return { before, retained, code };
+      }
+      const closed = await store.markIncomplete(id, 'storage_error');
+      const text = await store.exportArchive(id);
+      const exported = await h.parseArchive(text);
+      store.close();
+      return { before, retained, code, closed, exported, bytes: h.byteLength(text) };
+    });
+    assert.equal(result.code, 'storage_error');
+    assert.deepEqual(result.retained, result.before);
+    assert.equal(result.closed.bytes, result.bytes);
+    assert.deepEqual(result.exported.header.data.cohorts, ['evolving', 'random_control']);
+    assert.equal(result.exported.completion.data.cohorts[0].counts.dropped_events, '9007199254740993');
+    assert.equal(result.exported.completion.data.cohorts[1].counts.dropped_events, '0');
+    assert.equal(result.exported.completion.data.ticks, '9007199254740994');
+  });
+});
+
+test('header-only failure prefixes release footer reservation for every incomplete end reason', async () => {
+  await withPage(async (page) => {
+    const results = await page.evaluate(async () => {
+      const h = globalThis.historyTest;
+      const store = await h.openHistoryStore();
+      const results = [];
+      for (const reason of h.INCOMPLETE_ENDS) {
+        const id = await store.create(h.fixtureHeader());
+        const closed = await store.markIncomplete(id, reason);
+        const text = await store.exportArchive(id);
+        const archive = await h.parseArchive(text);
+        results.push({ reason, closed, bytes: h.byteLength(text), archive });
+      }
+      store.close();
+      return results;
+    });
+    assert.equal(results.length, 4);
+    for (const { reason, closed, bytes, archive } of results) {
+      assert.equal(closed.bytes, bytes);
+      assert.equal(closed.status, 'closed');
+      assert.equal(archive.rows.length, 0);
+      assert.equal(archive.completion.data.capture_end, reason);
+      assert.equal(archive.completion.data.cohorts[0].history_complete, false);
+    }
+  });
+});
+
 test('exact serialized import limits reject one extra byte without creating or evicting runs', async () => {
   await withPage(async (page) => {
     const result = await page.evaluate(async () => {
