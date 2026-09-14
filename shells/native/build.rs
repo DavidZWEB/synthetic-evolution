@@ -17,6 +17,7 @@ const REVISION_INPUTS: &[&str] = &[
     "shells/native/Cargo.toml",
     "shells/native/build.rs",
     "shells/native/src",
+    "shells/shared",
 ];
 
 fn main() {

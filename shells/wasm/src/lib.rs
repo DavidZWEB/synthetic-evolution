@@ -1,8 +1,8 @@
 //! WASM shell: the `wasm-bindgen` surface for the browser worker.
 //!
-//! Owns the JS boundary and nothing else — it holds a `World` and its render snapshot,
-//! steps them, and hands JS the addresses to read. Nothing here decides anything about
-//! the simulation; if a function does more than marshal, it belongs in `sim-core`.
+//! Owns the JS boundary — it holds a `World`, its render snapshot, and optional
+//! history capture, steps them, and hands JS the observations to read. Nothing here
+//! decides anything about the simulation; persistence belongs to the JS worker.
 //!
 //! **The boundary is per-tick, never per-agent** (spec §7.3). [`Sim::step_many`] runs a
 //! whole batch and refreshes the snapshot once at the end, because the renderer only
@@ -25,6 +25,7 @@ use wasm_bindgen::prelude::*;
 
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
+use sim_core::history::Recorder;
 use sim_core::ids::{AgentId, BirthId};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
@@ -32,6 +33,10 @@ use sim_core::snapshot::Snapshot;
 use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
 use sim_core::species::SpeciesEventCounts;
 use sim_core::world::World;
+
+mod history;
+#[path = "../../shared/history_event_wire.rs"]
+mod history_event_wire;
 
 /// Crate version, so the worker can assert it matches the JS bundle it shipped with.
 #[wasm_bindgen]
@@ -175,6 +180,8 @@ pub struct Sim {
     spawn_failures: SpawnFailureCounts,
     structural_mutations: StructuralMutationCounts,
     species_events: SpeciesEventCounts,
+    history: Option<Recorder>,
+    history_enable_closed: bool,
 }
 
 #[derive(Serialize)]
@@ -212,6 +219,8 @@ impl Sim {
             spawn_failures: SpawnFailureCounts::default(),
             structural_mutations: StructuralMutationCounts::default(),
             species_events: SpeciesEventCounts::default(),
+            history: None,
+            history_enable_closed: false,
         })
     }
 }
@@ -236,28 +245,53 @@ impl Sim {
     /// running the same experiment. This is a direct call rather than a command because
     /// seeding is a boundary condition: there is no tick to stamp it for yet.
     pub fn seed_founders(&mut self, count: u32) -> u32 {
+        // A zero-count or refused seed attempt still closes initial capture (§3.4).
+        self.history_enable_closed = true;
         let counts = &mut self.spawn_failures;
         let species = &mut self.species_events;
-        let placed = self.world.seed_founders_with_observers(
-            count,
-            |error| counts.record(error),
-            |event| species.record(event),
-        );
+        let placed = match &mut self.history {
+            Some(recorder) => self.world.seed_founders_with_history_observer(
+                count,
+                |error| counts.record(error),
+                |event| species.record(event),
+                |event| history::record(recorder, event),
+            ),
+            None => self.world.seed_founders_with_observers(
+                count,
+                |error| counts.record(error),
+                |event| species.record(event),
+            ),
+        };
         self.refresh();
         placed
     }
 
     /// Advances `ticks` ticks and refreshes the snapshot once, at the end.
     pub fn step_many(&mut self, ticks: u32) {
+        self.history_enable_closed = true;
         let counts = &mut self.spawn_failures;
         let mutations = &mut self.structural_mutations;
         let species = &mut self.species_events;
-        for _ in 0..ticks {
-            self.world.step_with_all_observers(
-                |error| counts.record(error),
-                |event| mutations.record(event),
-                |event| species.record(event),
-            );
+        match &mut self.history {
+            Some(recorder) => {
+                for _ in 0..ticks {
+                    self.world.step_with_history_observer(
+                        |error| counts.record(error),
+                        |event| mutations.record(event),
+                        |event| species.record(event),
+                        |event| history::record(recorder, event),
+                    );
+                }
+            }
+            None => {
+                for _ in 0..ticks {
+                    self.world.step_with_all_observers(
+                        |error| counts.record(error),
+                        |event| mutations.record(event),
+                        |event| species.record(event),
+                    );
+                }
+            }
         }
         self.refresh();
     }

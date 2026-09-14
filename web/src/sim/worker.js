@@ -15,7 +15,9 @@
  * chooses *when* to step and how far, never what a step means.
  */
 
-import init, { Sim, random_control, validate_params } from '../wasm/wasm.js';
+import init, { Sim, random_control, validate_params, version } from '../wasm/wasm.js';
+import { createHeader } from '../history/archive.js';
+import { createHistoryDelivery } from '../history/delivery.js';
 import {
   EVOLVING,
   RANDOMIZED_AT_BIRTH,
@@ -31,6 +33,7 @@ let sim = null;
 let memory = null;
 let writer = null;
 let publisher = null;
+let historyDelivery = null;
 
 /** Cached views over the snapshot inside WASM memory, and the buffer they belong to. */
 let source = null;
@@ -106,14 +109,17 @@ function postError(context, error, fatal = false) {
 }
 
 const scheduler = createTickScheduler({
-  step: (ticks) => sim.step_many(ticks),
+  step: (ticks) => {
+    sim.step_many(ticks);
+    historyDelivery?.pump();
+  },
   publish: () => publisher.publish(),
   onError: (error) => postError('tick', error, true),
   onRunningChange: (running) => postMessage({ kind: 'status', running }),
 });
 
 const handlers = {
-  async create({ seed, params, founders, brainInheritance }) {
+  async create({ seed, params, founders, brainInheritance, historyRunId }) {
     const wasm = await init();
     memory = wasm.memory;
 
@@ -125,9 +131,28 @@ const handlers = {
         : new Sim(normalizedSeed, params ?? null);
     let hints;
     let normalizedFounders;
+    let historyHeader = null;
+    let historyFailure = null;
     try {
       hints = JSON.parse(nextSim.render_hints());
       normalizedFounders = founderCount(founders, hints.agent_capacity);
+      if (historyRunId) {
+        try {
+          nextSim.enable_history(4096);
+          historyHeader = createHeader({
+            runId: historyRunId,
+            seed: normalizedSeed.toString(),
+            founders: normalizedFounders,
+            params: JSON.parse(nextSim.params_json()),
+            brainInheritance: normalizedInheritance,
+            simVersion: version(),
+            sourceRevision: __SOURCE_REVISION__,
+          });
+        } catch (error) {
+          nextSim.disable_history();
+          historyFailure = String(error);
+        }
+      }
       nextSim.seed_founders(normalizedFounders);
     } catch (error) {
       nextSim.free();
@@ -177,6 +202,15 @@ const handlers = {
     for (const { message, transfer } of initialMessages) {
       postMessage(message, transfer);
     }
+    if (historyHeader) {
+      historyDelivery = createHistoryDelivery({
+        sim, cohort: historyHeader.data.cohorts[0], send: (message) => postMessage(message),
+      });
+      postMessage({ kind: 'historyReady', header: historyHeader });
+      historyDelivery.pump(true);
+    } else if (historyFailure) {
+      postMessage({ kind: 'historyError', message: historyFailure, requestIds: [] });
+    }
   },
 
   play() {
@@ -197,18 +231,45 @@ const handlers = {
       throw new RangeError('step count must be an integer between 1 and 10000');
     }
     sim.step_many(ticks);
+    historyDelivery?.pump();
     publisher.publish(true);
   },
 
   setParams({ params }) {
-    try {
-      sim.set_params(params);
-      const hints = JSON.parse(sim.render_hints());
-      scheduler.setSecondsPerTick(hints.seconds_per_tick);
-      postMessage({ kind: 'params', params: sim.params_json(), hints });
-    } catch (error) {
-      postError('set_params', error);
+    const apply = () => {
+      try {
+        sim.set_params(params);
+        const hints = JSON.parse(sim.render_hints());
+        scheduler.setSecondsPerTick(hints.seconds_per_tick);
+        postMessage({ kind: 'params', params: sim.params_json(), hints });
+        return true;
+      } catch (error) {
+        postError('set_params', error);
+        return false;
+      }
+    };
+    if (historyDelivery?.active) {
+      if (!historyDelivery.boundary('params_changed', null, apply)) {
+        postError('set_params', 'wait for the pending history operation before retuning');
+      }
+    } else {
+      apply();
     }
+  },
+
+  historyAck({ batchId, error }) {
+    historyDelivery?.acknowledge(batchId, error);
+  },
+
+  historyBoundary({ captureEnd, requestId }) {
+    if (!['snapshot', 'stopped', 'reseeded'].includes(captureEnd)) {
+      throw new Error('invalid history boundary');
+    }
+    historyDelivery?.boundary(captureEnd, requestId);
+  },
+
+  historyStop({ message }) {
+    historyDelivery?.stop(message);
   },
 
   validateRun({ seed, params, founders, brainInheritance, requestId }) {

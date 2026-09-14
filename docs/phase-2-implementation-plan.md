@@ -5,7 +5,7 @@ Ordered implementation of **genetic architecture** from
 acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M5 species-history capture and native export are implemented after the identity foundation.**
+**Status: M5 identities, species-history capture, and native/browser archives are implemented.**
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -21,14 +21,14 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identities/capture/native export approved; browser retention/calibration/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identities/capture/archives/retention approved; calibration/later gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
-| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and capture/native export implemented; browser retention pending |
+| M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
-| M7 Manual checkpoints | Portable save/load with exact continuation | M5-M6 | not started |
+| M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
@@ -336,8 +336,20 @@ marker. Drain between batches; do not retain the whole file in RAM. Surface outp
 failures and incomplete execution, and distinguish them from valid capture-gap
 records. Readback must preserve these limits rather than invent a complete tree.
 
-**Still pending:** browser persistence, retention/pruning policy, and presentation
-choices for the M6 viewer require approval before those parts are implemented.
+**Approved browser retention:** opt-in capture from a new/reseeded World, the same
+4,096-record FIFO, and one acknowledged in-flight batch independent of rendering.
+IndexedDB archives are per run, not seed: repeated seeds receive distinct IDs.
+Initial serialized-data limits are 10 MiB per run, 50 MiB total, and 20 saved runs,
+with atomic accounting, reserved footer space, and no automatic pruning/eviction.
+On limit/quota failure, stop capture only, retain the committed prefix, and expose
+its incompleteness. Page reload restores archives, not the World. Explicit deletion
+cannot be undone by stale queued appends. Open archives may still be active in
+another tab. Local persistence is not a backup guarantee.
+
+Archive v2 supports one or both cohorts, open-ended runs, and explicit intentional
+or incomplete capture prefixes; v1 remains readable and native writing stays v1.
+Successful retuning closes the pre-retune capture so its provenance remains true.
+M6 graph presentation choices still need approval.
 
 The primary viewer should be a **species-origin graph**, with the birth of a new
 species linked to its founding parent's species and tick. It is not an archive of
@@ -348,11 +360,13 @@ Keep active classification state separate from an opt-in bounded history/event
 buffer. Native and browser shells drain events between step batches and own archival
 I/O; browser history can persist in IndexedDB, native history in exported records.
 This is history persistence, not full-world checkpointing or resumption. M7 owns
-that separate capability; exporting M5's ancestry graph cannot resume a world.
+that separate capability and will bundle the available history with a checkpoint
+for normal Save run / Load run. When M7 lands, standalone history import/export
+becomes a CLI-only analysis option, replacing the interim M5 browser history-file
+controls. Exporting M5's ancestry graph alone cannot resume a world.
 
-Approve browser/archive retention limits and pruning semantics before that next slice.
-Recommended overflow behavior is an explicit gap/truncation marker, never altered
-ecology or a silently complete-looking tree. Pruning must preserve referenced
+Overflow is an explicit gap/truncation marker, never altered ecology or a silently
+complete-looking tree. If pruning is introduced later, it must preserve referenced
 ancestor identities or mark them as unavailable. A missed intermediate snapshot
 must not erase a speciation or extinction event. Observer attachment, drain timing,
 and pruning must not change simulation RNG or trajectories.
@@ -569,15 +583,20 @@ the resulting genomes validate.
 
 **Identity foundation delivered:** monotonic world-owned IDs, parent capture at
 admission, explicit exhaustion, persistent references across slot reuse, and exact
-inspection values. No history retention or ancestry graph is being claimed yet.
+inspection values. The identity slice alone does not retain an ancestry graph.
 Native schema 7 distinguishes the new construction footprint while preserving
 historical schemas 3-6 without charging their runtimes for nonexistent identity
 arrays. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
 
 **History capture/native export delivered:** rich optional species lifecycle
 callbacks, a bounded shell-owned FIFO with explicit ordered gaps, and versioned
-native streaming export/readback. This does not yet deliver browser persistence or
-the graph viewer. Existing World reference hashes remain unchanged.
+native streaming export/readback. Existing World reference hashes remain unchanged.
+
+**Browser archive slice delivered:** capture before initial seeding, bounded
+acknowledged delivery independent of snapshots, IndexedDB per-run persistence,
+explicit stop/failure/reseed prefixes, saved-run management, and v1/v2 import/export.
+Reload does not resume a World, and this panel is not the M6 graph viewer.
+World state/layout, metrics schema, control protocol, and reference hashes are unchanged.
 
 Identity integration retains all ten previous reference values. A separate coverage
 commit then hashes the birth counter and each live individual's ID and two parent
@@ -633,17 +652,31 @@ canvas. Seed URLs reconstruct the intended configuration without lossy IDs.
 ## M7 - Manual portable checkpoints
 
 **Approved scope:** bring basic save/load forward from Phase 7, after variable-length
-storage, species, ancestry, and their browser surfaces settle. This is separate from
+storage, species, ancestry, and their browser surfaces settle. This builds on
 M5's history export and M6's observation UI, and can proceed alongside M8 experiments.
 Checkpoint-assisted inspection is an enabler, not a prerequisite for gathering
 evidence; completing M7 is still required before M9 declares Phase 2 complete.
 
-Implement spec section 7.10's shared, versioned full-world checkpoint format. The
-native shell reads/writes files; the browser offers download/import through the
+**Approved save/load packaging:** offer one **Save run / Load run** workflow using
+a portable, versioned bundle containing the full-world checkpoint and its available
+history prefix. Users should not have to manage two unrelated saves. Keep simulation
+state and history as distinct internal components; the shells assemble the bundle.
+
+**Approved UI/CLI split:** browser **Save run** downloads the complete saved-run
+bundle; **Load run** uploads it and restores the world paused with its available
+history. The browser has no standalone history-file import/export actions, including
+advanced options. It still displays history. Replace the interim M5 browser
+history-file controls when this combined workflow lands.
+
+Standalone history export and import/readback remain **CLI-only** analysis tools,
+alongside CLI support for complete saved-run bundles. They do not resume a World.
+
+Implement spec section 7.10's shared native/browser format. The native shell
+reads/writes saved-run files; the browser offers download/import through the
 worker/WASM boundary. Native and WASM builds with the same simulation-compatibility
-identity must exchange checkpoints within the receiving host's resource limits.
-Retain the originating seed/run provenance. Reject incompatible versions explicitly;
-no migration support is required.
+identity must exchange saved runs within the receiving host's resource limits.
+Retain the originating seed/run/cohort provenance. Reject incompatible versions
+explicitly; no migration support is required.
 
 Capture a consistent between-ticks boundary. Core encoding/decoding operates on
 memory; all file/browser I/O and scheduling belong to the shells, never the tick.
@@ -654,17 +687,26 @@ metadata, and queued commands with their application order/ticks. Rebuild derive
 caches, scratch, and render/transport buffers without reseeding or resetting
 authoritative state. Saving must not advance the world or consume RNG.
 
-Validate format/compatibility, lengths, resource limits, handles/free spans, genome
-references, and numeric invariants before accepting restored state. Stage loading so
-a rejected file leaves the current world intact. Browser imports open paused with a
-fresh snapshot and invalidated old selections, responses, and scheduling state; they
-must not execute a command twice or let the old worker publish into the new world.
+Capture the checkpoint and any active history at the same boundary. Bundle only
+history belonging to that run/cohort up to the saved boundary, never later events.
+Preserve gaps and capture status. If recording was disabled, stopped, or failed
+earlier, include the available earlier prefix with its original end boundary/status,
+or explicitly record that history is unavailable. A resumable checkpoint does not
+require complete history and must not manufacture it.
 
-Keep external history archives separate. A resumed world starts a clearly identified
-history segment linked to its checkpoint origin, not silently appended after events
-from the old world's later future. Do not claim the checkpoint contains a complete
-historical archive. For resumed paired experiments, restore both evolving and control
-worlds at the same tick with their original protocol; never substitute a new control.
+Validate format/compatibility, lengths, resource limits, handles/free spans, genome
+references, and numeric invariants before accepting restored state. Validate the
+history component and its run/cohort/boundary association as part of the same load.
+Stage loading so a rejected bundle leaves the current world and displayed history
+intact. Browser loads restore the world paused together with its historical context,
+a fresh snapshot, and invalidated old selections, responses, and scheduling state;
+they must not execute a command twice or let the old worker publish into the new world.
+
+A resumed world starts a clearly identified history segment linked to its checkpoint
+origin and restored history prefix, not silently appended after events from the old
+world's later future. For resumed paired experiments, restore both evolving and
+control worlds at the same tick with their original protocol and matching history
+prefixes; never substitute a new control.
 
 **Done when:** uninterrupted and save/load/continue runs agree at the save boundary
 and after further ticks, for both heredity modes and in both native/WASM transfer
@@ -672,9 +714,15 @@ directions. Cases must actually exercise structural mutation, slot reuse, fragme
 arenas, species creation/extinction, nonzero recurrent state, compensated energy,
 and future queued commands. A successful deserialize or an immediate matching hash
 alone is insufficient. Reject truncated, malformed, incompatible, and oversized
-files without replacing the live world. Browser save/import works on both transports
-and remains usable on narrow layouts; a native-produced checkpoint can be inspected
-in the browser and continued without replaying from its seed.
+bundles without replacing the live world or its displayed history. Browser Save run /
+Load run works on both transports and remains usable on narrow layouts; a
+native-produced saved run restores both the checkpoint and available history in the
+browser and continues without replaying from its seed. Include pre-checkpoint
+extinctions, absent/incomplete history, and loading an older checkpoint after the
+original run has advanced: later events must not leak into the restored prefix or
+its new continuation segment. Browser save/load must expose only saved-run bundles,
+with no standalone history-file import/export controls. History-only CLI analysis
+must remain available without starting or resuming a World.
 
 Periodic autosaves, retention scheduling, cross-version migration, timeline
 scrubbing/indexing, compression, and storage optimization remain deferred. This
