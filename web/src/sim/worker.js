@@ -331,6 +331,20 @@ const handlers = {
     }
   },
 
+  species({ requestId }) {
+    try {
+      if (!Number.isSafeInteger(requestId) || requestId < 1) {
+        throw new RangeError('invalid species request identity');
+      }
+      postMessage({
+        kind: 'species', requestId, tick: sim.tick().toString(),
+        population: sim.population(), diagnostics: sim.species_diagnostics(),
+      });
+    } catch (error) {
+      postMessage({ kind: 'species', requestId, diagnostics: null, message: String(error) });
+    }
+  },
+
   /** A frame coming back from the renderer, for the transferable transport's pool. */
   recycle({ buffer }) {
     publisher.recycle(buffer);

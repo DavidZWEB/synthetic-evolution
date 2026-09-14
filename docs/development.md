@@ -579,6 +579,27 @@ does not certify biological ancestry: members clustered into one species are **n
 all descendants of the founding individual. Per-organism life histories, full genealogy,
 graph/viewer UI, and checkpoint/resume are deferred.
 
+### Live species browser (M6 foundation)
+
+Open **species** to see active population counts and the separate unclassified total,
+each labeled by its completed sample tick. Choose **genetic signature** (the default)
+or **species** coloring, and select a row to highlight its agents. Other agents are
+dimmed, not removed from picking. Unclassified agents use a neutral color rather than
+being represented as a species. Labels remain authoritative; colors are not globally
+unique identities.
+
+Colors are derived in a renderer-owned buffer, never written back into signatures,
+snapshots, or World state. Changing colors while paused repaints without stepping.
+Species counts use the existing on-demand WASM diagnostics; closing the panel
+stops those requests unless a species remains highlighted. The highlight clears when
+membership ends or a new World replaces the old one. Color preference survives a
+reseed, but is presentation state, not part of the shared seed/config URL.
+
+This is live observation, not a historical species graph or genome comparison.
+Later M6 slices will add richer telemetry and bounded representative-genome retention
+before historical comparisons. Older event-only archives retain their ancestry
+records but cannot supply genomes they did not record.
+
 ### Browser species-history archives (M5)
 
 Open **history**, enable **record the next new / reseeded run**, then reseed.

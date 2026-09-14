@@ -4,6 +4,8 @@
   import FailureBanner from './ui/FailureBanner.svelte';
   import InspectorPanel from './ui/InspectorPanel.svelte';
   import HistoryPanel from './ui/HistoryPanel.svelte';
+  import SpeciesPanel from './ui/SpeciesPanel.svelte';
+  import { createSpeciesController } from './species/controller.js';
   import { createHistorySession } from './history/controller.js';
   import { parseArchive } from './history/archive.js';
   import { DEFAULT_LIMITS, openHistoryStore } from './history/store.js';
@@ -75,6 +77,11 @@
   let historySession = null;
   let historyStore = null;
   let disposed = false;
+  let showSpecies = $state(false);
+  let speciesSample = $state(null);
+  let selectedSpecies = $state(null);
+  let speciesMessage = $state(null);
+  let colorMode = $state('signature');
 
   function getHistoryStore() {
     historyStore ??= openHistoryStore().catch((error) => {
@@ -153,8 +160,33 @@
       selectedIndex = next.selectedIndex;
       inspection = next.inspection;
       inspectionMessage = next.message;
+      if (next.selectedIndex !== null) setSpeciesOpen(false);
     },
   });
+
+  const species = createSpeciesController({
+    getSim: () => sim,
+    onChange: ({ sample, selected, message }) => {
+      speciesSample = sample;
+      selectedSpecies = selected;
+      speciesMessage = message;
+      renderer?.setSpeciesView({ colorMode, selectedSpecies });
+    },
+  });
+
+  function setSpeciesOpen(open) {
+    showSpecies = open;
+    if (open) {
+      showHistory = false;
+      inspector.select(null);
+    }
+    species.setOpen(open);
+  }
+
+  function setColorMode(value) {
+    renderer?.setSpeciesView({ colorMode: value, selectedSpecies });
+    colorMode = value;
+  }
 
   const gestures = createPointerGestures({
     getRenderer: () => renderer,
@@ -225,6 +257,7 @@
     meanEnergy = 0;
     metricSamples = [];
     inspector.select(null);
+    species.reset();
     start();
     transitioning = false;
   }
@@ -321,12 +354,14 @@
       } catch (error) {
         failure = String(error);
         historySession?.abort(`renderer initialization failed: ${String(error)}`);
+        species.reset();
         nextSim.destroy();
         sim = null;
         return;
       }
       renderer?.destroy();
       renderer = nextRenderer;
+      renderer.setSpeciesView({ colorMode, selectedSpecies });
       // A world of a different size makes the old coordinates mean something else, so
       // that is the one case worth reframing for.
       if (carried) renderer.setView(carried);
@@ -367,6 +402,9 @@
     nextSim.on('inspection', (message) => {
       if (sim === nextSim) inspector.accept(message);
     });
+    nextSim.on('species', (message) => {
+      if (sim === nextSim) species.accept(message);
+    });
     nextSim.on('validatedRun', (message) => {
       if (sim === nextSim) runValidation.accept(message);
     });
@@ -384,6 +422,7 @@
         activeRun = null;
         latestFrame = null;
         inspector.select(null);
+        species.reset();
         if (message.context === 'create' && startingSource === 'url' && previousShareUrl) {
           shareUrl = previousShareUrl;
           globalThis.history.replaceState(null, '', previousShareUrl);
@@ -461,6 +500,7 @@
       frames += 1;
       const now = performance.now();
       inspector.poll(frame, now);
+      species.poll(frame, now);
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;
@@ -528,6 +568,11 @@
         onstop={() => historyAction(() => historySession?.boundary('stopped'))}
       />
     {/if}
+    {#if showSpecies}
+      <SpeciesPanel sample={speciesSample} selected={selectedSpecies} message={speciesMessage}
+        {colorMode} oncolor={setColorMode} onselect={species.select}
+        onclose={() => setSpeciesOpen(false)} />
+    {/if}
   </div>
 
   <ControlBar
@@ -550,8 +595,14 @@
     onreset={resetView}
     onhistory={() => {
       showHistory = !showHistory;
-      if (showHistory) void historyAction(refreshHistory);
+      if (showHistory) {
+        setSpeciesOpen(false);
+        void historyAction(refreshHistory);
+      }
     }}
+    onspecies={() => setSpeciesOpen(!showSpecies)}
+    speciesOpen={showSpecies}
+    speciesViewActive={colorMode === 'species' || selectedSpecies !== null}
     {captureStatus}
     {transitioning}
   />

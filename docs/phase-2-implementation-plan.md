@@ -6,6 +6,8 @@ acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
 **Status: M5 identities, species-history capture, and native/browser archives are implemented.**
+M6's live species browser/coloring foundation is implemented; representative-genome
+retention is approved before historical comparisons are added.
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -27,7 +29,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
-| M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | not started |
+| M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | live species browser/coloring implemented; richer telemetry, representative history/comparison, and graph pending |
 | M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
@@ -351,6 +353,15 @@ or incomplete capture prefixes; v1 remains readable and native writing stays v1.
 Successful retuning closes the pre-retune capture so its provenance remains true.
 M6 graph presentation choices still need approval.
 
+**Approved for M6 historical comparisons:** archive one immutable representative
+genome at each species origin, not every organism's genome. Capture it while it is
+available, not by looking up the live classifier after a delayed drain. Extinction
+must not remove an already archived representative or its origin/parent links.
+Use bounded shell-owned capture and the existing archive byte limits; genome data
+consumes that budget rather than receiving an unbounded exemption. Preserve explicit
+gaps and unavailable genome data on capture failure. Extend the archive version
+without inventing genomes in older event-only files, which remain readable.
+
 The primary viewer should be a **species-origin graph**, with the birth of a new
 species linked to its founding parent's species and tick. It is not an archive of
 every organism or a claim that all members have one species ancestor. The data/view
@@ -625,6 +636,19 @@ optional observation buffers and shell archive timing must not determine evoluti
 History-disabled headless runs pay no archival/instrumentation cost.
 
 ## M6 - Telemetry, browser observation, and sharing
+
+**First slice delivered:** existing snapshot species IDs and on-demand population
+diagnostics support a live species browser, optional species coloring, and selection
+highlighting. Genetic-signature coloring remains the default. Show unclassified
+agents separately, label counts by their completed sample tick, and invalidate
+selection on world replacement or loss of active membership. This slice does not
+yet claim richer complexity telemetry, archived genomes, comparison, or graph views.
+
+**Subsequent slices:** complete the telemetry gaps below, add D6's bounded
+representative-genome capture before historical comparisons, then implement the
+species-origin graph after its presentation contract is approved. A missing genome
+in an older or incomplete archive is unavailable data, not a reason to erase its
+ancestry node or reconstruct a genome from descendants.
 
 Extend native metrics with population by species, species count, separate neuron and
 connection sizes, genome-size distribution, structural changes, and capacity/history
