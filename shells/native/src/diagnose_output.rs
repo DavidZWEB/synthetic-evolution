@@ -5,7 +5,8 @@
 
 use std::io::{self, Write};
 
-use crate::diagnose::{DiagnosisReport, Finding, MetricComparison};
+use crate::diagnose::{DiagnosisReport, Finding, HistoryStatus, MetricComparison};
+use crate::metrics::SizeDistribution;
 
 pub(crate) fn print_human(report: &DiagnosisReport) -> io::Result<()> {
     let stdout = io::stdout();
@@ -27,11 +28,63 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
         if let Some(summary) = summary {
             writeln!(
                 output,
-                "  - {name} at tick {}: active_species={}, unclassified_population={}",
-                summary.tick, summary.active_species, summary.unclassified_population
+                "  - {name} at tick {}: active_species={}/{} capacity, unclassified_population={}",
+                summary.tick,
+                summary.active_species,
+                summary.species_capacity,
+                summary.unclassified_population
             )?;
         } else {
             writeln!(output, "  - {name}: unavailable")?;
+        }
+    }
+    writeln!(
+        output,
+        "complexity (live genome sizes, not fitness; min/p25/median/p75/max, mean):"
+    )?;
+    for (name, summary) in [
+        ("evolving", &report.complexity.evolving),
+        ("scalar control", &report.complexity.random_control),
+    ] {
+        let Some(summary) = summary else {
+            writeln!(output, "  - {name}: unavailable")?;
+            continue;
+        };
+        let sizes = &summary.distributions;
+        writeln!(output, "  - {name} at tick {}:", summary.tick)?;
+        for (label, distribution) in [
+            ("genome genes", &sizes.genome_genes),
+            ("neurons", &sizes.neurons),
+            ("connections", &sizes.connections),
+            ("enabled connections", &sizes.enabled_connections),
+        ] {
+            writeln!(output, "      {label}: {}", distribution_text(distribution))?;
+        }
+    }
+    writeln!(output, "history capture:")?;
+    for (name, status) in [
+        ("evolving", &report.history.evolving),
+        ("scalar control", &report.history.random_control),
+    ] {
+        match status {
+            HistoryStatus::Unknown => writeln!(
+                output,
+                "  - {name}: unknown (this metrics schema did not record capture)"
+            )?,
+            HistoryStatus::Off => writeln!(output, "  - {name}: off")?,
+            HistoryStatus::Complete { tick, availability } => writeln!(
+                output,
+                "  - {name}: complete through tick {tick} ({} retained events, capacity {})",
+                availability.retained_events, availability.capacity
+            )?,
+            HistoryStatus::Incomplete { tick, availability } => writeln!(
+                output,
+                "  - {name}: incomplete through tick {tick}: {} dropped events in {} gaps ({} retained, capacity {})",
+                availability.dropped_events,
+                availability.gaps,
+                availability.retained_events,
+                availability.capacity
+            )?,
         }
     }
     writeln!(output, "comparison:")?;
@@ -53,6 +106,18 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
         writeln!(output, "  - {item}")?;
     }
     Ok(())
+}
+
+fn distribution_text(distribution: &SizeDistribution) -> String {
+    format!(
+        "{}/{}/{}/{}/{}, mean {:.2}",
+        distribution.min,
+        distribution.p25,
+        distribution.median,
+        distribution.p75,
+        distribution.max,
+        distribution.mean
+    )
 }
 
 fn write_findings(output: &mut impl Write, name: &str, findings: &[Finding]) -> io::Result<()> {

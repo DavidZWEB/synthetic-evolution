@@ -523,8 +523,10 @@ This is streaming output, not an atomic two-file transaction or protection again
 concurrent filesystem renames.
 
 Native writing uses history **schema 1** JSONL; readback also accepts browser **schema 2**.
-Metrics remain **schema 7**, phase 2,
-with **`randomized_at_birth_v3`** unchanged. Each line is a `kind`/`data` envelope:
+Metrics use **schema 8**, phase 2,
+with **`randomized_at_birth_v3`** unchanged. With `--metrics`, each sample also records
+the history capture's cumulative counts (see *Telemetry protocol*). Each history line is
+a `kind`/`data` envelope:
 
 | `kind` | Contents |
 |---|---|
@@ -595,9 +597,17 @@ stops those requests unless a species remains highlighted. The highlight clears 
 membership ends or a new World replaces the old one. Color preference survives a
 reseed, but is presentation state, not part of the shared seed/config URL.
 
+The panel's **Genome complexity** table shows the median, middle half, range, and mean
+of all genes, neuron genes, connection genes, and enabled connections across living
+agents. It is sampled in the same worker turn as the species counts, so both describe
+the same completed tick. Values come from the shell code that also writes native
+metrics `complexity`, and must match exactly for the same seed, params, and tick.
+`shells/shared/complexity_case.rs` pins one structurally mutating reference that
+native unit tests, WASM tests, and the browser suite all check.
+
 This is live observation, not a historical species graph or genome comparison.
-Later M6 slices will add richer telemetry and bounded representative-genome retention
-before historical comparisons. Older event-only archives retain their ancestry
+Later M6 slices will add bounded representative-genome retention before historical
+comparisons. Older event-only archives retain their ancestry
 records but cannot supply genomes they did not record.
 
 ### Browser species-history archives (M5)
@@ -670,10 +680,10 @@ Native schema 1 output and historical experiment reading remain unchanged.
 
 ### Telemetry protocol and observations
 
-New output uses metrics schema **7**, `phase: 2`, and
+New output uses metrics schema **8**, `phase: 2`, and
 `control: "randomized_at_birth_v3"` (the shared core protocol constant).
 Species classification does not change heredity, so the control protocol is unchanged.
-The reader explicitly supports **schemas 6 and 5 / phase 2 /
+The reader explicitly supports **schemas 7, 6, and 5 / phase 2 /
 `control: "randomized_at_birth_v3"`**, **schema 4 / phase 2 /
 `control: "randomized_at_birth_v2"`** and **schema 3 / phase 1 /
 `control: "randomized_at_birth"`** (v1), without relabeling them as v3.
@@ -691,7 +701,7 @@ not invented zeroes. The reader rejects species observations or any explicit
 `params.species` field in those schemas; only a genuinely omitted field is internally
 decoded with classification disabled to preserve the metadata's meaning. Historical
 buffer selection is independent of that normalization and is owned by `LayoutEra`.
-Schemas 6 and 7 require explicit species capacity, threshold, and all distance coefficients
+Schemas 6–8 require explicit species capacity, threshold, and all distance coefficients
 in the header, rather than silently filling missing classification metadata.
 
 The native reader maps supported wire schemas to core buffer inventories:
@@ -700,7 +710,7 @@ The native reader maps supported wire schemas to core buffer inventories:
 |---|---|---|
 | 3-5 | `BeforeSpecies` | Neither species representatives nor birth identities |
 | 6 | `Species` | Species representatives only |
-| 7 | `BirthIdentities` | Species representatives and three lifetime identity arrays |
+| 7-8 | `BirthIdentities` | Species representatives and three lifetime identity arrays |
 
 `SimParams::validate_for_layout(era)` replaces the era-specific pre-birth validator.
 The core owns which buffers existed; it does not know native schema numbers. This
@@ -712,6 +722,33 @@ the current memory ceiling: `World::new` always uses `LayoutEra::CURRENT`.
 Selecting an era neither parses nor migrates checkpoint data; M7 still requires
 explicit rejection of incompatible formats. Schema 7 marks the identity-aware runtime/storage contract, not
 the addition of per-organism history records to these population samples.
+
+Schema 8 adds observations only; its runtime/storage contract is schema 7's. Schema 7
+remains readable. Its absent `complexity` and `history` fields stay `null` and
+`diagnose` reports them as unavailable or unknown, never as zeroes or as capture being
+off. The reader rejects either field in schemas 3–7.
+
+Each schema 8 cohort contains **`complexity`**: exact nearest-rank distributions
+(`min`, `p25`, `median`, `p75`, `max`, plus `mean`) across living agents of
+`genome_genes`, `neurons` (neuron genes), `connections` (all connection genes), and
+`enabled_connections`. Neuron plus connection genes are what `k_brain` charges and
+what `brain_units` summarizes; disabled connections still cost, so enabled
+connections are separate. An empty population reports all zeroes. The reader requires
+ordered statistics, a mean within range, enabled connections bounded by connections,
+neurons and connections bounded by genes, and zeroes exactly when population is zero.
+These are drift descriptors, not a complexity score. `genome_variants` still counts
+exact genomes.
+
+Each schema 8 cohort also has **`history`**. It is `null` when `--history` was not
+requested, otherwise `capacity` (per cohort), `retained_events`, `dropped_events`,
+and `gaps` as of that sample. Each sample drains the recorder first, so these equal
+what the archive holds at that tick. Both cohorts must agree on capture and capacity;
+capture cannot switch on or off mid-run; counts never decrease; and a gap exists
+exactly when events were dropped. Enabling history changes only this field: every
+other metric stays byte-identical to an uncaptured run. `diagnose` reports final
+history status as `complete`, `incomplete`, `off`, or `unknown` (schemas 3–7). It
+emits a `history_gaps` finding when events were dropped, and shows active species
+against the configured species capacity.
 
 Schema 7 retains the earlier metric fields. `arena_usage` contains current element
 counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
@@ -798,7 +835,8 @@ exposes `Sim.storage_diagnostics()` JSON on demand with `arena_usage` and cumula
 extended with nullable `remove_sensor` and `add_sensor` fields.
 `Sim.species_diagnostics()` returns the same `populations`,
 `unclassified_population`, and `events` envelope as native species metrics, with
-measured event counters. `Sim.species_count()` and `Sim.unclassified_population()`
+measured event counters. `Sim.complexity_diagnostics()` returns the same object as a
+schema 8 cohort's `complexity`. `Sim.species_count()` and `Sim.unclassified_population()`
 provide the current scalar counts without allocating a diagnostics JSON response.
 All current shell counters start at zero on world construction, are isolated per
 world, and survive retuning. JSON requests can grow WASM memory,

@@ -1172,6 +1172,8 @@ cargo run -p native -- --seed 42 --ticks 500000 --metrics run.jsonl
 
 One JSON line per sample interval: population by species, trophic biomass by tier, mean and max brain size, genome size distribution, energy flow per tier, speciation and extinction events, behavior-probe hits. This runs at 1000× and produces something an agent can actually reason over, which a canvas is not. Emit only fields the current phase can measure: before Phase 2 species clustering exists, report exact genome variants and mark species-based diagnostics unavailable rather than treating the placeholder species ID as data.
 
+**DECIDED for Phase 2 telemetry (native metrics schema 8):** report genome-size distributions as exact nearest-rank order statistics (min, quartiles, max, plus mean) of all genes, neuron genes, connection genes, and enabled connections across living agents, separately per cohort. Also record each cohort's history-capture availability (capacity, retained and dropped events, gaps), or explicit absence when capture is off. The browser reports the same distributions through the same shell code, so both agree exactly at a completed tick. Older metrics schemas stay readable; their missing observations are unknown, never zero or "off".
+
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
 
 | Signal | Diagnosis |

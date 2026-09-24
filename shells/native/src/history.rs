@@ -13,7 +13,7 @@ use crate::history_wire::{
     ArchiveRecord, CaptureEnd, Cohort, CohortCompletion, Completion, Counts, Decimal, EventRecord,
     Header, MAX_LINE_BYTES, SCHEMA_VERSION,
 };
-use crate::metrics::{RunHeader, StateHashes};
+use crate::metrics::{HistoryAvailability, RunHeader, StateHashes};
 
 pub(crate) struct Capture {
     pub recorders: [Recorder; 2],
@@ -99,6 +99,16 @@ impl<W: Write> ArchiveWriter<W> {
         }
         self.output.flush()?;
         Ok(())
+    }
+
+    /// Cumulative counts as of the last drain, matching what the archive now holds.
+    pub fn availability(&self) -> [HistoryAvailability; 2] {
+        self.counts.clone().map(|counts| HistoryAvailability {
+            capacity: self.header.capacity_per_cohort,
+            retained_events: counts.events.0,
+            dropped_events: counts.dropped_events.0,
+            gaps: counts.gaps.0,
+        })
     }
 
     pub fn finish(mut self, capture: &mut Capture, hashes: &StateHashes) -> Result<()> {

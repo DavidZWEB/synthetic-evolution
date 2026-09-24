@@ -100,6 +100,7 @@ pub fn run(args: RunArgs) -> Result<()> {
             spawn_failures,
             structural_mutations,
             species_events,
+            archive.as_ref().map(ArchiveWriter::availability),
             args.ticks == 0,
         )?;
         write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
@@ -136,6 +137,7 @@ pub fn run(args: RunArgs) -> Result<()> {
                     spawn_failures,
                     structural_mutations,
                     species_events,
+                    archive.as_ref().map(ArchiveWriter::availability),
                     tick == args.ticks,
                 )?;
                 write_record(output, &MetricsRecord::Sample(Box::new(sample.clone())))?;
@@ -155,6 +157,7 @@ pub fn run(args: RunArgs) -> Result<()> {
                 spawn_failures,
                 structural_mutations,
                 species_events,
+                archive.as_ref().map(ArchiveWriter::availability),
                 true,
             )
         },
