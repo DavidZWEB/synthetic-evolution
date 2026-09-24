@@ -48,7 +48,8 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         if line.trim().is_empty() {
             continue;
         }
-        let record = decode_record(&line).map_err(|error| {
+        let schema = header.as_ref().map(|run: &RunHeader| run.schema_version);
+        let record = decode_record(&line, schema).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("line {}: {error}", line_number + 1),
@@ -223,8 +224,24 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
     Ok(MetricsData { header, samples })
 }
 
-fn decode_record(line: &str) -> Result<MetricsRecord> {
+fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
     let mut value: serde_json::Value = serde_json::from_str(line)?;
+    // Schema 8 writes `null` to mean capture was off, so an omitted key would be
+    // indistinguishable from a positive "off" claim once serde fills the default.
+    if value["kind"] == "sample"
+        && schema.is_some_and(|version| version >= 8)
+        && ["evolving", "random_control"].iter().any(|cohort| {
+            value["data"][cohort]
+                .as_object()
+                .is_some_and(|metrics| !metrics.contains_key("history"))
+        })
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "current metrics require explicit history availability, even when null",
+        )
+        .into());
+    }
     if value["kind"] == "header" {
         let schema = value["data"]["schema_version"].as_u64();
         if let Some(params) = value
@@ -672,6 +689,17 @@ mod tests {
             parse_values(&unpaired).is_err(),
             "one cohort without capture"
         );
+        for cohort in ["evolving", "random_control"] {
+            let mut omitted = history_records([serde_json::Value::Null, serde_json::Value::Null]);
+            omitted[2]["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("history");
+            let error = parse_values(&omitted)
+                .err()
+                .expect("omitted history accepted");
+            assert!(error.to_string().contains("explicit history availability"));
+        }
     }
 
     #[test]
@@ -872,6 +900,7 @@ mod tests {
         for cohort in ["evolving", "random_control"] {
             records[1]["data"][cohort]["complexity"] =
                 serde_json::to_value(ComplexityMetrics::default()).unwrap();
+            records[1]["data"][cohort]["history"] = serde_json::Value::Null;
         }
         assert!(
             parse_values(&records).is_err(),

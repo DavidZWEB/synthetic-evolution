@@ -739,8 +739,8 @@ neurons and connections bounded by genes, and zeroes exactly when population is 
 These are drift descriptors, not a complexity score. `genome_variants` still counts
 exact genomes.
 
-Each schema 8 cohort also has **`history`**. It is `null` when `--history` was not
-requested, otherwise `capacity` (per cohort), `retained_events`, `dropped_events`,
+Each schema 8 cohort also has a required **`history`** key: omitting it is rejected,
+not read as capture being off. It is `null` when `--history` was not requested, otherwise `capacity` (per cohort), `retained_events`, `dropped_events`,
 and `gaps` as of that sample. Each sample drains the recorder first, so these equal
 what the archive holds at that tick. Both cohorts must agree on capture and capacity;
 capture cannot switch on or off mid-run; counts never decrease; and a gap exists
