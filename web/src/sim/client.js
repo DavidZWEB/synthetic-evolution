@@ -19,6 +19,7 @@ export function createSim({
   const listeners = {
     ready: [],
     inspection: [],
+    species: [],
     metrics: [],
     error: [],
     params: [],
@@ -97,6 +98,7 @@ export function createSim({
     inspect: (index, incarnation, requestId) =>
       send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
+    requestSpecies: (requestId) => send('species', { requestId }),
     acknowledgeHistory: (batchId, error) => send('historyAck', { batchId, error }),
     historyBoundary: (captureEnd, requestId) => send('historyBoundary', { captureEnd, requestId }),
     stopHistory: (message) => send('historyStop', { message }),

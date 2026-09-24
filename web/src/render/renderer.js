@@ -32,6 +32,7 @@
 import { createCamera } from './camera.js';
 import { createProgram } from './gl-program.js';
 import { pickAgent } from './picking.js';
+import { displayColors, validateSpeciesView } from './species-colors.js';
 import {
   AGENT_FRAGMENT_SHADER,
   AGENT_VERTEX_SHADER,
@@ -95,6 +96,7 @@ export function createRenderer(canvas, options) {
   let pass = null;
   let savedView = null;
   let selected = null;
+  let speciesView = { colorMode: 'signature', selectedSpecies: null };
   let destroyed = false;
   let contextUnavailable = false;
 
@@ -121,6 +123,7 @@ export function createRenderer(canvas, options) {
       pass = createRenderPass(gl, canvas, config);
       if (savedView) pass.setView(savedView);
       if (selected) pass.select(selected);
+      pass.setSpeciesView(speciesView);
       contextUnavailable = false;
       onContextRestored();
     } catch (error) {
@@ -183,6 +186,12 @@ export function createRenderer(canvas, options) {
     select(selection) {
       selected = selection;
       pass?.select(selection);
+    },
+
+    setSpeciesView(view) {
+      validateSpeciesView(view);
+      speciesView = { ...view };
+      pass?.setSpeciesView(speciesView);
     },
 
     setRenderHints(hints) {
@@ -318,6 +327,9 @@ function buildRenderer(
   let currentPlantMaxEnergy = plantMaxEnergy;
   let hasUploadedFrame = false;
   let selected = null;
+  let speciesView = { colorMode: 'signature', selectedSpecies: null };
+  let colorsDirty = false;
+  const colorScratch = new Float32Array(capacity * 3);
 
   return {
     view: camera.view,
@@ -342,6 +354,12 @@ function buildRenderer(
 
     select(selection) {
       selected = selection;
+    },
+
+    setSpeciesView(view) {
+      colorsDirty ||= view.colorMode !== speciesView.colorMode ||
+        view.selectedSpecies !== speciesView.selectedSpecies;
+      speciesView = { ...view };
     },
 
     setRenderHints({ plantRadius: radius, plantColor: color, plantMaxEnergy: maxEnergy }) {
@@ -391,9 +409,12 @@ function buildRenderer(
       if (shouldUpload) {
         upload(attributes.position, views.position);
         upload(attributes.size, views.size);
-        upload(attributes.signature, views.signature);
         upload(attributes.alive, views.alive);
         hasUploadedFrame = true;
+      }
+      if (views && (shouldUpload || colorsDirty)) {
+        upload(attributes.signature, displayColors(views, count, speciesView, colorScratch));
+        colorsDirty = false;
       }
       gl.uniform2f(uniforms.center, camera.state.x, camera.state.y);
       gl.uniform1f(uniforms.ppu, camera.state.ppu);

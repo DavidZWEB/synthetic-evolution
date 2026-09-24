@@ -597,6 +597,20 @@ capture active. Browser build provenance identifies dirty builds and development
 sessions explicitly; a development server is not an immutable clean revision.
 The M6 species-origin graph and M7 resumable checkpoints remain separate work.
 
+**DECIDED for M6 representative history:** retain an immutable copy of each new
+species' representative genome at its origin so historical comparisons can outlive
+the species. This is one representative per species, not a per-organism genome
+archive. Capture before the live classifier can retire it; a delayed lookup after
+extinction cannot supply the missing data. Already saved origin/parent/extinction
+records and representative genomes survive extinction.
+
+Keep capture shell-owned and bounded, with no ecological effects, RNG changes, or
+hot-loop allocation. Representative payloads count toward the existing archive
+limits, so richer captures may exhaust that budget sooner. Missing payloads and
+capture gaps must stay explicit. Use a versioned extension while retaining readback
+of older event-only archives; their absent genomes remain unavailable, never guessed
+from descendants. Species-origin graph presentation still needs approval.
+
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
 - **Reproductive isolation:** agents will only mate if δ < threshold. This means speciation is a real event in the sim, not just a coloring of the plot — and it means mate choice itself becomes an evolvable behavior.

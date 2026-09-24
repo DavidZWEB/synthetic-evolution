@@ -18,7 +18,8 @@ a calibrated biological species boundary.
 M5 adds stable individual/parent IDs and opt-in native/browser species-history
 archives with explicit capture gaps. Browser archives are saved locally per run,
 with bounded storage and interoperable JSONL import/export; they do not resume a
-World. The ancestry graph remains M6 work. The
+World. M6 adds a live species browser with display-only coloring and population
+highlighting; representative history/comparison and the ancestry graph remain pending. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control
@@ -54,6 +55,8 @@ cargo run -p native -- diagnose run.jsonl
 
 In the client, open **history**, enable recording for new/reseeded runs, and reseed.
 Export important histories: browser storage is local and may be cleared or evicted.
+Open **species** to browse live populations or switch display colors without changing
+organisms' genetic signatures.
 
 On Windows, run `setup.sh` from WSL or Git Bash — the Rust and Node steps are
 cross-platform but the script is bash.
