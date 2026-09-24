@@ -117,6 +117,29 @@ fn oversized_history_headers_fail_before_outputs_are_truncated() {
     assert_eq!(fs::read(history).unwrap(), b"preserve history");
 }
 
+fn without_history(samples: &[Value]) -> Vec<Value> {
+    let mut samples = samples.to_vec();
+    for sample in &mut samples[1..] {
+        for cohort in ["evolving", "random_control"] {
+            sample["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("history");
+        }
+    }
+    samples
+}
+
+fn diagnose(metrics: &Path) -> Value {
+    let output = success(
+        Command::new(env!("CARGO_BIN_EXE_native"))
+            .arg("diagnose")
+            .arg(metrics)
+            .arg("--json"),
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 #[test]
 fn capture_is_observational_across_seeds_cohorts_and_overflow() {
     let scratch = Scratch::new();
@@ -124,7 +147,6 @@ fn capture_is_observational_across_seeds_cohorts_and_overflow() {
     for seed in [7, 42, 99] {
         let metrics = scratch.path("baseline.jsonl");
         let baseline = success(command(&params, seed, 8, 4).arg("--metrics").arg(&metrics));
-        let expected = fs::read(&metrics).unwrap();
         let samples = rows(&metrics);
         let last = &samples.last().unwrap()["data"];
         let plain = success(&mut command(&params, seed, 8, 4));
@@ -141,15 +163,33 @@ fn capture_is_observational_across_seeds_cohorts_and_overflow() {
                     .arg(capacity.to_string()),
             );
             assert_eq!(observed.stderr, baseline.stderr);
+            // Capture adds only its own availability counts; every other observation
+            // must match the uncaptured run.
+            let observed_samples = rows(&metrics);
             assert_eq!(
-                fs::read(&metrics).unwrap(),
-                expected,
+                without_history(&observed_samples),
+                without_history(&samples),
                 "seed {seed}, capacity {capacity}"
             );
+            let observed_last = &observed_samples.last().unwrap()["data"];
             let report = summary(&history);
             for (index, cohort) in ["evolving", "random_control"].into_iter().enumerate() {
                 let row = &report["cohorts"][index];
                 assert_eq!(row["cohort"], cohort);
+                assert_eq!(last[cohort]["history"], Value::Null);
+                let availability = &observed_last[cohort]["history"];
+                assert_eq!(availability["capacity"], capacity);
+                for (metric, count) in [
+                    ("retained_events", "events"),
+                    ("dropped_events", "dropped_events"),
+                    ("gaps", "gaps"),
+                ] {
+                    assert_eq!(
+                        availability[metric].as_u64().unwrap().to_string(),
+                        row["counts"][count],
+                        "{cohort} {metric} matches the archive"
+                    );
+                }
                 assert_eq!(row["final_state_hash"], last["final_state_hashes"][cohort]);
                 if capacity == 4096 {
                     assert_eq!(row["history_complete"], true);
@@ -179,6 +219,27 @@ fn capture_is_observational_across_seeds_cohorts_and_overflow() {
                     );
                 }
             }
+            let diagnosis = diagnose(&metrics);
+            for cohort in ["evolving", "random_control"] {
+                let status = &diagnosis["history"][cohort];
+                assert_eq!(
+                    status["status"],
+                    if capacity == 4096 {
+                        "complete"
+                    } else {
+                        "incomplete"
+                    }
+                );
+                assert_eq!(status["tick"], 8);
+            }
+            assert_eq!(
+                diagnosis["evolving"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|finding| finding["code"] == "history_gaps"),
+                capacity == 1
+            );
             let history_only = success(
                 command(&params, seed, 8, 4)
                     .arg("--history")

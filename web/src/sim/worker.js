@@ -8,9 +8,9 @@
  *
  * **Views over WASM memory are rebuilt whenever the buffer changes identity.** Growing
  * WASM memory detaches every existing `TypedArray` silently, and while stepping never
- * grows it, `push_command`, `inspect_agent`, and `species_diagnostics` allocate and
- * might. Comparing the buffer is a pointer check per frame and removes the whole class
- * (spec §7.3).
+ * grows it, `push_command`, `inspect_agent`, `species_diagnostics`, and
+ * `complexity_diagnostics` allocate and might. Comparing the buffer is a pointer check
+ * per frame and removes the whole class (spec §7.3).
  *
  * Deliberately not here: anything that decides what the simulation does. The worker
  * chooses *when* to step and how far, never what a step means.
@@ -340,6 +340,7 @@ const handlers = {
       postMessage({
         kind: 'species', requestId, tick: sim.tick().toString(),
         population: sim.population(), diagnostics: sim.species_diagnostics(),
+        complexity: sim.complexity_diagnostics(),
       });
     } catch (error) {
       postMessage({ kind: 'species', requestId, diagnostics: null, message: String(error) });

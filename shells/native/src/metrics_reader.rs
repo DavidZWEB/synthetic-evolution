@@ -21,7 +21,7 @@ fn layout_era(schema: u32) -> Option<LayoutEra> {
     match schema {
         3..=5 => Some(LayoutEra::BeforeSpecies),
         6 => Some(LayoutEra::Species),
-        7 => Some(LayoutEra::BirthIdentities),
+        7..=8 => Some(LayoutEra::BirthIdentities),
         _ => None,
     }
 }
@@ -48,7 +48,8 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         if line.trim().is_empty() {
             continue;
         }
-        let record = decode_record(&line).map_err(|error| {
+        let schema = header.as_ref().map(|run: &RunHeader| run.schema_version);
+        let record = decode_record(&line, schema).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!("line {}: {error}", line_number + 1),
@@ -152,8 +153,10 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         "metrics header must be the first record",
                     )
                 })?;
+                validate_history(run, samples.last(), &sample)?;
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
+                    validate_complexity(run, metrics)?;
                     if let Some(counts) = metrics.structural_mutations
                         && (run.schema_version == 3
                             || (run.schema_version == 4
@@ -221,8 +224,24 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
     Ok(MetricsData { header, samples })
 }
 
-fn decode_record(line: &str) -> Result<MetricsRecord> {
+fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
     let mut value: serde_json::Value = serde_json::from_str(line)?;
+    // Schema 8 writes `null` to mean capture was off, so an omitted key would be
+    // indistinguishable from a positive "off" claim once serde fills the default.
+    if value["kind"] == "sample"
+        && schema.is_some_and(|version| version >= 8)
+        && ["evolving", "random_control"].iter().any(|cohort| {
+            value["data"][cohort]
+                .as_object()
+                .is_some_and(|metrics| !metrics.contains_key("history"))
+        })
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "current metrics require explicit history availability, even when null",
+        )
+        .into());
+    }
     if value["kind"] == "header" {
         let schema = value["data"]["schema_version"].as_u64();
         if let Some(params) = value
@@ -278,6 +297,92 @@ fn decode_record(line: &str) -> Result<MetricsRecord> {
     Ok(serde_json::from_value(value)?)
 }
 
+fn validate_complexity(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
+    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
+    if header.schema_version < 8 {
+        return if metrics.complexity.is_some() {
+            Err(invalid(
+                "legacy metrics claim complexity distributions unavailable in their schema",
+            )
+            .into())
+        } else {
+            Ok(())
+        };
+    }
+    let complexity = metrics
+        .complexity
+        .as_ref()
+        .ok_or_else(|| invalid("current metrics require complexity distributions"))?;
+    if !complexity.is_consistent() || (metrics.population == 0) != complexity.is_empty() {
+        return Err(invalid(
+            "complexity distributions must be ordered, bounded, and empty exactly when no agent lives",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// History capture is fixed for a run: both cohorts share it, and its counts only grow.
+fn validate_history(
+    header: &RunHeader,
+    previous: Option<&RunSample>,
+    sample: &RunSample,
+) -> Result<()> {
+    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
+    let pair = [sample.evolving.history, sample.random_control.history];
+    if header.schema_version < 8 {
+        return if pair.iter().any(Option::is_some) {
+            Err(
+                invalid("legacy metrics claim history availability unavailable in their schema")
+                    .into(),
+            )
+        } else {
+            Ok(())
+        };
+    }
+    match pair {
+        [None, None] => {}
+        [Some(evolving), Some(control)] => {
+            if evolving.capacity != control.capacity
+                || pair.iter().flatten().any(|history| {
+                    history.capacity == 0
+                        || history.gaps > history.dropped_events
+                        || (history.gaps == 0) != (history.dropped_events == 0)
+                })
+            {
+                return Err(invalid(
+                    "history availability requires one nonzero capacity and a gap for every drop",
+                )
+                .into());
+            }
+        }
+        _ => return Err(invalid("history availability must cover both cohorts or neither").into()),
+    }
+    if let Some(previous) = previous {
+        let before = [previous.evolving.history, previous.random_control.history];
+        let consistent = before
+            .iter()
+            .zip(&pair)
+            .all(|(before, after)| match (before, after) {
+                (None, None) => true,
+                (Some(before), Some(after)) => {
+                    before.capacity == after.capacity
+                        && before.retained_events <= after.retained_events
+                        && before.dropped_events <= after.dropped_events
+                        && before.gaps <= after.gaps
+                }
+                _ => false,
+            });
+        if !consistent {
+            return Err(invalid(
+                "history availability must stay enabled or disabled and never decrease",
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_species(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
     let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
     if header.schema_version < 6 {
@@ -331,7 +436,9 @@ mod tests {
     use sim_core::params::SimParams;
 
     use super::*;
-    use crate::metrics::{RunSample, SpeciesMetrics, StateHashes, WorldMetrics};
+    use crate::metrics::{
+        ComplexityMetrics, RunSample, SizeDistribution, SpeciesMetrics, StateHashes, WorldMetrics,
+    };
 
     #[test]
     fn wire_schemas_map_explicitly_to_their_immutable_layout_eras() {
@@ -339,9 +446,11 @@ mod tests {
             assert_eq!(layout_era(schema), Some(LayoutEra::BeforeSpecies));
         }
         assert_eq!(layout_era(6), Some(LayoutEra::Species));
-        assert_eq!(layout_era(7), Some(LayoutEra::BirthIdentities));
+        for schema in [7, 8] {
+            assert_eq!(layout_era(schema), Some(LayoutEra::BirthIdentities));
+        }
         assert_eq!(layout_era(SCHEMA_VERSION), Some(LayoutEra::CURRENT));
-        for unsupported in [0, 1, 2, 8, u32::MAX] {
+        for unsupported in [0, 1, 2, 9, u32::MAX] {
             assert_eq!(layout_era(unsupported), None);
         }
     }
@@ -349,8 +458,48 @@ mod tests {
     fn empty_world_metrics() -> WorldMetrics {
         WorldMetrics {
             species: Some(SpeciesMetrics::default()),
+            complexity: Some(ComplexityMetrics::default()),
             ..Default::default()
         }
+    }
+
+    fn living_complexity() -> serde_json::Value {
+        let genes = SizeDistribution {
+            min: 3,
+            p25: 3,
+            median: 4,
+            p75: 5,
+            max: 6,
+            mean: 4.25,
+        };
+        serde_json::to_value(ComplexityMetrics {
+            genome_genes: genes.clone(),
+            neurons: SizeDistribution {
+                min: 1,
+                p25: 1,
+                median: 1,
+                p75: 2,
+                max: 2,
+                mean: 1.5,
+            },
+            connections: SizeDistribution {
+                min: 1,
+                p25: 1,
+                median: 2,
+                p75: 2,
+                max: 3,
+                mean: 2.0,
+            },
+            enabled_connections: SizeDistribution {
+                min: 0,
+                p25: 1,
+                median: 1,
+                p75: 2,
+                max: 3,
+                mean: 1.5,
+            },
+        })
+        .unwrap()
     }
 
     fn final_records() -> [serde_json::Value; 2] {
@@ -406,11 +555,150 @@ mod tests {
             .remove("species");
         for record in &mut records[1..] {
             for cohort in ["evolving", "random_control"] {
-                record["data"][cohort]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("species");
+                let metrics = record["data"][cohort].as_object_mut().unwrap();
+                for field in ["species", "complexity", "history"] {
+                    metrics.remove(field);
+                }
             }
+        }
+    }
+
+    fn strip_schema_eight_observations(records: &mut [serde_json::Value]) {
+        for record in &mut records[1..] {
+            for cohort in ["evolving", "random_control"] {
+                let metrics = record["data"][cohort].as_object_mut().unwrap();
+                metrics.remove("complexity");
+                metrics.remove("history");
+            }
+        }
+    }
+
+    #[test]
+    fn schema_seven_reads_without_inventing_complexity_or_history() {
+        let mut records = final_records();
+        records[0]["data"]["schema_version"] = 7.into();
+        strip_schema_eight_observations(&mut records);
+        let data = parse_values(&records).expect("schema 7 remains readable");
+        for metrics in [&data.samples[0].evolving, &data.samples[0].random_control] {
+            assert_eq!(metrics.complexity, None);
+            assert_eq!(metrics.history, None);
+        }
+        for (field, value) in [
+            (
+                "complexity",
+                serde_json::to_value(ComplexityMetrics::default()).unwrap(),
+            ),
+            (
+                "history",
+                serde_json::json!({"capacity": 1, "retained_events": 0, "dropped_events": 0, "gaps": 0}),
+            ),
+        ] {
+            let mut claimed = records.clone();
+            for cohort in ["evolving", "random_control"] {
+                claimed[1]["data"][cohort][field] = value.clone();
+            }
+            assert!(
+                parse_values(&claimed).is_err(),
+                "schema 7 cannot claim {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn current_schema_requires_consistent_complexity() {
+        for cohort in ["evolving", "random_control"] {
+            let mut records = final_records();
+            records[1]["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("complexity");
+            assert!(parse_values(&records).is_err(), "missing complexity");
+
+            let mut records = final_records();
+            records[1]["data"][cohort]["complexity"] = living_complexity();
+            assert!(
+                parse_values(&records).is_err(),
+                "an empty population cannot have genome sizes"
+            );
+            records[1]["data"][cohort]["population"] = 1.into();
+            records[1]["data"][cohort]["species"]["unclassified_population"] = 1.into();
+            parse_values(&records).expect("living population with sizes");
+            for (path, value) in [
+                ("/genome_genes/p25", serde_json::json!(5)),
+                ("/enabled_connections/max", serde_json::json!(4)),
+                ("/neurons/mean", serde_json::json!(9.0)),
+            ] {
+                let mut invalid = records.clone();
+                *invalid[1]["data"][cohort]["complexity"]
+                    .pointer_mut(path)
+                    .unwrap() = value;
+                assert!(parse_values(&invalid).is_err(), "accepted {path}");
+            }
+        }
+    }
+
+    fn history_records(history: [serde_json::Value; 2]) -> Vec<serde_json::Value> {
+        let [mut header, mut second] = final_records();
+        header["data"]["ticks"] = 5.into();
+        let mut first = second.clone();
+        first["data"]["final_state_hashes"] = serde_json::Value::Null;
+        second["data"]["tick"] = 5.into();
+        for (record, value) in [(&mut first, &history[0]), (&mut second, &history[1])] {
+            for cohort in ["evolving", "random_control"] {
+                record["data"][cohort]["history"] = value.clone();
+            }
+        }
+        vec![header, first, second]
+    }
+
+    #[test]
+    fn history_availability_is_fixed_per_run_paired_and_monotonic() {
+        let complete = serde_json::json!({"capacity": 4, "retained_events": 2, "dropped_events": 0, "gaps": 0});
+        let later = serde_json::json!({"capacity": 4, "retained_events": 3, "dropped_events": 2, "gaps": 1});
+        parse_values(&history_records([complete.clone(), later.clone()])).expect("growing counts");
+        parse_values(&history_records([
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]))
+        .expect("capture off");
+        for history in [
+            [later.clone(), complete.clone()],
+            [complete.clone(), serde_json::Value::Null],
+            [serde_json::Value::Null, complete.clone()],
+            [
+                complete.clone(),
+                serde_json::json!({"capacity": 8, "retained_events": 2, "dropped_events": 0, "gaps": 0}),
+            ],
+            [
+                complete.clone(),
+                serde_json::json!({"capacity": 4, "retained_events": 2, "dropped_events": 1, "gaps": 0}),
+            ],
+            [
+                serde_json::json!({"capacity": 0, "retained_events": 0, "dropped_events": 0, "gaps": 0}),
+                serde_json::json!({"capacity": 0, "retained_events": 0, "dropped_events": 0, "gaps": 0}),
+            ],
+        ] {
+            assert!(
+                parse_values(&history_records(history.clone())).is_err(),
+                "accepted {history:?}"
+            );
+        }
+        let mut unpaired = history_records([complete.clone(), complete]);
+        unpaired[1]["data"]["random_control"]["history"] = serde_json::Value::Null;
+        assert!(
+            parse_values(&unpaired).is_err(),
+            "one cohort without capture"
+        );
+        for cohort in ["evolving", "random_control"] {
+            let mut omitted = history_records([serde_json::Value::Null, serde_json::Value::Null]);
+            omitted[2]["data"][cohort]
+                .as_object_mut()
+                .unwrap()
+                .remove("history");
+            let error = parse_values(&omitted)
+                .err()
+                .expect("omitted history accepted");
+            assert!(error.to_string().contains("explicit history availability"));
         }
     }
 
@@ -502,7 +790,9 @@ mod tests {
             (7, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
             (7, 2, "randomized_at_birth_v2"),
             (7, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (8, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (8, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (8, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (9, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
         ] {
             let mut records = final_records();
             if matches!(schema, 3..=5) {
@@ -591,6 +881,7 @@ mod tests {
     fn schema_six_preserves_species_but_does_not_pay_for_later_birth_identity_arrays() {
         let mut records = final_records();
         records[0]["data"]["schema_version"] = 6.into();
+        strip_schema_eight_observations(&mut records);
         let mut params = SimParams::default();
         params.world.max_agents = 2;
         params.plants.max_plants = 8;
@@ -606,6 +897,11 @@ mod tests {
         );
         assert!(data.samples[0].evolving.species.is_some());
         records[0]["data"]["schema_version"] = SCHEMA_VERSION.into();
+        for cohort in ["evolving", "random_control"] {
+            records[1]["data"][cohort]["complexity"] =
+                serde_json::to_value(ComplexityMetrics::default()).unwrap();
+            records[1]["data"][cohort]["history"] = serde_json::Value::Null;
+        }
         assert!(
             parse_values(&records).is_err(),
             "current runtime must pay for its identity arrays"
@@ -733,6 +1029,7 @@ mod tests {
             let mut valid = final_records();
             valid[0]["data"]["params"]["species"]["capacity"] = 2.into();
             valid[1]["data"][cohort]["population"] = 4.into();
+            valid[1]["data"][cohort]["complexity"] = living_complexity();
             valid[1]["data"][cohort]["species"] = serde_json::json!({
                 "populations": [
                     {"species_id": 5, "population": 1},

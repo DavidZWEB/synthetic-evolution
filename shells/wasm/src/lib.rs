@@ -34,6 +34,10 @@ use sim_core::spawn::{ArenaUsage, SpawnFailureCounts};
 use sim_core::species::SpeciesEventCounts;
 use sim_core::world::World;
 
+// The native metrics reader also uses this module's validation helpers.
+#[allow(dead_code)]
+#[path = "../../shared/complexity.rs"]
+mod complexity;
 mod history;
 #[path = "../../shared/history_event_wire.rs"]
 mod history_event_wire;
@@ -420,6 +424,14 @@ impl Sim {
             events: self.species_events,
         };
         serde_json::to_string(&diagnostics).map_err(|e| js_error("species diagnostics", e))
+    }
+
+    /// On-demand exact live genome-size distributions, identical to native metrics'
+    /// `complexity` at the same completed tick. Observation only, never a score.
+    /// Like other JSON requests, this allocates and can detach snapshot views (§7.3).
+    pub fn complexity_diagnostics(&self) -> Result<String, JsError> {
+        serde_json::to_string(&complexity::sample_complexity(&self.world))
+            .map_err(|e| js_error("complexity diagnostics", e))
     }
 
     /// Retunes the world. Errors on anything that would resize what is already

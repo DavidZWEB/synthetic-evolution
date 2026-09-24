@@ -3,6 +3,15 @@ import test from 'node:test';
 import { createSpeciesController } from './controller.js';
 import { NULL_SPECIES } from './model.ts';
 
+const complexity = (population) => {
+  const size = population === 0 ? 0 : 2;
+  const distribution = { min: size, p25: size, median: size, p75: size, max: size, mean: size };
+  return JSON.stringify({
+    genome_genes: distribution, neurons: distribution,
+    connections: distribution, enabled_connections: distribution,
+  });
+};
+
 function fixture() {
   const calls = [];
   const changes = [];
@@ -15,6 +24,7 @@ function fixture() {
       requestId: id, tick: String(tick),
       population: populations.reduce((sum, row) => sum + row.population, unclassified),
       diagnostics: JSON.stringify({ populations, unclassified_population: unclassified }),
+      complexity: complexity(populations.reduce((sum, row) => sum + row.population, unclassified)),
     });
   return { controller, calls, changes, reply, clearSim: () => { sim = null; } };
 }

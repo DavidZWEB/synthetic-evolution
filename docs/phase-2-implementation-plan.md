@@ -6,8 +6,9 @@ acceptance and tuning evidence remain in
 [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
 **Status: M5 identities, species-history capture, and native/browser archives are implemented.**
-M6's live species browser/coloring foundation is implemented; representative-genome
-retention is approved before historical comparisons are added.
+M6's live species browser/coloring foundation and schema 8 complexity/history
+telemetry are implemented; representative-genome retention is approved before
+historical comparisons are added.
 Distance/deletion-default calibration, the actual
 structural-null protocol, and lineage choices remain pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -29,7 +30,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
-| M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | live species browser/coloring implemented; richer telemetry, representative history/comparison, and graph pending |
+| M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | live species browser/coloring and schema 8 telemetry implemented; representative history/comparison and graph pending |
 | M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | not started |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
@@ -644,9 +645,21 @@ agents separately, label counts by their completed sample tick, and invalidate
 selection on world replacement or loss of active membership. This slice does not
 yet claim richer complexity telemetry, archived genomes, comparison, or graph views.
 
-**Subsequent slices:** complete the telemetry gaps below, add D6's bounded
-representative-genome capture before historical comparisons, then implement the
-species-origin graph after its presentation contract is approved. A missing genome
+**Telemetry slice delivered (metrics schema 8):** per-cohort exact nearest-rank
+distributions of genome genes, neuron genes, connection genes, and enabled
+connections. Each cohort also records history-capture availability, `null` when
+capture is off. `diagnose` reports both, with active species against configured
+capacity and a `history_gaps` finding. The approved compatibility policy keeps
+schemas 3–7 readable, with these observations unknown rather than zero. One shared
+shell module computes the distributions for native metrics and WASM
+`complexity_diagnostics()`. The species browser shows them for the same completed
+tick, and a shared reference case pins native/WASM/browser agreement. Per-species
+populations and counts, structural-edit counts, arena capacity, and exact genome
+variants were already reported.
+
+**Subsequent slices:** add D6's bounded representative-genome capture before
+historical comparisons, then implement the species-origin graph after its
+presentation contract is approved. A missing genome
 in an older or incomplete archive is unavailable data, not a reason to erase its
 ancestry node or reconstruct a genome from descendants.
 

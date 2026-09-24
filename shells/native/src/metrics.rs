@@ -18,7 +18,14 @@ use sim_core::species::SpeciesEventCounts;
 use sim_core::state_hash::genome_fingerprint;
 use sim_core::world::World;
 
-pub const SCHEMA_VERSION: u32 = 7;
+#[path = "../../shared/complexity.rs"]
+mod complexity;
+pub use complexity::{ComplexityMetrics, SizeDistribution};
+#[cfg(test)]
+#[path = "../../shared/complexity_case.rs"]
+mod complexity_case;
+
+pub const SCHEMA_VERSION: u32 = 8;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -80,6 +87,22 @@ pub struct SpeciesMetrics {
     pub events: Option<SpeciesEventCounts>,
 }
 
+/// Cumulative history-capture counts at a sample. Gaps are archived drop ranges, so
+/// `dropped_events > 0` means ancestry after that point is incomplete.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryAvailability {
+    pub capacity: u32,
+    pub retained_events: u64,
+    pub dropped_events: u64,
+    pub gaps: u64,
+}
+
+impl HistoryAvailability {
+    pub fn is_complete(&self) -> bool {
+        self.dropped_events == 0
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorldMetrics {
     pub population: u32,
@@ -114,6 +137,14 @@ pub struct WorldMetrics {
     /// Schemas 3–5 did not classify agents; their absent data must stay unknown.
     #[serde(default)]
     pub species: Option<SpeciesMetrics>,
+    /// Exact live genome-size distributions. Schemas 3–7 did not record them; their
+    /// absence is unknown, not an empty population.
+    #[serde(default)]
+    pub complexity: Option<ComplexityMetrics>,
+    /// Schema 8 writes `null` when history capture was off. Older schemas did not
+    /// record availability, so readers must use the schema to tell the two apart.
+    #[serde(default)]
+    pub history: Option<HistoryAvailability>,
 }
 
 #[derive(Default)]
@@ -163,6 +194,7 @@ pub fn sample_pair(
     spawn_failures: Option<[SpawnFailureCounts; 2]>,
     structural_mutations: Option<[StructuralMutationCounts; 2]>,
     species_events: Option<[SpeciesEventCounts; 2]>,
+    history: Option<[HistoryAvailability; 2]>,
     include_state_hashes: bool,
 ) -> Result<RunSample> {
     debug_assert_eq!(evolving.tick_count(), random_control.tick_count());
@@ -187,6 +219,10 @@ pub fn sample_pair(
             .as_mut()
             .expect("current world")
             .events = Some(control);
+    }
+    if let Some([evolving, control]) = history {
+        evolving_metrics.history = Some(evolving);
+        control_metrics.history = Some(control);
     }
     Ok(RunSample {
         tick: evolving.tick_count(),
@@ -277,6 +313,8 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
             unclassified_population: world.unclassified_population(),
             events: None,
         }),
+        complexity: Some(complexity::sample_complexity(world)),
+        history: None,
     })
 }
 
@@ -300,6 +338,31 @@ mod tests {
 
     use super::*;
 
+    use super::complexity_case;
+
+    #[test]
+    fn complexity_matches_the_shared_cross_target_reference() {
+        let params: SimParams = serde_json::from_str(complexity_case::PARAMS).unwrap();
+        let mut world = World::new(complexity_case::SEED, params).unwrap();
+        assert_eq!(
+            world.seed_founders(complexity_case::FOUNDERS),
+            complexity_case::FOUNDERS
+        );
+        for _ in 0..complexity_case::TICKS {
+            world.step();
+        }
+        let complexity = sample_world(&world).unwrap().complexity.unwrap();
+        assert!(
+            complexity.genome_genes.min < complexity.genome_genes.max,
+            "the reference must exercise a nontrivial distribution"
+        );
+        assert!(complexity.enabled_connections.mean < complexity.connections.mean);
+        assert_eq!(
+            serde_json::to_string(&complexity).unwrap(),
+            complexity_case::EXPECTED
+        );
+    }
+
     #[test]
     fn an_empty_population_has_total_zero_summaries() {
         let mut params = SimParams::default();
@@ -316,6 +379,8 @@ mod tests {
         assert_eq!(metrics.spawn_failures, None);
         assert_eq!(metrics.structural_mutations, None);
         assert_eq!(metrics.species, Some(SpeciesMetrics::default()));
+        assert_eq!(metrics.complexity, Some(ComplexityMetrics::default()));
+        assert_eq!(metrics.history, None);
     }
 
     #[test]
@@ -360,7 +425,8 @@ mod tests {
         assert_eq!(evolving.seed_founders(4), 4);
         assert_eq!(control.seed_founders(4), 4);
 
-        let sample = sample_pair(&evolving, &control, None, None, None, true).expect("samples");
+        let sample =
+            sample_pair(&evolving, &control, None, None, None, None, true).expect("samples");
         assert_eq!(sample.evolving, sample.random_control);
         assert_eq!(
             sample.final_state_hashes.as_ref().unwrap().evolving,
@@ -401,15 +467,31 @@ mod tests {
                 ..Default::default()
             },
         ];
+        let history = [
+            HistoryAvailability {
+                capacity: 4,
+                retained_events: 2,
+                ..Default::default()
+            },
+            HistoryAvailability {
+                capacity: 4,
+                retained_events: 4,
+                dropped_events: 3,
+                gaps: 1,
+            },
+        ];
         let sample = sample_pair(
             &evolving,
             &control,
             Some(counts),
             Some(mutations),
             Some(species),
+            Some(history),
             false,
         )
         .unwrap();
+        assert_eq!(sample.evolving.history, Some(history[0]));
+        assert_eq!(sample.random_control.history, Some(history[1]));
         assert_eq!(sample.evolving.spawn_failures, Some(counts[0]));
         assert_eq!(sample.random_control.spawn_failures, Some(counts[1]));
         assert_eq!(sample.evolving.structural_mutations, Some(mutations[0]));
@@ -422,7 +504,7 @@ mod tests {
             sample.random_control.species.unwrap().events,
             Some(species[1])
         );
-        let unobserved = sample_pair(&evolving, &control, None, None, None, false).unwrap();
+        let unobserved = sample_pair(&evolving, &control, None, None, None, None, false).unwrap();
         let json = serde_json::to_value(unobserved).unwrap();
         for cohort in ["evolving", "random_control"] {
             assert_eq!(
@@ -442,6 +524,8 @@ mod tests {
                 json[cohort]["species"].get("events"),
                 Some(&serde_json::Value::Null)
             );
+            assert_eq!(json[cohort].get("history"), Some(&serde_json::Value::Null));
+            assert_eq!(json[cohort]["complexity"]["neurons"]["median"], 0);
         }
     }
 

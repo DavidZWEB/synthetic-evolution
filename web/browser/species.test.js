@@ -1,6 +1,7 @@
 /** Real worker, paused rendering, and species-selection lifecycle regressions. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
@@ -9,7 +10,7 @@ import { writeRunUrl } from '../src/sim/seed-url.js';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const founders = 128;
 
-async function withPage(mode, run, params = {}) {
+async function withPage(mode, run, params = {}, { seed = '42', runFounders = founders } = {}) {
   const server = await createServer({
     root, mode, logLevel: 'silent', server: { host: '127.0.0.1', strictPort: false },
   });
@@ -39,7 +40,7 @@ async function withPage(mode, run, params = {}) {
       };
     });
     await page.goto(writeRunUrl(server.resolvedUrls.local[0], {
-      seed: '42', founders, brainInheritance: 'evolving',
+      seed, founders: runFounders, brainInheritance: 'evolving',
       params: JSON.stringify({
         world: { max_agents: 128 }, plants: { max_plants: 64 }, chemo: { cells: [8, 8, 1] },
         species: { capacity: 4, threshold: 1e-12 }, brain: { connections_per_target: 1 },
@@ -199,6 +200,32 @@ test('reseed rejects delayed old-world species replies and resets selection with
     assert.equal(await panel.getByRole('combobox', { name: 'color by' }).inputValue(), 'species');
     assert.equal(await panel.getByRole('button', { name: 'clear species highlight' }).isDisabled(), true);
   });
+});
+
+test('genome complexity matches the native reference at the same completed tick', async () => {
+  // shells/shared/complexity_case.rs: the reference native metrics and WASM tests share.
+  const structural = JSON.parse(readFileSync(
+    new URL('../../shells/native/tests/fixtures/structural.json', import.meta.url), 'utf8'));
+  await withPage('development', async (page) => {
+    const panel = await openSpecies(page);
+    for (let tick = 1; tick <= 40; tick++) {
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction((expected) => [...document.querySelectorAll('header dt')]
+        .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === expected,
+      String(tick));
+    }
+    await page.waitForFunction(() => document.querySelector('.species-panel .sample-time')
+      ?.textContent.startsWith('as of tick 40 '));
+    const table = panel.getByRole('table', { name: 'Genome complexity' });
+    const rows = await table.locator('tbody tr').evaluateAll((nodes) => nodes.map((row) =>
+      [...row.children].map((cell) => cell.textContent)));
+    assert.deepEqual(rows, [
+      ['all genes', '81', '81–82', '68–95', '83.1'],
+      ['neurons', '15', '15–15', '15–15', '15.0'],
+      ['connections', '52', '52–53', '39–66', '54.1'],
+      ['enabled connections', '50', '49–51', '36–66', '52.2'],
+    ]);
+  }, { ...structural, species: { capacity: 256, threshold: 0.5 } }, { seed: '7', runFounders: 8 });
 });
 
 test('classification-disabled worlds remain explicitly unclassified in the species browser', async () => {

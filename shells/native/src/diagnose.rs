@@ -12,7 +12,7 @@ use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOpera
 use crate::Result;
 use crate::cli::DiagnoseArgs;
 use crate::diagnose_output::print_human;
-use crate::metrics::{RunHeader, RunSample, WorldMetrics};
+use crate::metrics::{ComplexityMetrics, HistoryAvailability, RunHeader, RunSample, WorldMetrics};
 use crate::metrics_reader::read_metrics;
 
 const IDLE_SPEED_FRACTION: f64 = 0.001;
@@ -50,6 +50,8 @@ pub struct ComparisonReport {
 pub struct SpeciesSummary {
     pub tick: u64,
     pub active_species: u32,
+    /// Configured active-representative capacity, so saturation is visible.
+    pub species_capacity: u32,
     pub unclassified_population: u32,
 }
 
@@ -60,6 +62,45 @@ pub struct SpeciesReport {
     pub random_control: Option<SpeciesSummary>,
 }
 
+/// Live genome sizes at the final sample: a drift descriptor, not a complexity score.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ComplexitySummary {
+    pub tick: u64,
+    #[serde(flatten)]
+    pub distributions: ComplexityMetrics,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ComplexityReport {
+    pub evolving: Option<ComplexitySummary>,
+    pub random_control: Option<ComplexitySummary>,
+}
+
+/// History capture state at the final sample.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum HistoryStatus {
+    /// Schemas before 8 did not record whether capture was on.
+    Unknown,
+    Off,
+    Complete {
+        tick: u64,
+        #[serde(flatten)]
+        availability: HistoryAvailability,
+    },
+    Incomplete {
+        tick: u64,
+        #[serde(flatten)]
+        availability: HistoryAvailability,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct HistoryReport {
+    pub evolving: HistoryStatus,
+    pub random_control: HistoryStatus,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiagnosisReport {
     pub samples: usize,
@@ -67,6 +108,8 @@ pub struct DiagnosisReport {
     pub random_control: Vec<Finding>,
     pub comparison: ComparisonReport,
     pub species: SpeciesReport,
+    pub complexity: ComplexityReport,
+    pub history: HistoryReport,
     pub unavailable: Vec<String>,
 }
 
@@ -140,6 +183,23 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         if samples.is_empty()
             || samples
                 .iter()
+                .any(|sample| select(sample, cohort).complexity.is_none())
+        {
+            unavailable.push(format!(
+                "separate neuron/connection counts and genome-size distributions for {} are unavailable: legacy sampling did not record them",
+                cohort.name()
+            ));
+        }
+        if header.schema_version < 8 {
+            unavailable.push(format!(
+                "history-capture availability for {} is unknown: schema {} did not record whether capture was on",
+                cohort.name(),
+                header.schema_version
+            ));
+        }
+        if samples.is_empty()
+            || samples
+                .iter()
                 .any(|sample| select(sample, cohort).spawn_failures.is_none())
         {
             unavailable.push(format!(
@@ -183,21 +243,59 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         random_control,
         comparison,
         species: SpeciesReport {
-            evolving: species_summary(samples.last(), Cohort::Evolving),
-            random_control: species_summary(samples.last(), Cohort::Control),
+            evolving: species_summary(header, samples.last(), Cohort::Evolving),
+            random_control: species_summary(header, samples.last(), Cohort::Control),
+        },
+        complexity: ComplexityReport {
+            evolving: complexity_summary(samples.last(), Cohort::Evolving),
+            random_control: complexity_summary(samples.last(), Cohort::Control),
+        },
+        history: HistoryReport {
+            evolving: history_status(header, samples.last(), Cohort::Evolving),
+            random_control: history_status(header, samples.last(), Cohort::Control),
         },
         unavailable,
     }
 }
 
-fn species_summary(sample: Option<&RunSample>, cohort: Cohort) -> Option<SpeciesSummary> {
+fn species_summary(
+    header: &RunHeader,
+    sample: Option<&RunSample>,
+    cohort: Cohort,
+) -> Option<SpeciesSummary> {
     let sample = sample?;
     let species = select(sample, cohort).species.as_ref()?;
     Some(SpeciesSummary {
         tick: sample.tick,
         active_species: species.populations.len() as u32,
+        species_capacity: header.params.species.capacity,
         unclassified_population: species.unclassified_population,
     })
+}
+
+fn complexity_summary(sample: Option<&RunSample>, cohort: Cohort) -> Option<ComplexitySummary> {
+    let sample = sample?;
+    Some(ComplexitySummary {
+        tick: sample.tick,
+        distributions: select(sample, cohort).complexity.clone()?,
+    })
+}
+
+fn history_status(header: &RunHeader, sample: Option<&RunSample>, cohort: Cohort) -> HistoryStatus {
+    let Some(sample) = sample.filter(|_| header.schema_version >= 8) else {
+        return HistoryStatus::Unknown;
+    };
+    match select(sample, cohort).history {
+        None => HistoryStatus::Off,
+        Some(availability) if availability.is_complete() => HistoryStatus::Complete {
+            tick: sample.tick,
+            availability,
+        },
+        Some(availability) => HistoryStatus::Incomplete {
+            tick: sample.tick,
+            availability,
+        },
+    }
 }
 
 fn diagnose_cohort(
@@ -220,6 +318,22 @@ fn diagnose_cohort(
     }
     diagnose_structural_mutations(&metrics, &mut findings);
     diagnose_species(&metrics, &mut findings);
+    if let Some((tick, history)) = metrics
+        .last()
+        .and_then(|(tick, sample)| Some((tick, sample.history?)))
+        .filter(|(_, history)| !history.is_complete())
+    {
+        findings.push(Finding {
+            code: "history_gaps",
+            signal: format!(
+                "{} history events dropped in {} gaps through tick {tick}",
+                history.dropped_events, history.gaps
+            ),
+            likely_causes: vec![
+                "the bounded history recorder filled between drains; raise --history-capacity or sample more often, since each sample drains it",
+            ],
+        });
+    }
 
     if let Some((index, (tick, _))) = metrics
         .iter()
@@ -802,6 +916,8 @@ mod tests {
             spawn_failures: None,
             structural_mutations: None,
             species: None,
+            complexity: None,
+            history: None,
         }
     }
 
@@ -839,6 +955,7 @@ mod tests {
             Some(SpeciesSummary {
                 tick: 0,
                 active_species: 1,
+                species_capacity: 256,
                 unclassified_population: 1,
             })
         );
@@ -847,6 +964,7 @@ mod tests {
             Some(SpeciesSummary {
                 tick: 0,
                 active_species: 0,
+                species_capacity: 256,
                 unclassified_population: 3,
             })
         );
@@ -871,10 +989,12 @@ mod tests {
         let mut human = Vec::new();
         crate::diagnose_output::write_human(&mut human, &report).unwrap();
         let human = String::from_utf8(human).unwrap();
-        assert!(human.contains("evolving at tick 0: active_species=1, unclassified_population=1"));
-        assert!(
-            human.contains("scalar control at tick 0: active_species=0, unclassified_population=3")
-        );
+        assert!(human.contains(
+            "evolving at tick 0: active_species=1/256 capacity, unclassified_population=1"
+        ));
+        assert!(human.contains(
+            "scalar control at tick 0: active_species=0/256 capacity, unclassified_population=3"
+        ));
         assert!(human.contains("not adaptive success; monoculture uses exact genomes"));
     }
 
@@ -1628,6 +1748,86 @@ mod tests {
         assert!(metrics.mean_speed.relative_gap > 0.1);
         assert_eq!(metrics.population.evolving, 32.0);
         assert_eq!(metrics.population.random_control, 32.0);
+    }
+
+    #[test]
+    fn complexity_and_history_distinguish_unknown_off_and_incomplete() {
+        use crate::metrics::{ComplexityMetrics, HistoryAvailability, SizeDistribution};
+
+        let mut samples = vec![sample(0, 2, 2), sample(1_000, 2, 2)];
+        let sizes = SizeDistribution {
+            min: 3,
+            p25: 3,
+            median: 4,
+            p75: 4,
+            max: 4,
+            mean: 3.5,
+        };
+        for sample in &mut samples {
+            sample.evolving.complexity = Some(ComplexityMetrics {
+                genome_genes: sizes.clone(),
+                ..Default::default()
+            });
+            sample.evolving.history = Some(HistoryAvailability {
+                capacity: 8,
+                retained_events: 5,
+                dropped_events: 2,
+                gaps: 1,
+            });
+        }
+        let report = diagnose(&header(1_000), &samples);
+        assert_eq!(report.complexity.evolving.as_ref().unwrap().tick, 1_000);
+        assert_eq!(report.complexity.random_control, None);
+        assert!(report.unavailable.iter().any(|reason| {
+            reason.contains("genome-size distributions for scalar control are unavailable")
+        }));
+        assert!(
+            !report
+                .unavailable
+                .iter()
+                .any(|reason| reason.contains("genome-size distributions for evolving"))
+        );
+        assert!(matches!(
+            report.history.evolving,
+            HistoryStatus::Incomplete { tick: 1_000, .. }
+        ));
+        assert_eq!(report.history.random_control, HistoryStatus::Off);
+        let gaps = report
+            .evolving
+            .iter()
+            .find(|finding| finding.code == "history_gaps")
+            .expect("history gaps reported");
+        assert!(gaps.signal.contains("2 history events dropped in 1 gaps"));
+        assert!(
+            !report
+                .random_control
+                .iter()
+                .any(|f| f.code == "history_gaps")
+        );
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["history"]["evolving"]["status"], "incomplete");
+        assert_eq!(json["history"]["evolving"]["dropped_events"], 2);
+        assert_eq!(json["history"]["random_control"]["status"], "off");
+        assert_eq!(json["complexity"]["evolving"]["genome_genes"]["median"], 4);
+
+        let mut output = Vec::new();
+        crate::diagnose_output::write_human(&mut output, &report).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("genome genes: 3/3/4/4/4, mean 3.50"));
+        assert!(output.contains("  - scalar control: unavailable\nhistory capture:"));
+        assert!(output.contains(
+            "evolving: incomplete through tick 1000: 2 dropped events in 1 gaps (5 retained, capacity 8)"
+        ));
+        assert!(output.contains("  - scalar control: off"));
+
+        let mut legacy = header(1_000);
+        legacy.schema_version = 7;
+        let report = diagnose(&legacy, &samples);
+        assert_eq!(report.history.evolving, HistoryStatus::Unknown);
+        assert_eq!(report.history.random_control, HistoryStatus::Unknown);
+        assert!(report.unavailable.iter().any(|reason| {
+            reason.contains("history-capture availability for scalar control is unknown")
+        }));
     }
 
     #[test]

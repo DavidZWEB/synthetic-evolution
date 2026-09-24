@@ -86,7 +86,7 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     assert!(lines[1].contains(r#""random_control""#));
     let header: serde_json::Value = serde_json::from_str(&lines[0]).expect("header JSON");
     assert_eq!(header["data"]["phase"], 2);
-    assert_eq!(header["data"]["schema_version"], 7);
+    assert_eq!(header["data"]["schema_version"], 8);
     assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     assert_eq!(header["data"]["params"]["species"]["capacity"], 256);
     assert_eq!(header["data"]["params"]["species"]["threshold"], 0.5);
@@ -139,8 +139,29 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
             assert_eq!(species["events"]["extinct"], 0);
             assert_eq!(species["events"]["unclassified_capacity"], 0);
             assert_eq!(report["species"][cohort]["active_species"], 1);
+            assert_eq!(report["species"][cohort]["species_capacity"], 256);
             assert_eq!(report["species"][cohort]["unclassified_population"], 0);
+            assert_eq!(sample["data"][cohort]["history"], serde_json::Value::Null);
+            let complexity = &sample["data"][cohort]["complexity"];
+            for field in [
+                "genome_genes",
+                "neurons",
+                "connections",
+                "enabled_connections",
+            ] {
+                assert!(complexity[field]["min"].as_u64().unwrap() > 0, "{field}");
+            }
+            let brain_units = sample["data"][cohort]["brain_units"]["mean"]
+                .as_f64()
+                .unwrap();
+            let neurons = complexity["neurons"]["mean"].as_f64().unwrap();
+            let connections = complexity["connections"]["mean"].as_f64().unwrap();
+            assert!((brain_units - (neurons + connections)).abs() < 1e-9);
         }
+    }
+    for cohort in ["evolving", "random_control"] {
+        assert_eq!(report["history"][cohort]["status"], "off");
+        assert_eq!(report["complexity"][cohort]["tick"], 10);
     }
     assert!(
         !report["unavailable"]
@@ -367,7 +388,7 @@ fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
     });
     let (lines, report) = run_and_diagnose(&params.to_string(), 7, 1, 1, 1);
     let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    assert_eq!(header["data"]["schema_version"], 7);
+    assert_eq!(header["data"]["schema_version"], 8);
     assert_eq!(header["data"]["control"], "randomized_at_birth_v3");
     let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
     let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();

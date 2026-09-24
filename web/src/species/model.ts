@@ -1,4 +1,6 @@
 /** Completed-tick species observations, not retained ancestry or organism identity. */
+import { type Complexity, decodeComplexity } from './complexity.ts';
+
 export const NULL_SPECIES = 0xffff_ffff;
 
 export interface SpeciesPopulation {
@@ -11,6 +13,8 @@ export interface SpeciesSnapshot {
   population: number;
   populations: SpeciesPopulation[];
   unclassifiedPopulation: number;
+  /** Sampled in the same worker turn, so it describes the same completed tick. */
+  complexity: Complexity;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -23,7 +27,7 @@ export function isSpeciesSelection(value: unknown): value is number | null {
 }
 
 export function decodeSpeciesSnapshot(response: {
-  tick: unknown; population: unknown; diagnostics: string;
+  tick: unknown; population: unknown; diagnostics: string; complexity: unknown;
 }): SpeciesSnapshot {
   const data: unknown = JSON.parse(response.diagnostics);
   if (
@@ -51,8 +55,10 @@ export function decodeSpeciesSnapshot(response: {
     return { id: row.species_id, population: row.population };
   });
   if (total !== population) throw new TypeError('species populations do not sum to population');
+  if (typeof response.complexity !== 'string') throw new TypeError('missing complexity payload');
   return {
     tick: BigInt(response.tick), population, populations,
     unclassifiedPopulation: data.unclassified_population,
+    complexity: decodeComplexity(response.complexity, population),
   };
 }
