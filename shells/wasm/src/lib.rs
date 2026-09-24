@@ -258,7 +258,7 @@ impl Sim {
                 count,
                 |error| counts.record(error),
                 |event| species.record(event),
-                |event| history::record(recorder, event),
+                |event, _| history::record(recorder, event),
             ),
             None => self.world.seed_founders_with_observers(
                 count,
@@ -283,7 +283,7 @@ impl Sim {
                         |error| counts.record(error),
                         |event| mutations.record(event),
                         |event| species.record(event),
-                        |event| history::record(recorder, event),
+                        |event, _| history::record(recorder, event),
                     );
                 }
             }

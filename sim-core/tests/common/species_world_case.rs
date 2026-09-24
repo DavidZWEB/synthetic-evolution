@@ -63,7 +63,12 @@ fn run(mode: BrainInheritance) -> u64 {
     let mut events = SpeciesEventCounts::default();
     let mut history = Recorder::try_new(8).unwrap();
     let mut lossy = Recorder::try_new(2).unwrap();
-    let mut capture = |event| {
+    let mut capture = |event: Event, representative: Option<&[Gene]>| {
+        // Origins, and only origins, lend the classifier's stored representative.
+        assert_eq!(
+            representative.is_some(),
+            matches!(event.kind, EventKind::SpeciesOrigin { .. })
+        );
         history.record(event).unwrap();
         lossy.record(event).unwrap();
     };

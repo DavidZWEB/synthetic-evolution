@@ -611,6 +611,15 @@ capture gaps must stay explicit. Use a versioned extension while retaining readb
 of older event-only archives; their absent genomes remain unavailable, never guessed
 from descendants. Species-origin graph presentation still needs approval.
 
+**DECIDED mechanism:** World's history callback lends the new species' stored
+representative, borrowed for that call only. Shells copy it into a preallocated,
+bounded staging buffer until the origin record drains. When staging is full, or the
+record would exceed the archive line limit, the origin is archived with an explicit
+unavailable reason. History schema 3 is that extension for both the native and
+browser archive shapes. Native output stays schema 1 unless representatives are
+requested. The browser capture and a representative comparison view follow as a
+separate slice; the comparison view's design needs its own approval.
+
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.
 - **Reproductive isolation:** agents will only mate if δ < threshold. This means speciation is a real event in the sim, not just a coloring of the plot — and it means mate choice itself becomes an evolvable behavior.

@@ -141,6 +141,78 @@ fn diagnose(metrics: &Path) -> Value {
 }
 
 #[test]
+fn representatives_are_observational_and_archived_for_every_origin() {
+    let scratch = Scratch::new();
+    let params = scratch.params(include_str!("fixtures/structural.json"));
+    for seed in [7, 42] {
+        let metrics = scratch.path("baseline.jsonl");
+        let history = scratch.path("history.jsonl");
+        let baseline = success(
+            command(&params, seed, 12, 4)
+                .arg("--metrics")
+                .arg(&metrics)
+                .arg("--history")
+                .arg(&history),
+        );
+        let expected_metrics = fs::read(&metrics).unwrap();
+        let events_only = rows(&history);
+        let observed = success(
+            command(&params, seed, 12, 4)
+                .arg("--metrics")
+                .arg(&metrics)
+                .arg("--history")
+                .arg(&history)
+                .arg("--representatives"),
+        );
+        assert_eq!(observed.stderr, baseline.stderr, "final hashes unchanged");
+        assert_eq!(fs::read(&metrics).unwrap(), expected_metrics);
+        let archived = rows(&history);
+        assert_eq!(archived[0]["data"]["schema_version"], 3);
+        assert_eq!(archived[0]["data"]["representative_genes"], 65_536);
+        assert_eq!(archived.len(), events_only.len());
+        let mut origins = 0;
+        for (with, without) in archived.iter().zip(&events_only).skip(1) {
+            if with["kind"] != "event" {
+                continue;
+            }
+            let mut stripped = with.clone();
+            let representative = stripped["data"]
+                .as_object_mut()
+                .unwrap()
+                .remove("representative");
+            assert_eq!(stripped, *without, "events themselves are unchanged");
+            if with["data"]["event"]["kind"] == "species_origin" {
+                origins += 1;
+                let representative = representative.expect("every origin has one");
+                assert_eq!(representative["status"], "recorded");
+                assert!(!representative["genes"].as_array().unwrap().is_empty());
+            } else {
+                assert!(representative.is_none());
+            }
+        }
+        assert!(origins > 2, "the structural fixture creates species");
+        let report = summary(&history);
+        for cohort in report["cohorts"].as_array().unwrap() {
+            assert_eq!(
+                cohort["counts"]["representatives"],
+                cohort["counts"]["origins"]
+            );
+            assert_eq!(cohort["counts"]["unavailable_representatives"], "0");
+        }
+        let human = success(
+            Command::new(env!("CARGO_BIN_EXE_native"))
+                .arg("history")
+                .arg(&history),
+        );
+        assert!(
+            String::from_utf8(human.stdout)
+                .unwrap()
+                .contains("representatives archived, 0 unavailable")
+        );
+    }
+}
+
+#[test]
 fn capture_is_observational_across_seeds_cohorts_and_overflow() {
     let scratch = Scratch::new();
     let params = scratch.params(include_str!("fixtures/structural.json"));

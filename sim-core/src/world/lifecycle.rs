@@ -43,7 +43,7 @@ impl World {
         genes: &[Gene],
         on_species: impl FnMut(SpeciesEvent),
     ) -> Result<AgentId, SpawnError> {
-        self.spawn_with_history_observer(spec, genes, on_species, |_| {})
+        self.spawn_with_history_observer(spec, genes, on_species, |_, _| {})
     }
 
     pub fn spawn_with_history_observer(
@@ -51,7 +51,7 @@ impl World {
         spec: &SpawnSpec,
         genes: &[Gene],
         on_species: impl FnMut(SpeciesEvent),
-        on_history: impl FnMut(HistoryEvent),
+        on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
@@ -74,7 +74,7 @@ impl World {
         spec: &SpawnSpec,
         genes: &[Gene],
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> Result<AgentId, SpawnError> {
         if self.pool.live_count() == self.pool.capacity() {
             return Err(SpawnError::PoolFull);
@@ -137,15 +137,22 @@ impl World {
                 self.agents.species_id[id.index()] = assignment.species.raw();
                 if assignment.created {
                     on_species(SpeciesEvent::Created(assignment.species));
-                    on_history(HistoryEvent {
-                        tick: self.tick,
-                        kind: HistoryKind::SpeciesOrigin {
-                            species_id: assignment.species,
-                            founder_birth_id: self.agents.birth_id[id.index()],
-                            parent_a: history_parent_a,
-                            parent_b: HistoryParent::Absent,
+                    // The classifier's own immutable copy, borrowed only for this call:
+                    // a later lookup can miss species that die before a drain (§3.4).
+                    let representative = self.classifier.representative(assignment.species);
+                    debug_assert_eq!(representative, Some(genes));
+                    on_history(
+                        HistoryEvent {
+                            tick: self.tick,
+                            kind: HistoryKind::SpeciesOrigin {
+                                species_id: assignment.species,
+                                founder_birth_id: self.agents.birth_id[id.index()],
+                                parent_a: history_parent_a,
+                                parent_b: HistoryParent::Absent,
+                            },
                         },
-                    });
+                        representative,
+                    );
                 }
             }
             Err(reason) => {
@@ -229,14 +236,14 @@ impl World {
         position: Vec3,
         on_species: impl FnMut(SpeciesEvent),
     ) -> Result<AgentId, SpawnError> {
-        self.spawn_founder_with_history_observer(position, on_species, |_| {})
+        self.spawn_founder_with_history_observer(position, on_species, |_, _| {})
     }
 
     pub fn spawn_founder_with_history_observer(
         &mut self,
         position: Vec3,
         on_species: impl FnMut(SpeciesEvent),
-        on_history: impl FnMut(HistoryEvent),
+        on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> Result<AgentId, SpawnError> {
         // Taken out of `self` so the borrow checker sees the buffer and the world as
         // separate; put back before returning.
@@ -300,14 +307,14 @@ impl World {
         id: AgentId,
         on_species: impl FnMut(SpeciesEvent),
     ) -> bool {
-        self.despawn_with_history_observer(id, on_species, |_| {})
+        self.despawn_with_history_observer(id, on_species, |_, _| {})
     }
 
     pub fn despawn_with_history_observer(
         &mut self,
         id: AgentId,
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> bool {
         if !self.pool.is_alive(id) {
             return false;
@@ -345,12 +352,15 @@ impl World {
         let removed = self.pool.free(id);
         if extinct {
             on_species(SpeciesEvent::Extinct(species));
-            on_history(HistoryEvent {
-                tick: self.tick,
-                kind: HistoryKind::SpeciesExtinct {
-                    species_id: species,
+            on_history(
+                HistoryEvent {
+                    tick: self.tick,
+                    kind: HistoryKind::SpeciesExtinct {
+                        species_id: species,
+                    },
                 },
-            });
+                None,
+            );
         }
         removed
     }
@@ -386,7 +396,7 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_species: impl FnMut(SpeciesEvent),
     ) -> u32 {
-        self.seed_founders_with_history_observer(count, &mut on_refusal, &mut on_species, |_| {})
+        self.seed_founders_with_history_observer(count, &mut on_refusal, &mut on_species, |_, _| {})
     }
 
     pub fn seed_founders_with_history_observer(
@@ -394,7 +404,7 @@ impl World {
         count: u32,
         mut on_refusal: impl FnMut(SpawnError),
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> u32 {
         /// Radians. The irrational turn that makes a phyllotactic spiral, and the reason
         /// sunflower seeds pack without lining up.

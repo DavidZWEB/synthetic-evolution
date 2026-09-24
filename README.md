@@ -19,8 +19,10 @@ M5 adds stable individual/parent IDs and opt-in native/browser species-history
 archives with explicit capture gaps. Browser archives are saved locally per run,
 with bounded storage and interoperable JSONL import/export; they do not resume a
 World. M6 adds a live species browser with display-only coloring, population
-highlighting, and genome-size telemetry shared by browser and native metrics;
-representative history/comparison and the ancestry graph remain pending. The
+highlighting, and genome-size telemetry shared by browser and native metrics.
+Native history can also archive each species' representative genome at origin
+(`--representatives`); browser representatives, comparison, and the ancestry graph
+remain pending. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

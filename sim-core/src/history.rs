@@ -1,11 +1,16 @@
 //! Bounded chronological capture of species lifecycle observations.
 //!
-//! Shells own recorders and persistence; World only emits optional callbacks.
-//! Overflow produces explicit gaps, never changes to ecology or authoritative state.
+//! Shells own recorders and persistence; World only emits optional callbacks. Origin
+//! callbacks also lend the new species' stored representative genome, which shells
+//! may stage in a [`RepresentativeBuffer`]. Overflow produces explicit gaps or
+//! unavailable representatives, never changes to ecology or authoritative state.
 
 use std::collections::TryReserveError;
 
 use crate::ids::{BirthId, SpeciesId};
+
+mod representatives;
+pub use representatives::RepresentativeBuffer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Parent {
@@ -399,7 +404,7 @@ mod tests {
         }
         let mut events = Vec::new();
         world
-            .spawn_with_history_observer(&spec, &genes, |_| {}, |event| events.push(event))
+            .spawn_with_history_observer(&spec, &genes, |_| {}, |event, _| events.push(event))
             .unwrap();
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0].kind, EventKind::SpeciesOrigin {
