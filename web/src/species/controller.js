@@ -1,4 +1,5 @@
 /** On-demand live species sampling and world-local highlight selection. */
+import { createRequestGate } from '../sim/request-gate.js';
 import { decodeSpeciesSnapshot, isSpeciesSelection, NULL_SPECIES } from './model.ts';
 
 export function createSpeciesController({
@@ -8,20 +9,15 @@ export function createSpeciesController({
   let selected = null;
   let sample = null;
   let message = null;
-  let requestId = 0;
-  let inFlight = false;
-  let refreshNeeded = false;
   let wantedTick = null;
-  let lastRequestAt = Number.NEGATIVE_INFINITY;
+  const gate = createRequestGate({ intervalMs });
   const notify = () => onChange({ sample, selected, message });
 
   function request(timestamp = now()) {
     const sim = getSim();
-    if (!sim || inFlight || (!open && selected === null)) return;
-    inFlight = true;
-    refreshNeeded = false;
-    lastRequestAt = timestamp;
-    sim.requestSpecies(++requestId);
+    if (!sim || (!open && selected === null)) return;
+    const requestId = gate.begin(timestamp);
+    if (requestId !== null) sim.requestSpecies(requestId);
   }
 
   return {
@@ -37,25 +33,22 @@ export function createSpeciesController({
       if (!sample) request();
     },
     reset() {
-      requestId++;
-      inFlight = false;
+      gate.invalidate({ resetCooldown: true });
+      gate.demand(open);
       sample = null;
       selected = null;
       message = null;
-      refreshNeeded = open;
       wantedTick = null;
-      lastRequestAt = Number.NEGATIVE_INFINITY;
       notify();
     },
     accept(response) {
-      if (!inFlight || response.requestId !== requestId) return false;
-      inFlight = false;
+      if (!gate.settle(response.requestId)) return false;
       try {
         if (response.diagnostics === null) throw new Error(response.message ?? 'species data unavailable');
         const next = decodeSpeciesSnapshot(response);
         if (sample && next.tick < sample.tick) throw new Error('species sample moved backwards');
         sample = next;
-        refreshNeeded = wantedTick !== null && sample.tick < wantedTick;
+        gate.demand(wantedTick !== null && sample.tick < wantedTick);
         message = null;
         if (selected !== null && (selected === NULL_SPECIES
           ? sample.unclassifiedPopulation === 0
@@ -74,9 +67,9 @@ export function createSpeciesController({
       if (!open && selected === null) return;
       if (frame?.fresh) {
         wantedTick = frame.tick;
-        if (!sample || frame.tick > sample.tick) refreshNeeded = true;
+        if (!sample || frame.tick > sample.tick) gate.demand();
       }
-      if (refreshNeeded && !inFlight && timestamp - lastRequestAt >= intervalMs) request(timestamp);
+      if (gate.due(timestamp)) request(timestamp);
     },
   };
 }
