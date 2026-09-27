@@ -1,9 +1,11 @@
 //! Bounded staging of representative genomes captured with their origin events.
 //!
 //! Shells copy each new species' representative here from the history callback and
-//! claim it when the matching origin record drains. It never allocates after
+//! claim it when the matching origin record drains, in capture order. It never allocates after
 //! construction and never looks genomes up later: a full buffer makes that
 //! representative unavailable, not deferred (spec §3.4).
+
+use std::collections::VecDeque;
 
 use crate::genome::Gene;
 
@@ -16,13 +18,19 @@ struct Entry {
     len: u32,
 }
 
+impl Entry {
+    fn end(self) -> u32 {
+        self.start + self.len
+    }
+}
+
+/// A FIFO ring of contiguous genomes. Claiming the oldest genome frees its space
+/// immediately, so partial drains never strand capacity behind unclaimed entries.
 #[derive(Debug)]
 pub struct RepresentativeBuffer {
     genes: Vec<Gene>,
-    gene_capacity: u32,
-    entries: Vec<Entry>,
+    entries: VecDeque<Entry>,
     entry_capacity: u32,
-    cursor: usize,
 }
 
 impl RepresentativeBuffer {
@@ -45,76 +53,85 @@ impl RepresentativeBuffer {
         genes
             .try_reserve_exact(gene_capacity as usize)
             .map_err(BuildError::Reservation)?;
-        let mut entries = Vec::new();
+        genes.resize(gene_capacity as usize, Gene::default());
+        let mut entries = VecDeque::new();
         entries
             .try_reserve_exact(genome_capacity as usize)
             .map_err(BuildError::Reservation)?;
         Ok(Self {
             genes,
-            gene_capacity,
             entries,
             entry_capacity: genome_capacity,
-            cursor: 0,
         })
     }
 
     pub fn gene_capacity(&self) -> u32 {
-        self.gene_capacity
+        self.genes.len() as u32
     }
 
     /// Copies `genes` for the origin event at `sequence`, or returns false when either
     /// bound would be exceeded. Sequences must be stored in increasing order.
     pub fn store(&mut self, sequence: u64, genes: &[Gene]) -> bool {
-        self.reclaim();
         debug_assert!(
             self.entries
-                .last()
+                .back()
                 .is_none_or(|last| last.sequence < sequence),
             "representatives are staged in capture order"
         );
-        let start = self.genes.len();
-        if self.entries.len() == self.entry_capacity as usize
-            || genes.len() > self.gene_capacity as usize - start
-        {
+        if self.entries.len() == self.entry_capacity as usize {
             return false;
         }
-        // Within the reserved capacity, so neither push reallocates.
-        self.genes.extend_from_slice(genes);
-        self.entries.push(Entry {
+        let Some(start) = self.place(genes.len()) else {
+            return false;
+        };
+        let len = genes.len() as u32;
+        self.genes[start as usize..(start + len) as usize].copy_from_slice(genes);
+        // Within the reserved capacity, so the push never reallocates.
+        self.entries.push_back(Entry {
             sequence,
-            start: start as u32,
-            len: genes.len() as u32,
+            start,
+            len,
         });
         true
+    }
+
+    /// Where a contiguous genome of `len` genes fits without overlapping live ones.
+    fn place(&self, len: usize) -> Option<u32> {
+        let capacity = self.genes.len();
+        let (Some(oldest), Some(newest)) = (self.entries.front(), self.entries.back()) else {
+            return (len <= capacity).then_some(0);
+        };
+        let (oldest, end) = (oldest.start as usize, newest.end() as usize);
+        if newest.start as usize >= oldest {
+            // Live genomes are one run: free space follows it and precedes it.
+            if len <= capacity - end {
+                Some(end as u32)
+            } else if len <= oldest {
+                Some(0)
+            } else {
+                None
+            }
+        } else {
+            // The newest genome wrapped to the front; only the gap before the oldest is free.
+            (len <= oldest - end).then_some(end as u32)
+        }
     }
 
     /// The genome staged for `sequence`, discarding older entries that were never
     /// claimed. `None` means it was never staged, not that it can be found elsewhere.
     pub fn take(&mut self, sequence: u64) -> Option<&[Gene]> {
-        self.reclaim();
         while self
             .entries
-            .get(self.cursor)
+            .front()
             .is_some_and(|entry| entry.sequence < sequence)
         {
-            self.cursor += 1;
+            self.entries.pop_front();
         }
-        let entry = *self.entries.get(self.cursor)?;
-        if entry.sequence != sequence {
+        if self.entries.front()?.sequence != sequence {
             return None;
         }
-        self.cursor += 1;
-        let start = entry.start as usize;
-        Some(&self.genes[start..start + entry.len as usize])
-    }
-
-    /// Frees all space once every staged genome has been claimed or skipped.
-    fn reclaim(&mut self) {
-        if self.cursor == self.entries.len() {
-            self.entries.clear();
-            self.genes.clear();
-            self.cursor = 0;
-        }
+        let entry = self.entries.pop_front()?;
+        Some(&self.genes[entry.start as usize..entry.end() as usize])
     }
 }
 
@@ -165,11 +182,41 @@ mod tests {
         assert!(!buffer.store(3, &[]), "genome bound");
         assert_eq!(buffer.take(0), Some(&genome(3)[..]));
         assert!(
-            !buffer.store(4, &genome(1)),
-            "space returns only after every claim"
+            buffer.store(4, &genome(3)),
+            "claimed space returns immediately"
         );
+        assert!(!buffer.store(5, &[]), "genome bound again");
         assert_eq!(buffer.take(2), Some(&genome(1)[..]));
-        assert!(buffer.store(4, &genome(4)));
+        assert_eq!(buffer.take(4), Some(&genome(3)[..]));
+        assert!(buffer.store(5, &genome(4)));
+    }
+
+    #[test]
+    fn partial_drains_free_claimed_space_and_wrap_without_overlap() {
+        let mut buffer = RepresentativeBuffer::try_new(10, 3).unwrap();
+        assert!(buffer.store(0, &genome(4)));
+        assert!(buffer.store(1, &genome(4)));
+        assert!(buffer.store(2, &genome(2)));
+        assert!(
+            !buffer.store(3, &genome(1)),
+            "genome bound while all are pending"
+        );
+        assert_eq!(buffer.take(0), Some(&genome(4)[..]));
+        // Claiming one frees its slot and its genes, while 1 and 2 are still queued.
+        assert!(
+            buffer.store(3, &genome(3)),
+            "wraps into the space genome 0 freed"
+        );
+        assert!(!buffer.store(4, &genome(2)), "would overlap genome 1");
+        assert_eq!(buffer.take(1), Some(&genome(4)[..]));
+        assert!(buffer.store(4, &genome(2)));
+        assert_eq!(buffer.take(2), Some(&genome(2)[..]));
+        assert_eq!(buffer.take(3), Some(&genome(3)[..]));
+        assert_eq!(buffer.take(4), Some(&genome(2)[..]));
+        assert!(
+            buffer.store(5, &genome(10)),
+            "an empty ring offers its whole capacity"
+        );
     }
 
     #[test]

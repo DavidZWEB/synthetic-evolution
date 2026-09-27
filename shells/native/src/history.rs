@@ -1866,4 +1866,41 @@ mod tests {
             assert_eq!(Some(&archived[..]), world.species().representative(id));
         }
     }
+
+    #[test]
+    fn partial_drains_and_flushed_gaps_keep_genomes_on_their_own_sequences() {
+        let mut capture = Capture::new(3, Some(4096)).unwrap();
+        let cohort = &mut capture.cohorts[0];
+        for id in 0..4 {
+            cohort.record(origin(0, id), Some(&neurons(id + 1)));
+        }
+        assert_eq!(cohort.recorder.dropped_events(), 1, "origin 3 was dropped");
+        // A partial drain claims two origins, as the writer does, freeing two slots so
+        // the next origin flushes the pending gap just before itself.
+        for expected in 0..2u64 {
+            let Some(Record::Event { sequence, .. }) = cohort.recorder.pop() else {
+                panic!("expected a queued origin");
+            };
+            assert_eq!(sequence, expected);
+            let staged = cohort.representatives.as_mut().unwrap().take(sequence);
+            assert_eq!(staged, Some(&neurons(expected as u32 + 1)[..]));
+        }
+        cohort.record(origin(0, 4), Some(&neurons(5)));
+        let mut run = header();
+        run.founders = 5;
+        let mut bytes = Vec::new();
+        ArchiveWriter::new(&mut bytes, &run, 3, Some(4096))
+            .unwrap()
+            .drain(&mut capture)
+            .unwrap();
+        let rows = records(&bytes);
+        let kinds: Vec<_> = rows[1..].iter().map(|row| row["kind"].clone()).collect();
+        assert_eq!(kinds, ["event", "gap", "event"]);
+        for (row, sequence, genes) in [(&rows[1], "2", 3), (&rows[3], "4", 5)] {
+            assert_eq!(row["data"]["sequence"], sequence);
+            let archived: Vec<Gene> =
+                serde_json::from_value(row["data"]["representative"]["genes"].clone()).unwrap();
+            assert_eq!(archived, neurons(genes));
+        }
+    }
 }
