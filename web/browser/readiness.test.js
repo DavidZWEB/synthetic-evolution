@@ -76,10 +76,19 @@ async function firstFounderPoint(page) {
 
 async function selectFirstFounder(page) {
   const point = await firstFounderPoint(page);
-  await page.mouse.click(point.x, point.y);
   const inspector = page.getByRole('complementary', { name: 'Inspector for agent 0', exact: true });
-  await inspector.waitFor();
-  return inspector;
+  // The transport label is set when a world is ready, before its first frame reaches
+  // the renderer. A click in that gap correctly picks nothing, so click again until a
+  // drawn founder is selected rather than waiting on a selection that never started.
+  for (let attempt = 1; ; attempt++) {
+    await page.mouse.click(point.x, point.y);
+    try {
+      await inspector.waitFor({ timeout: 1000 });
+      return inspector;
+    } catch (error) {
+      if (attempt === 10) throw error;
+    }
+  }
 }
 
 async function inspectorFields(inspector) {
@@ -359,11 +368,13 @@ for (const mode of ['development', 'transferable']) {
       await page.setViewportSize({ width: 2000, height: 600 });
       const point = await firstFounderPoint(page);
       assert.ok(point.x - point.worldWidth > 0, 'the copy must fall inside a visible margin');
+      // Selecting the drawn founder first proves a frame is pickable, so the margin
+      // click below cannot pass merely because nothing had been drawn yet.
+      await selectFirstFounder(page);
       await page.mouse.click(point.x - point.worldWidth, point.y);
       await page.evaluate(() => new Promise((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.equal(await page.getByRole('complementary').count(), 0, 'picked an invisible copy');
-      await selectFirstFounder(page);
     });
   });
 
