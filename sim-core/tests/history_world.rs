@@ -43,7 +43,7 @@ fn spawn(world: &mut World, weight: f32, parent: AgentId, events: &mut Vec<Event
             &spec(parent),
             &common::genome(weight),
             |_| {},
-            |event| events.push(event),
+            |event, _| events.push(event),
         )
         .unwrap()
 }
@@ -80,9 +80,9 @@ fn origins_capture_parent_ids_and_species_before_reuse_and_extinction_is_once() 
     };
     assert_eq!(events[1], expected);
     world.advance_tick();
-    assert!(world.despawn_with_history_observer(parent, |_| {}, |e| events.push(e)));
+    assert!(world.despawn_with_history_observer(parent, |_| {}, |e, _| events.push(e)));
     let count = events.len();
-    assert!(!world.despawn_with_history_observer(parent, |_| {}, |e| events.push(e)));
+    assert!(!world.despawn_with_history_observer(parent, |_| {}, |e, _| events.push(e)));
     assert_eq!(events.len(), count);
     assert_eq!(
         events[2],
@@ -126,7 +126,7 @@ fn observed_unclassified_parents_are_not_founders_or_missing_parents() {
     world.agents_mut().energy[parent.index()] = 300.0;
     world.intents_mut().reproduce[parent.index()] = 1.0;
     assert_eq!(
-        world.resolve_births_with_history_observer(|_| {}, |_| {}, |_| {}, |e| events.push(e)),
+        world.resolve_births_with_history_observer(|_| {}, |_| {}, |_| {}, |e, _| events.push(e)),
         1
     );
     assert_eq!(
@@ -172,17 +172,17 @@ fn existing_members_and_refused_spawns_emit_no_extra_origins() {
     assert_eq!(events.len(), 1);
     assert!(
         world
-            .spawn_founder_with_history_observer(Vec3::ZERO, |_| {}, |e| events.push(e))
+            .spawn_founder_with_history_observer(Vec3::ZERO, |_| {}, |e, _| events.push(e))
             .is_err()
     );
     assert_eq!(events.len(), 1);
-    world.despawn_with_history_observer(parent, |_| {}, |e| events.push(e));
+    world.despawn_with_history_observer(parent, |_| {}, |e, _| events.push(e));
     assert_eq!(
         events.len(),
         1,
         "representative member death is not species extinction"
     );
-    world.despawn_with_history_observer(child, |_| {}, |e| events.push(e));
+    world.despawn_with_history_observer(child, |_| {}, |e, _| events.push(e));
     assert_eq!(events.len(), 2);
 }
 
@@ -196,9 +196,9 @@ fn command_origins_use_the_tick_the_command_is_applied() {
         },
     ));
     let mut events = Vec::new();
-    world.step_with_history_observer(|_| {}, |_| {}, |_| {}, |e| events.push(e));
+    world.step_with_history_observer(|_| {}, |_| {}, |_| {}, |e, _| events.push(e));
     assert!(events.is_empty());
-    world.step_with_history_observer(|_| {}, |_| {}, |_| {}, |e| events.push(e));
+    world.step_with_history_observer(|_| {}, |_| {}, |_| {}, |e, _| events.push(e));
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].tick, 1);
 }
@@ -234,7 +234,7 @@ fn capture_and_overflow_leave_complete_world_state_unchanged_across_seeds_and_mo
                 4,
                 |_| {},
                 |_| {},
-                |e| {
+                |e, _| {
                     recorder.record(e).unwrap();
                 },
             );
@@ -245,7 +245,7 @@ fn capture_and_overflow_leave_complete_world_state_unchanged_across_seeds_and_mo
                     |_| {},
                     |_| {},
                     |_| {},
-                    |e| {
+                    |e, _| {
                         recorder.record(e).unwrap();
                     },
                 );

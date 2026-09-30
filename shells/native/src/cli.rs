@@ -47,6 +47,20 @@ pub struct RunArgs {
     /// Preallocated history records per world; used only with --history.
     #[arg(long, default_value_t = 4096, requires = "history", value_parser = clap::value_parser!(u32).range(1..))]
     pub history_capacity: u32,
+    /// Also archive each new species' representative genome at origin (history schema 3).
+    #[arg(long, requires = "history")]
+    pub representatives: bool,
+    /// Preallocated genes per world for representatives awaiting a drain; used only
+    /// with --representatives. A full buffer records the representative as unavailable.
+    #[arg(long, default_value_t = 65_536, requires = "representatives", value_parser = clap::value_parser!(u32).range(1..))]
+    pub representative_genes: u32,
+}
+
+impl RunArgs {
+    /// The staging bound when representatives were requested.
+    pub fn representative_genes(&self) -> Option<u32> {
+        self.representatives.then_some(self.representative_genes)
+    }
 }
 
 #[derive(Clone, Debug, Args)]
@@ -96,6 +110,38 @@ mod tests {
             cli.command,
             Some(Command::Diagnose(DiagnoseArgs { json: true, .. }))
         ));
+    }
+
+    #[test]
+    fn representative_capture_requires_history_and_bounds_staging() {
+        let cli = Cli::try_parse_from(["native", "--history", "-"]).unwrap();
+        assert_eq!(cli.run.representative_genes(), None);
+        let cli = Cli::try_parse_from(["native", "--history", "-", "--representatives"]).unwrap();
+        assert_eq!(cli.run.representative_genes(), Some(65_536));
+        let cli = Cli::try_parse_from([
+            "native",
+            "--history",
+            "-",
+            "--representatives",
+            "--representative-genes",
+            "2048",
+        ])
+        .unwrap();
+        assert_eq!(cli.run.representative_genes(), Some(2048));
+        for args in [
+            &["native", "--representatives"][..],
+            &["native", "--history", "-", "--representative-genes", "2048"],
+            &[
+                "native",
+                "--history",
+                "-",
+                "--representatives",
+                "--representative-genes",
+                "0",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err(), "accepted {args:?}");
+        }
     }
 
     #[test]

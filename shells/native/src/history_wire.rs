@@ -1,9 +1,12 @@
 //! Versioned species-history archive records, independent of metrics and core serde.
 //!
-//! Native export remains version one; version two also describes browser capture
-//! prefixes. Shared events describe founding admissions, not complete genealogy.
+//! Native export remains version one unless representatives are requested; version
+//! two also describes browser capture prefixes; version three adds each species'
+//! representative genome at origin to either shape. Shared events describe founding
+//! admissions, not complete genealogy.
 
 use serde::{Deserialize, Deserializer, Serialize};
+use sim_core::genome::Gene;
 use sim_core::params::SimParams;
 
 use crate::metrics::RunHeader;
@@ -15,6 +18,7 @@ pub(crate) use history_event_wire::{Decimal, EventRecord, ParentRecord};
 
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 pub(crate) const BROWSER_SCHEMA_VERSION: u32 = 2;
+pub(crate) const REPRESENTATIVE_SCHEMA_VERSION: u32 = 3;
 pub(crate) const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,13 +67,28 @@ pub(crate) struct Header {
     #[serde(deserialize_with = "required_option")]
     pub drain_every: Option<Decimal>,
     pub capacity_per_cohort: u32,
+    /// Version three only: genes per cohort staged for representatives awaiting a drain.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub representative_genes: Option<u32>,
     pub params: SimParams,
 }
 
 impl Header {
-    pub fn new(run: &RunHeader, capacity: u32) -> crate::Result<Self> {
+    pub fn new(
+        run: &RunHeader,
+        capacity: u32,
+        representative_genes: Option<u32>,
+    ) -> crate::Result<Self> {
         Ok(Self {
-            schema_version: SCHEMA_VERSION,
+            schema_version: if representative_genes.is_some() {
+                REPRESENTATIVE_SCHEMA_VERSION
+            } else {
+                SCHEMA_VERSION
+            },
             run_id: None,
             provenance: Provenance {
                 sim_version: run.sim_version.clone(),
@@ -83,9 +102,29 @@ impl Header {
             founders: run.founders,
             drain_every: Some(Decimal(run.sample_every)),
             capacity_per_cohort: capacity,
+            representative_genes,
             params: run.params.clone(),
         })
     }
+}
+
+/// A species' representative genome at origin, or why it was not archived.
+///
+/// Unavailable is final: nothing later may reconstruct it from descendants (spec §3.4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RepresentativeRecord {
+    Recorded { genes: Vec<Gene> },
+    Unavailable { reason: UnavailableRepresentative },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnavailableRepresentative {
+    /// The bounded staging buffer was full when the species originated.
+    CapturePressure,
+    /// The origin record with its genome would exceed the archive line limit.
+    LineLimit,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +136,19 @@ pub(crate) struct Counts {
     pub gaps: Decimal,
     pub origins: Decimal,
     pub extinctions: Decimal,
+    /// Version three only: origins archived with and without their representative.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub representatives: Option<Decimal>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub unavailable_representatives: Option<Decimal>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,6 +240,13 @@ pub(crate) enum ArchiveRecord {
         sequence: Decimal,
         tick: Decimal,
         event: EventRecord,
+        /// Present on every version-three origin and nowhere else.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present_value"
+        )]
+        representative: Option<RepresentativeRecord>,
     },
     Gap {
         cohort: Cohort,

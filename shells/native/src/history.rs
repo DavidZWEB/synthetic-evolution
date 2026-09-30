@@ -1,43 +1,78 @@
 //! Shell-owned bounded capture and streaming species-history export.
 //!
-//! Callbacks only enqueue preallocated records. Draining and all I/O happen outside
+//! Callbacks only enqueue preallocated records and, when requested, stage origin
+//! representatives in preallocated buffers. Draining and all I/O happen outside
 //! World; this is neither a complete genealogy nor a checkpoint.
 
 use std::io::{self, Write};
 
-use sim_core::history::{Event, Record, Recorder, SequenceExhausted};
+use sim_core::genome::Gene;
+use sim_core::history::{
+    Capture as Captured, Event, Record, Recorder, RepresentativeBuffer, SequenceExhausted,
+};
 
 use crate::Result;
 use crate::cli::HistoryArgs;
 use crate::history_wire::{
     ArchiveRecord, CaptureEnd, Cohort, CohortCompletion, Completion, Counts, Decimal, EventRecord,
-    Header, MAX_LINE_BYTES, SCHEMA_VERSION,
+    Header, MAX_LINE_BYTES, RepresentativeRecord, UnavailableRepresentative,
 };
 use crate::metrics::{HistoryAvailability, RunHeader, StateHashes};
 
+pub(crate) struct CohortCapture {
+    pub recorder: Recorder,
+    representatives: Option<RepresentativeBuffer>,
+}
+
+impl CohortCapture {
+    fn new(capacity: u32, representative_genes: Option<u32>) -> Result<Self> {
+        Ok(Self {
+            recorder: Recorder::try_new(capacity)?,
+            // A recorder holds at most `capacity` undrained origins, so staging never
+            // needs more genome slots than that.
+            representatives: representative_genes
+                .map(|genes| RepresentativeBuffer::try_new(genes, capacity))
+                .transpose()?,
+        })
+    }
+
+    /// History callback: queue the event and stage an origin's representative.
+    pub fn record(&mut self, event: Event, representative: Option<&[Gene]>) {
+        // Recorder latches exhaustion. The shell reports it after stepping, never
+        // panicking or doing I/O from a callback in the tick.
+        if self.recorder.record(event) == Ok(Captured::Recorded)
+            && let (Some(buffer), Some(genes)) = (&mut self.representatives, representative)
+        {
+            // A refusal leaves nothing staged, so the drain archives it as unavailable.
+            let _ = buffer.store(self.recorder.next_sequence() - 1, genes);
+        }
+    }
+}
+
 pub(crate) struct Capture {
-    pub recorders: [Recorder; 2],
+    pub cohorts: [CohortCapture; 2],
 }
 
 impl Capture {
-    pub fn new(capacity: u32) -> Result<Self> {
+    pub fn new(capacity: u32, representative_genes: Option<u32>) -> Result<Self> {
         Ok(Self {
-            recorders: [Recorder::try_new(capacity)?, Recorder::try_new(capacity)?],
+            cohorts: [
+                CohortCapture::new(capacity, representative_genes)?,
+                CohortCapture::new(capacity, representative_genes)?,
+            ],
         })
     }
 
     pub fn check(&self) -> Result<()> {
-        if self.recorders.iter().any(Recorder::sequence_exhausted) {
+        if self
+            .cohorts
+            .iter()
+            .any(|cohort| cohort.recorder.sequence_exhausted())
+        {
             return Err(SequenceExhausted.into());
         }
         Ok(())
     }
-}
-
-pub(crate) fn record(recorder: &mut Recorder, event: Event) {
-    // Recorder latches exhaustion. The shell reports it after stepping, never
-    // panicking or doing I/O from a callback in the tick.
-    let _ = recorder.record(event);
 }
 
 pub(crate) struct ArchiveWriter<W: Write> {
@@ -47,16 +82,26 @@ pub(crate) struct ArchiveWriter<W: Write> {
 }
 
 impl<W: Write> ArchiveWriter<W> {
-    pub fn new(mut output: W, run: &RunHeader, capacity: u32) -> Result<Self> {
-        let header = Header::new(run, capacity)?;
+    pub fn new(
+        mut output: W,
+        run: &RunHeader,
+        capacity: u32,
+        representative_genes: Option<u32>,
+    ) -> Result<Self> {
+        let header = Header::new(run, capacity, representative_genes)?;
         write_record(
             &mut output,
             &ArchiveRecord::Header(Box::new(header.clone())),
         )?;
+        let mut counts = Counts::default();
+        if representative_genes.is_some() {
+            counts.representatives = Some(Decimal(0));
+            counts.unavailable_representatives = Some(Decimal(0));
+        }
         Ok(Self {
             output,
             header,
-            counts: Default::default(),
+            counts: [counts.clone(), counts],
         })
     }
 
@@ -64,21 +109,66 @@ impl<W: Write> ArchiveWriter<W> {
         capture.check()?;
         for cohort in Cohort::ALL {
             let counts = &mut self.counts[cohort.index()];
-            while let Some(record) = capture.recorders[cohort.index()].pop() {
-                let record = match record {
+            let source = &mut capture.cohorts[cohort.index()];
+            while let Some(record) = source.recorder.pop() {
+                let line = match record {
                     Record::Event { sequence, event } => {
                         counts.next_sequence = Decimal(sequence + 1);
                         counts.events.0 += 1;
-                        match event.kind.into() {
-                            EventRecord::SpeciesOrigin { .. } => counts.origins.0 += 1,
-                            EventRecord::SpeciesExtinct { .. } => counts.extinctions.0 += 1,
+                        let event_record: EventRecord = event.kind.into();
+                        let origin = matches!(event_record, EventRecord::SpeciesOrigin { .. });
+                        if origin {
+                            counts.origins.0 += 1;
+                        } else {
+                            counts.extinctions.0 += 1;
                         }
-                        ArchiveRecord::Event {
+                        let representative = source
+                            .representatives
+                            .as_mut()
+                            .filter(|_| origin)
+                            .map(|buffer| match buffer.take(sequence) {
+                                Some(genes) => RepresentativeRecord::Recorded {
+                                    genes: genes.to_vec(),
+                                },
+                                None => RepresentativeRecord::Unavailable {
+                                    reason: UnavailableRepresentative::CapturePressure,
+                                },
+                            });
+                        let mut record = ArchiveRecord::Event {
                             cohort,
                             sequence: Decimal(sequence),
                             tick: Decimal(event.tick),
-                            event: event.kind.into(),
+                            event: event_record,
+                            representative,
+                        };
+                        let line = match encode_record(&record) {
+                            Ok(line) => line,
+                            Err(_) if origin && source.representatives.is_some() => {
+                                if let ArchiveRecord::Event { representative, .. } = &mut record {
+                                    *representative = Some(RepresentativeRecord::Unavailable {
+                                        reason: UnavailableRepresentative::LineLimit,
+                                    });
+                                }
+                                encode_record(&record)?
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        if let ArchiveRecord::Event {
+                            representative: Some(representative),
+                            ..
+                        } = &record
+                        {
+                            let count = match representative {
+                                RepresentativeRecord::Recorded { .. } => {
+                                    &mut counts.representatives
+                                }
+                                RepresentativeRecord::Unavailable { .. } => {
+                                    &mut counts.unavailable_representatives
+                                }
+                            };
+                            count.as_mut().expect("version three counts").0 += 1;
                         }
+                        line
                     }
                     Record::Gap {
                         first_sequence,
@@ -87,14 +177,14 @@ impl<W: Write> ArchiveWriter<W> {
                         counts.next_sequence = Decimal(last_sequence + 1);
                         counts.dropped_events.0 += last_sequence - first_sequence + 1;
                         counts.gaps.0 += 1;
-                        ArchiveRecord::Gap {
+                        encode_record(&ArchiveRecord::Gap {
                             cohort,
                             first_sequence: Decimal(first_sequence),
                             last_sequence: Decimal(last_sequence),
-                        }
+                        })?
                     }
                 };
-                write_record(&mut self.output, &record)?;
+                self.output.write_all(&line)?;
             }
         }
         self.output.flush()?;
@@ -115,14 +205,9 @@ impl<W: Write> ArchiveWriter<W> {
         self.drain(capture)?;
         let cohorts = Cohort::ALL.map(|cohort| {
             let counts = self.counts[cohort.index()].clone();
-            debug_assert_eq!(
-                counts.next_sequence.0,
-                capture.recorders[cohort.index()].next_sequence()
-            );
-            debug_assert_eq!(
-                counts.dropped_events.0,
-                capture.recorders[cohort.index()].dropped_events()
-            );
+            let recorder = &capture.cohorts[cohort.index()].recorder;
+            debug_assert_eq!(counts.next_sequence.0, recorder.next_sequence());
+            debug_assert_eq!(counts.dropped_events.0, recorder.dropped_events());
             CohortCompletion {
                 cohort,
                 history_complete: counts.dropped_events.0 == 0,
@@ -136,7 +221,7 @@ impl<W: Write> ArchiveWriter<W> {
         write_record(
             &mut self.output,
             &ArchiveRecord::Complete(Completion {
-                schema_version: SCHEMA_VERSION,
+                schema_version: self.header.schema_version,
                 run_id: None,
                 provenance: self.header.provenance,
                 ticks: self.header.ticks.expect("native export has planned ticks"),
@@ -149,8 +234,24 @@ impl<W: Write> ArchiveWriter<W> {
     }
 }
 
-pub(crate) fn validate_export(run: &RunHeader, capacity: u32) -> Result<()> {
-    let header = Header::new(run, capacity)?;
+pub(crate) fn validate_export(
+    run: &RunHeader,
+    capacity: u32,
+    representative_genes: Option<u32>,
+) -> Result<()> {
+    if let Some(genes) = representative_genes
+        && genes < run.params.storage.max_genes
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "--representative-genes {genes} cannot hold one maximum-size genome ({} genes)",
+                run.params.storage.max_genes
+            ),
+        )
+        .into());
+    }
+    let header = Header::new(run, capacity, representative_genes)?;
     encode_record(&ArchiveRecord::Header(Box::new(header)))?;
     Ok(())
 }
@@ -223,14 +324,22 @@ fn write_summary(output: &mut impl Write, summary: &Completion) -> Result<()> {
         )?,
     }
     for cohort in &summary.cohorts {
+        let counts = &cohort.counts;
+        let representatives = match (counts.representatives, counts.unavailable_representatives) {
+            (Some(archived), Some(unavailable)) => format!(
+                "; {} representatives archived, {} unavailable",
+                archived.0, unavailable.0
+            ),
+            _ => String::new(),
+        };
         writeln!(
             output,
-            "{:?}: {} origins, {} extinctions retained; {} dropped events in {} gaps; hash {}",
+            "{:?}: {} origins, {} extinctions retained; {} dropped events in {} gaps{representatives}; hash {}",
             cohort.cohort,
-            cohort.counts.origins.0,
-            cohort.counts.extinctions.0,
-            cohort.counts.dropped_events.0,
-            cohort.counts.gaps.0,
+            counts.origins.0,
+            counts.extinctions.0,
+            counts.dropped_events.0,
+            counts.gaps.0,
             cohort.final_state_hash.as_deref().unwrap_or("unavailable"),
         )?;
     }
@@ -251,6 +360,10 @@ mod tests {
     use super::*;
     use crate::history_reader::parse;
     use crate::history_wire::{ArchiveRecord, Decimal};
+
+    fn record(cohort: &mut CohortCapture, event: Event) {
+        cohort.record(event, None);
+    }
 
     fn header() -> RunHeader {
         RunHeader {
@@ -288,8 +401,8 @@ mod tests {
 
     fn fixture() -> Vec<u8> {
         let mut bytes = Vec::new();
-        let mut capture = Capture::new(4).unwrap();
-        for recorder in &mut capture.recorders {
+        let mut capture = Capture::new(4, None).unwrap();
+        for recorder in &mut capture.cohorts {
             record(recorder, origin(0, 0));
             record(
                 recorder,
@@ -301,7 +414,7 @@ mod tests {
                 },
             );
         }
-        ArchiveWriter::new(&mut bytes, &header(), 4)
+        ArchiveWriter::new(&mut bytes, &header(), 4, None)
             .unwrap()
             .finish(&mut capture, &hashes())
             .unwrap();
@@ -1015,11 +1128,11 @@ mod tests {
             ..self::header()
         };
         let mut bytes = Vec::new();
-        let mut capture = Capture::new(header.capacity_per_cohort).unwrap();
-        for recorder in &mut capture.recorders {
+        let mut capture = Capture::new(header.capacity_per_cohort, None).unwrap();
+        for recorder in &mut capture.cohorts {
             record(recorder, origin(0, 0));
         }
-        ArchiveWriter::new(&mut bytes, &run, header.capacity_per_cohort)
+        ArchiveWriter::new(&mut bytes, &run, header.capacity_per_cohort, None)
             .unwrap()
             .finish(
                 &mut capture,
@@ -1034,16 +1147,16 @@ mod tests {
 
     #[test]
     fn fifo_overflow_exports_exact_ordered_gaps_and_completion() {
-        let mut capture = Capture::new(1).unwrap();
+        let mut capture = Capture::new(1, None).unwrap();
         let mut bytes = Vec::new();
-        let mut writer = ArchiveWriter::new(&mut bytes, &header(), 1).unwrap();
-        for recorder in &mut capture.recorders {
+        let mut writer = ArchiveWriter::new(&mut bytes, &header(), 1, None).unwrap();
+        for recorder in &mut capture.cohorts {
             for id in 0..4 {
                 record(recorder, origin(0, id));
             }
         }
         writer.drain(&mut capture).unwrap();
-        for recorder in &mut capture.recorders {
+        for recorder in &mut capture.cohorts {
             for id in 0..4 {
                 record(
                     recorder,
@@ -1085,9 +1198,9 @@ mod tests {
         let mut run = header();
         run.ticks = u64::MAX;
         let mut bytes = Vec::new();
-        let mut capture = Capture::new(4).unwrap();
+        let mut capture = Capture::new(4, None).unwrap();
         record(
-            &mut capture.recorders[0],
+            &mut capture.cohorts[0],
             Event {
                 tick: big,
                 kind: EventKind::SpeciesOrigin {
@@ -1101,9 +1214,9 @@ mod tests {
                 },
             },
         );
-        record(&mut capture.recorders[1], origin(0, 2));
+        record(&mut capture.cohorts[1], origin(0, 2));
         record(
-            &mut capture.recorders[1],
+            &mut capture.cohorts[1],
             Event {
                 tick: big,
                 kind: EventKind::SpeciesOrigin {
@@ -1117,7 +1230,7 @@ mod tests {
                 },
             },
         );
-        ArchiveWriter::new(&mut bytes, &run, 4)
+        ArchiveWriter::new(&mut bytes, &run, 4, None)
             .unwrap()
             .finish(&mut capture, &hashes())
             .unwrap();
@@ -1271,8 +1384,8 @@ mod tests {
     #[test]
     fn parents_cannot_contradict_known_species_founders() {
         let mut bytes = Vec::new();
-        let mut capture = Capture::new(4).unwrap();
-        for recorder in &mut capture.recorders {
+        let mut capture = Capture::new(4, None).unwrap();
+        for recorder in &mut capture.cohorts {
             for (species, birth) in [(0, 0), (1, 5)] {
                 record(
                     recorder,
@@ -1305,7 +1418,7 @@ mod tests {
         }
         let mut run = header();
         run.founders = 6;
-        ArchiveWriter::new(&mut bytes, &run, 4)
+        ArchiveWriter::new(&mut bytes, &run, 4, None)
             .unwrap()
             .finish(&mut capture, &hashes())
             .unwrap();
@@ -1415,25 +1528,379 @@ mod tests {
             writes_left: 0,
             fail_flush: false,
         };
-        assert!(ArchiveWriter::new(output, &header(), 4).is_err());
+        assert!(ArchiveWriter::new(output, &header(), 4, None).is_err());
         let output = FailingWriter {
             writes_left: usize::MAX,
             fail_flush: true,
         };
-        let mut writer = ArchiveWriter::new(output, &header(), 4).unwrap();
-        let mut capture = Capture::new(4).unwrap();
-        record(&mut capture.recorders[0], origin(0, 0));
+        let mut writer = ArchiveWriter::new(output, &header(), 4, None).unwrap();
+        let mut capture = Capture::new(4, None).unwrap();
+        record(&mut capture.cohorts[0], origin(0, 0));
         assert!(writer.drain(&mut capture).is_err());
         let output = FailingWriter {
             writes_left: usize::MAX,
             fail_flush: false,
         };
-        let mut writer = ArchiveWriter::new(output, &header(), 4).unwrap();
+        let mut writer = ArchiveWriter::new(output, &header(), 4, None).unwrap();
         writer.output.writes_left = 0;
         assert!(
             writer
-                .finish(&mut Capture::new(4).unwrap(), &hashes())
+                .finish(&mut Capture::new(4, None).unwrap(), &hashes())
                 .is_err()
         );
+    }
+
+    fn neurons(count: u32) -> Vec<Gene> {
+        (1..=count)
+            .map(|id| {
+                Gene::Neuron(sim_core::genome::NeuronGene {
+                    id: sim_core::ids::InnovationId::new(id),
+                    tau: 1.0,
+                    ..Default::default()
+                })
+            })
+            .collect()
+    }
+
+    fn representative_archive(staging: u32, genomes: &[Vec<Gene>]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut capture = Capture::new(8, Some(staging)).unwrap();
+        for cohort in &mut capture.cohorts {
+            for (id, genes) in genomes.iter().enumerate() {
+                cohort.record(origin(0, id as u32), Some(genes));
+            }
+            cohort.record(
+                Event {
+                    tick: 9,
+                    kind: EventKind::SpeciesExtinct {
+                        species_id: SpeciesId::new(0),
+                    },
+                },
+                None,
+            );
+        }
+        let mut run = header();
+        run.founders = genomes.len() as u32;
+        ArchiveWriter::new(&mut bytes, &run, 8, Some(1024))
+            .unwrap()
+            .finish(&mut capture, &hashes())
+            .unwrap();
+        bytes
+    }
+
+    #[test]
+    fn version_three_archives_representatives_or_says_why_not() {
+        // The second genome no longer fits once the first is staged.
+        let genomes = [neurons(700), neurons(400), neurons(3)];
+        let bytes = representative_archive(1024, &genomes);
+        let rows = records(&bytes);
+        assert_eq!(rows[0]["data"]["schema_version"], 3);
+        assert_eq!(rows[0]["data"]["representative_genes"], 1024);
+        let origins: Vec<_> = rows
+            .iter()
+            .filter(|row| row["data"]["event"]["kind"] == "species_origin")
+            .collect();
+        assert_eq!(origins.len(), 6);
+        for cohort in origins.chunks(3) {
+            let recorded: Vec<Gene> =
+                serde_json::from_value(cohort[0]["data"]["representative"]["genes"].clone())
+                    .unwrap();
+            assert_eq!(recorded, genomes[0], "archived genes are exact");
+            assert_eq!(
+                cohort[1]["data"]["representative"],
+                serde_json::json!({"status": "unavailable", "reason": "capture_pressure"})
+            );
+            assert_eq!(
+                cohort[2]["data"]["representative"]["genes"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                3
+            );
+        }
+        assert!(
+            rows.iter()
+                .filter(|row| row["data"]["event"]["kind"] == "species_extinct")
+                .all(|row| row["data"].get("representative").is_none())
+        );
+        let summary = parse(Cursor::new(&bytes)).unwrap();
+        assert_eq!(summary.schema_version, 3);
+        for cohort in &summary.cohorts {
+            assert_eq!(cohort.counts.representatives, Some(Decimal(2)));
+            assert_eq!(cohort.counts.unavailable_representatives, Some(Decimal(1)));
+            assert!(
+                cohort.history_complete,
+                "an unavailable genome is not an event gap"
+            );
+        }
+        let mut human = Vec::new();
+        write_summary(&mut human, &summary).unwrap();
+        assert!(
+            String::from_utf8(human)
+                .unwrap()
+                .contains("0 gaps; 2 representatives archived, 1 unavailable; hash")
+        );
+    }
+
+    #[test]
+    fn genomes_too_large_for_one_line_are_unavailable_not_truncated() {
+        let mut bytes = Vec::new();
+        let mut capture = Capture::new(2, Some(20_000)).unwrap();
+        for cohort in &mut capture.cohorts {
+            cohort.record(origin(0, 0), Some(&neurons(15_000)));
+        }
+        let mut run = header();
+        run.ticks = 1;
+        ArchiveWriter::new(&mut bytes, &run, 2, Some(1024))
+            .unwrap()
+            .finish(&mut capture, &hashes())
+            .unwrap();
+        let rows = records(&bytes);
+        assert_eq!(
+            rows[1]["data"]["representative"],
+            serde_json::json!({"status": "unavailable", "reason": "line_limit"})
+        );
+        let summary = parse(Cursor::new(&bytes)).unwrap();
+        assert_eq!(
+            summary.cohorts[0].counts.unavailable_representatives,
+            Some(Decimal(1))
+        );
+    }
+
+    #[test]
+    fn representatives_are_required_exactly_on_version_three_origins() {
+        let valid = records(&representative_archive(4096, &[neurons(3), neurons(2)]));
+        parse(Cursor::new(encode(&valid))).unwrap();
+        let origin_row = valid
+            .iter()
+            .position(|row| row["data"]["event"]["kind"] == "species_origin")
+            .unwrap();
+        let extinct_row = valid
+            .iter()
+            .position(|row| row["data"]["event"]["kind"] == "species_extinct")
+            .unwrap();
+        let mut unsorted = neurons(3);
+        unsorted.swap(0, 2);
+        type Mutation = Box<dyn Fn(&mut Vec<serde_json::Value>)>;
+        let cases: Vec<(&str, Mutation)> = vec![
+            (
+                "missing on an origin",
+                Box::new(move |rows| {
+                    rows[origin_row]["data"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("representative");
+                }),
+            ),
+            (
+                "present on an extinction",
+                Box::new(move |rows| {
+                    rows[extinct_row]["data"]["representative"] =
+                        serde_json::json!({"status": "unavailable", "reason": "capture_pressure"});
+                }),
+            ),
+            (
+                "invalid genome",
+                Box::new(move |rows| {
+                    rows[origin_row]["data"]["representative"]["genes"] =
+                        serde_json::to_value(&unsorted).unwrap();
+                }),
+            ),
+            (
+                "larger than the genome limit",
+                Box::new(move |rows| {
+                    rows[origin_row]["data"]["representative"]["genes"] =
+                        serde_json::to_value(neurons(1025)).unwrap();
+                }),
+            ),
+            (
+                "unknown unavailable reason",
+                Box::new(move |rows| {
+                    rows[origin_row]["data"]["representative"] =
+                        serde_json::json!({"status": "unavailable", "reason": "guessed"});
+                }),
+            ),
+            (
+                "null representative",
+                Box::new(move |rows| {
+                    rows[origin_row]["data"]["representative"] = serde_json::Value::Null;
+                }),
+            ),
+            (
+                "staging below one maximum-size genome",
+                Box::new(|rows| rows[0]["data"]["representative_genes"] = 1023.into()),
+            ),
+            (
+                "version three without staging",
+                Box::new(|rows| {
+                    rows[0]["data"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("representative_genes");
+                }),
+            ),
+            (
+                "completion undercounts representatives",
+                Box::new(|rows| {
+                    let last = rows.len() - 1;
+                    rows[last]["data"]["cohorts"][0]["counts"]["representatives"] = "1".into();
+                }),
+            ),
+            (
+                "completion omits representative counts",
+                Box::new(|rows| {
+                    let last = rows.len() - 1;
+                    rows[last]["data"]["cohorts"][0]["counts"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("unavailable_representatives");
+                }),
+            ),
+        ];
+        for (name, mutate) in cases {
+            let mut rows = valid.clone();
+            mutate(&mut rows);
+            assert!(
+                parse(Cursor::new(encode(&rows))).is_err(),
+                "accepted {name}"
+            );
+        }
+
+        let mut version_one = records(&fixture());
+        version_one[1]["data"]["representative"] =
+            serde_json::json!({"status": "unavailable", "reason": "capture_pressure"});
+        assert!(parse(Cursor::new(encode(&version_one))).is_err());
+        let mut version_one = records(&fixture());
+        version_one[0]["data"]["representative_genes"] = 4096.into();
+        assert!(parse(Cursor::new(encode(&version_one))).is_err());
+    }
+
+    #[test]
+    fn browser_shaped_version_three_keeps_version_two_rules() {
+        let mut rows = records(include_bytes!("../tests/fixtures/history-v2-root.ndjson"));
+        let last = rows.len() - 1;
+        let mut archived = 0;
+        for row in &mut rows {
+            match row["kind"].as_str().unwrap() {
+                "header" => {
+                    row["data"]["schema_version"] = 3.into();
+                    row["data"]["representative_genes"] = 1024.into();
+                }
+                "event" if row["data"]["event"]["kind"] == "species_origin" => {
+                    row["data"]["representative"] = serde_json::json!({
+                        "status": "recorded",
+                        "genes": serde_json::to_value(neurons(2)).unwrap(),
+                    });
+                    archived += 1;
+                }
+                _ => {}
+            }
+        }
+        rows[last]["data"]["schema_version"] = 3.into();
+        for cohort in rows[last]["data"]["cohorts"].as_array_mut().unwrap() {
+            cohort["counts"]["representatives"] = archived.to_string().into();
+            cohort["counts"]["unavailable_representatives"] = "0".into();
+        }
+        assert!(archived > 0);
+        let summary = parse(Cursor::new(encode(&rows))).unwrap();
+        assert!(summary.run_id.is_some() && summary.capture_end.is_some());
+        rows[last]["data"]
+            .as_object_mut()
+            .unwrap()
+            .remove("capture_end");
+        assert!(
+            parse(Cursor::new(encode(&rows))).is_err(),
+            "browser-shaped archives still need a capture end"
+        );
+    }
+
+    #[test]
+    fn export_rejects_staging_that_cannot_hold_one_valid_genome() {
+        let run = header();
+        assert!(validate_export(&run, 4, Some(1023)).is_err());
+        validate_export(&run, 4, Some(1024)).unwrap();
+        validate_export(&run, 4, None).unwrap();
+    }
+
+    #[test]
+    fn archived_representatives_equal_the_classifiers_stored_copy() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 8;
+        params.plants.max_plants = 1;
+        params.species.threshold = 1e-12;
+        params.brain.weight_init_scale = 0.5;
+        let mut world = sim_core::world::World::new(3, params.clone()).unwrap();
+        let mut capture = Capture::new(8, Some(65_536)).unwrap();
+        let cohort = &mut capture.cohorts[0];
+        assert_eq!(
+            world.seed_founders_with_history_observer(
+                3,
+                |_| {},
+                |_| {},
+                |event, genome| cohort.record(event, genome)
+            ),
+            3
+        );
+        let mut run = header();
+        run.params = params;
+        run.founders = 3;
+        let mut bytes = Vec::new();
+        ArchiveWriter::new(&mut bytes, &run, 8, Some(65_536))
+            .unwrap()
+            .drain(&mut capture)
+            .unwrap();
+        let rows = records(&bytes);
+        let origins: Vec<_> = rows[1..]
+            .iter()
+            .filter(|row| row["data"]["cohort"] == "evolving")
+            .collect();
+        assert!(
+            world.species_count() > 1,
+            "distinct founders form distinct species"
+        );
+        assert_eq!(origins.len() as u32, world.species_count());
+        for row in origins {
+            let id = SpeciesId::new(row["data"]["event"]["species_id"].as_u64().unwrap() as u32);
+            let archived: Vec<Gene> =
+                serde_json::from_value(row["data"]["representative"]["genes"].clone()).unwrap();
+            assert_eq!(Some(&archived[..]), world.species().representative(id));
+        }
+    }
+
+    #[test]
+    fn partial_drains_and_flushed_gaps_keep_genomes_on_their_own_sequences() {
+        let mut capture = Capture::new(3, Some(4096)).unwrap();
+        let cohort = &mut capture.cohorts[0];
+        for id in 0..4 {
+            cohort.record(origin(0, id), Some(&neurons(id + 1)));
+        }
+        assert_eq!(cohort.recorder.dropped_events(), 1, "origin 3 was dropped");
+        // A partial drain claims two origins, as the writer does, freeing two slots so
+        // the next origin flushes the pending gap just before itself.
+        for expected in 0..2u64 {
+            let Some(Record::Event { sequence, .. }) = cohort.recorder.pop() else {
+                panic!("expected a queued origin");
+            };
+            assert_eq!(sequence, expected);
+            let staged = cohort.representatives.as_mut().unwrap().take(sequence);
+            assert_eq!(staged, Some(&neurons(expected as u32 + 1)[..]));
+        }
+        cohort.record(origin(0, 4), Some(&neurons(5)));
+        let mut run = header();
+        run.founders = 5;
+        let mut bytes = Vec::new();
+        ArchiveWriter::new(&mut bytes, &run, 3, Some(4096))
+            .unwrap()
+            .drain(&mut capture)
+            .unwrap();
+        let rows = records(&bytes);
+        let kinds: Vec<_> = rows[1..].iter().map(|row| row["kind"].clone()).collect();
+        assert_eq!(kinds, ["event", "gap", "event"]);
+        for (row, sequence, genes) in [(&rows[1], "2", 3), (&rows[3], "4", 5)] {
+            assert_eq!(row["data"]["sequence"], sequence);
+            let archived: Vec<Gene> =
+                serde_json::from_value(row["data"]["representative"]["genes"].clone()).unwrap();
+            assert_eq!(archived, neurons(genes));
+        }
     }
 }

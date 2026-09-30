@@ -31,7 +31,7 @@ use crate::brain;
 use crate::effectors::{self, AgentIntents};
 use crate::energy;
 use crate::feeding;
-use crate::genome::{self, BodyTrait};
+use crate::genome::{self, BodyTrait, Gene};
 use crate::history::Event as HistoryEvent;
 use crate::metabolism;
 use crate::movement;
@@ -75,7 +75,12 @@ impl World {
         mut on_mutation: impl FnMut(StructuralMutationEvent),
         mut on_species: impl FnMut(SpeciesEvent),
     ) {
-        self.step_with_history_observer(&mut on_refusal, &mut on_mutation, &mut on_species, |_| {});
+        self.step_with_history_observer(
+            &mut on_refusal,
+            &mut on_mutation,
+            &mut on_species,
+            |_, _| {},
+        );
     }
 
     pub fn step_with_history_observer(
@@ -83,7 +88,7 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_mutation: impl FnMut(StructuralMutationEvent),
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) {
         // Before step 1, so an agent placed this tick gets a whole one (spec §2.2b).
         self.apply_commands_with_observers(&mut on_refusal, &mut on_species, &mut on_history);
@@ -290,13 +295,13 @@ impl World {
         &mut self,
         mut on_species: impl FnMut(SpeciesEvent),
     ) -> usize {
-        self.resolve_deaths_with_history_observer(&mut on_species, |_| {})
+        self.resolve_deaths_with_history_observer(&mut on_species, |_, _| {})
     }
 
     pub fn resolve_deaths_with_history_observer(
         &mut self,
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> usize {
         let dying = core::mem::take(&mut self.dying);
         let mut removed = 0;
@@ -403,7 +408,7 @@ impl World {
             &mut on_refusal,
             &mut on_mutation,
             &mut on_species,
-            |_| {},
+            |_, _| {},
         )
     }
 
@@ -412,7 +417,7 @@ impl World {
         mut on_refusal: impl FnMut(SpawnError),
         mut on_mutation: impl FnMut(StructuralMutationEvent),
         mut on_species: impl FnMut(SpeciesEvent),
-        mut on_history: impl FnMut(HistoryEvent),
+        mut on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> usize {
         self.note_breeders();
         let breeding = core::mem::take(&mut self.breeding);

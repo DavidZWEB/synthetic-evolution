@@ -15,7 +15,8 @@ use sim_core::ids::{BirthId, SpeciesId};
 use crate::Result;
 use crate::history_wire::{
     ArchiveRecord, BROWSER_SCHEMA_VERSION, CaptureEnd, Cohort, Completion, Counts, Decimal,
-    EventRecord, Header, MAX_LINE_BYTES, ParentRecord, SCHEMA_VERSION,
+    EventRecord, Header, MAX_LINE_BYTES, ParentRecord, REPRESENTATIVE_SCHEMA_VERSION,
+    RepresentativeRecord, SCHEMA_VERSION,
 };
 
 pub(crate) fn read(path: &Path) -> Result<Completion> {
@@ -64,6 +65,12 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
                         return Err(invalid("duplicate history header").into());
                     }
                     validate_header(&next, &line)?;
+                    if next.representative_genes.is_some() {
+                        for state in &mut states {
+                            state.counts.representatives = Some(Decimal(0));
+                            state.counts.unavailable_representatives = Some(Decimal(0));
+                        }
+                    }
                     header = Some(next);
                 }
                 ArchiveRecord::Event {
@@ -71,12 +78,15 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
                     sequence,
                     tick,
                     event,
+                    representative,
                 } => {
                     let header = header
                         .as_ref()
                         .ok_or_else(|| invalid("history header must be first"))?;
                     validate_cohort(header, cohort)?;
-                    states[cohort.index()].event(header, sequence.0, tick.0, event)?;
+                    let state = &mut states[cohort.index()];
+                    state.representative(header, &event, representative.as_ref())?;
+                    state.event(header, sequence.0, tick.0, event)?;
                 }
                 ArchiveRecord::Gap {
                     cohort,
@@ -115,25 +125,45 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
     })
 }
 
+/// Version three keeps either earlier shape: native files name no run, browser files do.
+fn native_shape(header: &Header) -> bool {
+    match header.schema_version {
+        SCHEMA_VERSION => true,
+        REPRESENTATIVE_SCHEMA_VERSION => header.run_id.is_none(),
+        _ => false,
+    }
+}
+
 fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
-    let supported_schema = match header.schema_version {
-        SCHEMA_VERSION => {
-            header.run_id.is_none()
-                && header.cohorts == Cohort::ALL
-                && header.ticks.is_some()
-                && header.drain_every.is_some()
-        }
-        BROWSER_SCHEMA_VERSION => {
-            header
-                .run_id
-                .as_ref()
-                .is_some_and(|id| !id.is_empty() && id.chars().count() <= 128)
-                && (header.cohorts == Cohort::ALL
-                    || header.cohorts == [Cohort::Evolving]
-                    || header.cohorts == [Cohort::RandomControl])
+    let representatives = header.schema_version == REPRESENTATIVE_SCHEMA_VERSION;
+    let shape = match header.schema_version {
+        SCHEMA_VERSION | BROWSER_SCHEMA_VERSION | REPRESENTATIVE_SCHEMA_VERSION => {
+            if native_shape(header) {
+                header.run_id.is_none()
+                    && header.cohorts == Cohort::ALL
+                    && header.ticks.is_some()
+                    && header.drain_every.is_some()
+            } else {
+                header
+                    .run_id
+                    .as_ref()
+                    .is_some_and(|id| !id.is_empty() && id.chars().count() <= 128)
+                    && (header.cohorts == Cohort::ALL
+                        || header.cohorts == [Cohort::Evolving]
+                        || header.cohorts == [Cohort::RandomControl])
+            }
         }
         _ => false,
     };
+    let staging = match header.representative_genes {
+        None => !representatives,
+        Some(genes) => {
+            representatives
+                && genes >= header.params.storage.max_genes
+                && u64::from(genes) * size_of::<sim_core::genome::Gene>() as u64 <= i32::MAX as u64
+        }
+    };
+    let supported_schema = shape && staging;
     if !supported_schema
         || header.provenance.phase != 2
         || header.provenance.control != RANDOMIZED_AT_BIRTH_PROTOCOL
@@ -200,6 +230,38 @@ struct CohortState {
 }
 
 impl CohortState {
+    /// Version three requires every origin to archive its representative or say why
+    /// it could not; earlier versions and extinctions carry none.
+    fn representative(
+        &mut self,
+        header: &Header,
+        event: &EventRecord,
+        representative: Option<&RepresentativeRecord>,
+    ) -> Result<()> {
+        let expected = header.representative_genes.is_some()
+            && matches!(event, EventRecord::SpeciesOrigin { .. });
+        match representative {
+            None if !expected => Ok(()),
+            Some(RepresentativeRecord::Recorded { genes }) if expected => {
+                if genes.len() > header.params.storage.max_genes as usize
+                    || sim_core::genome::validate(genes).is_err()
+                {
+                    return Err(invalid("archived representative is not a valid genome").into());
+                }
+                increment(&mut self.counts.representatives);
+                Ok(())
+            }
+            Some(RepresentativeRecord::Unavailable { .. }) if expected => {
+                increment(&mut self.counts.unavailable_representatives);
+                Ok(())
+            }
+            _ => Err(invalid(
+                "representatives must accompany every version-three origin and nothing else",
+            )
+            .into()),
+        }
+    }
+
     fn event(
         &mut self,
         header: &Header,
@@ -345,6 +407,12 @@ impl CohortState {
     }
 }
 
+fn increment(count: &mut Option<Decimal>) {
+    if let Some(count) = count {
+        count.0 += 1;
+    }
+}
+
 fn validate_parent(parent: ParentRecord, species: SpeciesId, founder: BirthId) -> Result<()> {
     if let ParentRecord::Observed {
         birth_id,
@@ -369,9 +437,9 @@ fn validate_completion(
     {
         return Err(invalid("history completion provenance does not match header").into());
     }
-    let incomplete = match (header.schema_version, completion.capture_end) {
-        (SCHEMA_VERSION, None) if header.ticks == Some(completion.ticks) => false,
-        (BROWSER_SCHEMA_VERSION, Some(reason))
+    let incomplete = match (native_shape(header), completion.capture_end) {
+        (true, None) if header.ticks == Some(completion.ticks) => false,
+        (false, Some(reason))
             if header
                 .ticks
                 .is_none_or(|planned| completion.ticks.0 <= planned.0)

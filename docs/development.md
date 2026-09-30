@@ -513,6 +513,28 @@ or longer drain intervals may lose more history without changing ecology. Portab
 capacity limits and host allocation failures are explicit errors. Sequence exhaustion
 is also a command failure, surfaced outside the tick; it never wraps.
 
+**Representative genomes (M6, history schema 3).** Add `--representatives` to
+archive each new species' representative genome at its origin:
+
+```bash
+cargo run --release -p native -- --seed 42 --ticks 500000 \
+  --history species-history.jsonl --representatives [--representative-genes 65536]
+```
+
+The core lends the classifier's stored representative to the history callback at
+the moment the species is created. The shell copies it into a preallocated
+per-cohort staging buffer, sized by `--representative-genes` (default **65,536
+genes**, requires `--representatives`), until the origin record drains. No lookup
+happens later, so a species that goes extinct before the drain keeps its genome.
+The buffer must hold at least one `storage.max_genes` genome. When it is full, the
+origin is still archived with `{"status":"unavailable","reason":"capture_pressure"}`.
+An origin whose line would exceed the 1 MiB limit becomes
+`"reason":"line_limit"`. Neither is guessed later, and neither makes event history
+incomplete. Capture allocates nothing in the tick and changes no ecology, RNG, or
+hashed state. A dense 284-gene genome is about 25 KB of JSON.
+
+Without the flag, native output remains byte-identical schema 1.
+
 Use `--history -` for stdout or `history - [--json]` to read stdin. Metrics and history
 cannot both use stdout, the same output file, or file aliases (including hard links and
 symlinks). Neither output may alias the `--params` input. Outputs are opened only after
@@ -522,7 +544,9 @@ are opened before either is truncated. I/O and flush failures fail the command.
 This is streaming output, not an atomic two-file transaction or protection against
 concurrent filesystem renames.
 
-Native writing uses history **schema 1** JSONL; readback also accepts browser **schema 2**.
+Native writing uses history **schema 1** JSONL, or **schema 3** with
+`--representatives`. Readback also accepts browser **schema 2** and both shapes of
+schema 3.
 Metrics use **schema 8**, phase 2,
 with **`randomized_at_birth_v3`** unchanged. With `--metrics`, each sample also records
 the history capture's cumulative counts (see *Telemetry protocol*). Each history line is
@@ -531,7 +555,7 @@ a `kind`/`data` envelope:
 | `kind` | Contents |
 |---|---|
 | `header` | Schema, explicit cohort names, run provenance (sim version, source revision, phase, seed, control protocol), requested ticks/founders, complete params, drain interval, and per-cohort recorder capacity |
-| `event` | Cohort, sequence, actual World tick, and either `species_origin` or `species_extinct` |
+| `event` | Cohort, sequence, actual World tick, and either `species_origin` or `species_extinct`; schema 3 origins also carry `representative` |
 | `gap` | Cohort plus inclusive `first_sequence` and `last_sequence` for dropped events |
 | `complete` | Matching schema/run provenance and final tick, plus per-cohort exact totals, `history_complete`, and final World hash |
 
@@ -567,6 +591,18 @@ unknown dropped event kinds. Final hashes match the metrics final sample when bo
 streams are requested. A missing footer (even after a valid event line), malformed
 record, unknown schema/protocol, or missing required metadata is rejected, never
 interpreted as a successful empty history.
+
+Schema 3 has the same two shapes as earlier versions. Native files name no run and
+end like schema 1; browser files carry a `run_id` and `capture_end` like schema 2.
+Its header adds `representative_genes`. Every origin, and only an origin, carries a
+`representative`: either `{"status":"recorded","genes":[...]}` in the core's Gene JSON,
+or `{"status":"unavailable","reason":...}`. Footer counts add `representatives` and
+`unavailable_representatives`. The reader validates each recorded genome against
+`storage.max_genes` and core genome coherence. It rejects representatives in schemas
+1–2, on extinctions, or missing from schema 3 origins. Earlier archives carry no
+genomes, and nothing reconstructs them from descendants. Browser import of schema 3,
+and browser representative capture, are the next M6 slice. Until then the browser
+rejects schema 3 files explicitly.
 
 `history PATH` validates sequences/gap continuity separately per cohort, ordered and
 bounded ticks, IDs/parent metadata, available lifecycle links, and footer totals and

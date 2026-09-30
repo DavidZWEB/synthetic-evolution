@@ -3,7 +3,6 @@
 use std::io::{self, Write};
 
 use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
-use sim_core::history::Recorder;
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
@@ -12,7 +11,7 @@ use sim_core::world::World;
 
 use crate::Result;
 use crate::cli::RunArgs;
-use crate::history::{self, ArchiveWriter, Capture};
+use crate::history::{self, ArchiveWriter, Capture, CohortCapture};
 use crate::metrics::{MetricsRecord, RunHeader, SCHEMA_VERSION, sample_pair};
 
 pub fn run(args: RunArgs) -> Result<()> {
@@ -44,7 +43,7 @@ pub fn run(args: RunArgs) -> Result<()> {
         control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
     };
     if args.history.is_some() {
-        history::validate_export(&header, args.history_capacity)?;
+        history::validate_export(&header, args.history_capacity, args.representative_genes())?;
     }
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
@@ -64,21 +63,21 @@ pub fn run(args: RunArgs) -> Result<()> {
     let mut capture = args
         .history
         .as_ref()
-        .map(|_| Capture::new(args.history_capacity))
+        .map(|_| Capture::new(args.history_capacity, args.representative_genes()))
         .transpose()?;
     seed(
         &mut evolving,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[0]),
         species_events.as_mut().map(|counts| &mut counts[0]),
-        capture.as_mut().map(|capture| &mut capture.recorders[0]),
+        capture.as_mut().map(|capture| &mut capture.cohorts[0]),
     )?;
     seed(
         &mut random_control,
         args.founders,
         spawn_failures.as_mut().map(|counts| &mut counts[1]),
         species_events.as_mut().map(|counts| &mut counts[1]),
-        capture.as_mut().map(|capture| &mut capture.recorders[1]),
+        capture.as_mut().map(|capture| &mut capture.cohorts[1]),
     )?;
 
     if let Some(capture) = &capture {
@@ -86,7 +85,14 @@ pub fn run(args: RunArgs) -> Result<()> {
     }
     let (mut output, history_output) = crate::output::open(&args)?;
     let mut archive = history_output
-        .map(|output| ArchiveWriter::new(output, &header, args.history_capacity))
+        .map(|output| {
+            ArchiveWriter::new(
+                output,
+                &header,
+                args.history_capacity,
+                args.representative_genes(),
+            )
+        })
         .transpose()?;
     if let (Some(archive), Some(capture)) = (&mut archive, &mut capture) {
         archive.drain(capture)?;
@@ -113,14 +119,14 @@ pub fn run(args: RunArgs) -> Result<()> {
             spawn_failures.as_mut().map(|counts| &mut counts[0]),
             structural_mutations.as_mut().map(|counts| &mut counts[0]),
             species_events.as_mut().map(|counts| &mut counts[0]),
-            capture.as_mut().map(|capture| &mut capture.recorders[0]),
+            capture.as_mut().map(|capture| &mut capture.cohorts[0]),
         );
         step(
             &mut random_control,
             spawn_failures.as_mut().map(|counts| &mut counts[1]),
             structural_mutations.as_mut().map(|counts| &mut counts[1]),
             species_events.as_mut().map(|counts| &mut counts[1]),
-            capture.as_mut().map(|capture| &mut capture.recorders[1]),
+            capture.as_mut().map(|capture| &mut capture.cohorts[1]),
         );
         if let Some(capture) = &capture {
             capture.check()?;
@@ -201,10 +207,10 @@ fn seed(
     founders: u32,
     mut counts: Option<&mut SpawnFailureCounts>,
     mut species: Option<&mut SpeciesEventCounts>,
-    recorder: Option<&mut Recorder>,
+    capture: Option<&mut CohortCapture>,
 ) -> Result<()> {
     let mut refusal = None;
-    let placed = if let Some(recorder) = recorder {
+    let placed = if let Some(capture) = capture {
         world.seed_founders_with_history_observer(
             founders,
             |error| {
@@ -218,7 +224,7 @@ fn seed(
                     species.record(event);
                 }
             },
-            |event| history::record(recorder, event),
+            |event, representative| capture.record(event, representative),
         )
     } else if let (Some(counts), Some(species)) = (counts, species) {
         world.seed_founders_with_observers(
@@ -250,9 +256,9 @@ fn step(
     mut counts: Option<&mut SpawnFailureCounts>,
     mut edits: Option<&mut StructuralMutationCounts>,
     mut species: Option<&mut SpeciesEventCounts>,
-    recorder: Option<&mut Recorder>,
+    capture: Option<&mut CohortCapture>,
 ) {
-    if let Some(recorder) = recorder {
+    if let Some(capture) = capture {
         world.step_with_history_observer(
             |error| {
                 if let Some(counts) = &mut counts {
@@ -269,7 +275,7 @@ fn step(
                     species.record(event);
                 }
             },
-            |event| history::record(recorder, event),
+            |event, representative| capture.record(event, representative),
         );
     } else if let (Some(counts), Some(edits), Some(species)) = (counts, edits, species) {
         world.step_with_all_observers(
