@@ -86,7 +86,7 @@ async function selectFirstFounder(page) {
       await inspector.waitFor({ timeout: 1000 });
       return inspector;
     } catch (error) {
-      if (attempt === 10) throw error;
+      if (attempt === 10 || error.name !== 'TimeoutError') throw error;
     }
   }
 }
