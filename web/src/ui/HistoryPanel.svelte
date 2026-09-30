@@ -1,6 +1,7 @@
 <script>
   let {
-    captureNext, oncapture, runs, activeId, captureStatus, message, busy,
+    captureNext, oncapture, captureRepresentatives, onrepresentatives,
+    runs, activeId, captureStatus, message, busy,
     onclose, onrefresh, onimport, onexport, ondelete, onstop,
   } = $props();
 </script>
@@ -15,7 +16,17 @@
       onchange={(event) => oncapture(event.currentTarget.checked)} />
     record the next new / reseeded run
   </label>
-  <p>Capture: <strong>{captureStatus}</strong>. Species origins and extinctions only.</p>
+  <label class="capture">
+    <input type="checkbox" checked={captureRepresentatives} disabled={!captureNext}
+      onchange={(event) => onrepresentatives(event.currentTarget.checked)} />
+    include representative genomes
+  </label>
+  <p class="help">
+    Stores each new species' genome at its origin (about 25 KB each), so runs reach the
+    10 MiB limit, and stop recording, much sooner. Staging holds 65,536 genes; any origin
+    beyond that is saved as unavailable, never reconstructed later.
+  </p>
+  <p>Capture: <strong>{captureStatus}</strong>. Species origins and extinctions, plus genomes when included.</p>
   {#if captureStatus === 'recording'}
     <button onclick={onstop} disabled={busy}>stop recording</button>
   {/if}

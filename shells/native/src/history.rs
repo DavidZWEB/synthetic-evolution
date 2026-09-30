@@ -6,10 +6,7 @@
 
 use std::io::{self, Write};
 
-use sim_core::genome::Gene;
-use sim_core::history::{
-    Capture as Captured, Event, Record, Recorder, RepresentativeBuffer, SequenceExhausted,
-};
+use sim_core::history::{Record, SequenceExhausted};
 
 use crate::Result;
 use crate::cli::HistoryArgs;
@@ -19,35 +16,9 @@ use crate::history_wire::{
 };
 use crate::metrics::{HistoryAvailability, RunHeader, StateHashes};
 
-pub(crate) struct CohortCapture {
-    pub recorder: Recorder,
-    representatives: Option<RepresentativeBuffer>,
-}
-
-impl CohortCapture {
-    fn new(capacity: u32, representative_genes: Option<u32>) -> Result<Self> {
-        Ok(Self {
-            recorder: Recorder::try_new(capacity)?,
-            // A recorder holds at most `capacity` undrained origins, so staging never
-            // needs more genome slots than that.
-            representatives: representative_genes
-                .map(|genes| RepresentativeBuffer::try_new(genes, capacity))
-                .transpose()?,
-        })
-    }
-
-    /// History callback: queue the event and stage an origin's representative.
-    pub fn record(&mut self, event: Event, representative: Option<&[Gene]>) {
-        // Recorder latches exhaustion. The shell reports it after stepping, never
-        // panicking or doing I/O from a callback in the tick.
-        if self.recorder.record(event) == Ok(Captured::Recorded)
-            && let (Some(buffer), Some(genes)) = (&mut self.representatives, representative)
-        {
-            // A refusal leaves nothing staged, so the drain archives it as unavailable.
-            let _ = buffer.store(self.recorder.next_sequence() - 1, genes);
-        }
-    }
-}
+#[path = "../../shared/cohort_capture.rs"]
+mod cohort_capture;
+pub(crate) use cohort_capture::CohortCapture;
 
 pub(crate) struct Capture {
     pub cohorts: [CohortCapture; 2],
@@ -57,8 +28,8 @@ impl Capture {
     pub fn new(capacity: u32, representative_genes: Option<u32>) -> Result<Self> {
         Ok(Self {
             cohorts: [
-                CohortCapture::new(capacity, representative_genes)?,
-                CohortCapture::new(capacity, representative_genes)?,
+                CohortCapture::try_new(capacity, representative_genes)?,
+                CohortCapture::try_new(capacity, representative_genes)?,
             ],
         })
     }
@@ -122,18 +93,8 @@ impl<W: Write> ArchiveWriter<W> {
                         } else {
                             counts.extinctions.0 += 1;
                         }
-                        let representative = source
-                            .representatives
-                            .as_mut()
-                            .filter(|_| origin)
-                            .map(|buffer| match buffer.take(sequence) {
-                                Some(genes) => RepresentativeRecord::Recorded {
-                                    genes: genes.to_vec(),
-                                },
-                                None => RepresentativeRecord::Unavailable {
-                                    reason: UnavailableRepresentative::CapturePressure,
-                                },
-                            });
+                        let representative = (origin && source.captures_representatives())
+                            .then(|| RepresentativeRecord::staged(source.claim(sequence)));
                         let mut record = ArchiveRecord::Event {
                             cohort,
                             sequence: Decimal(sequence),
@@ -143,7 +104,7 @@ impl<W: Write> ArchiveWriter<W> {
                         };
                         let line = match encode_record(&record) {
                             Ok(line) => line,
-                            Err(_) if origin && source.representatives.is_some() => {
+                            Err(_) if origin && source.captures_representatives() => {
                                 if let ArchiveRecord::Event { representative, .. } = &mut record {
                                     *representative = Some(RepresentativeRecord::Unavailable {
                                         reason: UnavailableRepresentative::LineLimit,
@@ -353,6 +314,7 @@ mod tests {
     use std::io::{self, BufReader, Cursor, Write};
 
     use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
+    use sim_core::genome::Gene;
     use sim_core::history::{Event, EventKind, Parent};
     use sim_core::ids::{BirthId, SpeciesId};
     use sim_core::params::SimParams;
@@ -1145,6 +1107,62 @@ mod tests {
         assert_eq!(bytes, native);
     }
 
+    /// The browser codec reads the same file, so this pins schema 3 interoperability.
+    #[test]
+    fn version_three_fixture_is_the_native_export_of_real_worlds() {
+        let fixture = include_bytes!("../tests/fixtures/history-v3-native.ndjson");
+        let summary = parse(Cursor::new(fixture)).unwrap();
+        let rows = records(fixture);
+        let header: Header = serde_json::from_value(rows[0]["data"].clone()).unwrap();
+        let seed: u64 = header.provenance.seed.0;
+        let run = RunHeader {
+            sim_version: header.provenance.sim_version,
+            source_revision: header.provenance.source_revision,
+            phase: header.provenance.phase,
+            seed: seed.to_string(),
+            control: header.provenance.control,
+            ticks: header.ticks.unwrap().0,
+            founders: header.founders,
+            sample_every: header.drain_every.unwrap().0,
+            params: header.params.clone(),
+            ..self::header()
+        };
+        let genes = header.representative_genes;
+        let mut capture = Capture::new(header.capacity_per_cohort, genes).unwrap();
+        for (cohort, inheritance) in capture.cohorts.iter_mut().zip([
+            sim_core::control::BrainInheritance::Evolving,
+            sim_core::control::BrainInheritance::RandomizedAtBirth,
+        ]) {
+            let mut world = sim_core::world::World::new_with_brain_inheritance(
+                seed,
+                header.params.clone(),
+                inheritance,
+            )
+            .unwrap();
+            world.seed_founders_with_history_observer(
+                header.founders,
+                |_| {},
+                |_| {},
+                |event, genome| cohort.record(event, genome),
+            );
+        }
+        let mut bytes = Vec::new();
+        ArchiveWriter::new(&mut bytes, &run, header.capacity_per_cohort, genes)
+            .unwrap()
+            .finish(
+                &mut capture,
+                &StateHashes {
+                    evolving: summary.cohorts[0].final_state_hash.clone().unwrap(),
+                    random_control: summary.cohorts[1].final_state_hash.clone().unwrap(),
+                },
+            )
+            .unwrap();
+        assert_eq!(bytes, fixture);
+        for cohort in &summary.cohorts {
+            assert_eq!(cohort.counts.representatives, Some(Decimal(1)));
+        }
+    }
+
     #[test]
     fn fifo_overflow_exports_exact_ordered_gaps_and_completion() {
         let mut capture = Capture::new(1, None).unwrap();
@@ -1882,7 +1900,7 @@ mod tests {
                 panic!("expected a queued origin");
             };
             assert_eq!(sequence, expected);
-            let staged = cohort.representatives.as_mut().unwrap().take(sequence);
+            let staged = cohort.claim(sequence);
             assert_eq!(staged, Some(&neurons(expected as u32 + 1)[..]));
         }
         cohort.record(origin(0, 4), Some(&neurons(5)));

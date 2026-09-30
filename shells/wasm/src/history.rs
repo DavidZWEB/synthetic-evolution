@@ -4,11 +4,13 @@
 //! module neither hashes nor changes World state and never performs storage I/O.
 
 use serde::Serialize;
-use sim_core::history::{Event, Record, Recorder};
+use sim_core::genome::{self, Gene};
+use sim_core::history::Record;
 use wasm_bindgen::prelude::*;
 
-use crate::history_event_wire::{Decimal, EventRecord};
-use crate::{Sim, js_error};
+use crate::cohort_capture::CohortCapture;
+use crate::history_event_wire::{Decimal, EventRecord, RepresentativeRecord};
+use crate::{Sim, js_error, parse_params};
 
 #[derive(Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -17,6 +19,9 @@ enum HistoryRecord {
         sequence: Decimal,
         tick: Decimal,
         event: EventRecord,
+        /// Every origin carries one when representatives are captured; nothing else does.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        representative: Option<RepresentativeRecord>,
     },
     Gap {
         first_sequence: Decimal,
@@ -24,14 +29,21 @@ enum HistoryRecord {
     },
 }
 
-impl From<Record> for HistoryRecord {
-    fn from(record: Record) -> Self {
+impl HistoryRecord {
+    fn drained(record: Record, capture: &mut CohortCapture) -> Self {
         match record {
-            Record::Event { sequence, event } => Self::Event {
-                sequence: Decimal(sequence),
-                tick: Decimal(event.tick),
-                event: event.kind.into(),
-            },
+            Record::Event { sequence, event } => {
+                let tick = Decimal(event.tick);
+                let event: EventRecord = event.kind.into();
+                let origin = matches!(event, EventRecord::SpeciesOrigin { .. });
+                Self::Event {
+                    sequence: Decimal(sequence),
+                    tick,
+                    event,
+                    representative: (origin && capture.captures_representatives())
+                        .then(|| RepresentativeRecord::staged(capture.claim(sequence))),
+                }
+            }
             Record::Gap {
                 first_sequence,
                 last_sequence,
@@ -52,41 +64,65 @@ struct Drain {
     sequence_exhausted: bool,
 }
 
-pub(super) fn record(recorder: &mut Recorder, event: Event) {
-    if recorder.record(event).is_err() {
-        // The recorder latches exhaustion for drain_history; capture failure must
-        // never interrupt a World tick or discard the already queued prefix (§3.4).
-        debug_assert!(recorder.sequence_exhausted());
-    }
-}
-
 impl Sim {
-    fn try_enable_history(&mut self, capacity: u32) -> Result<(), String> {
+    fn try_enable_history(
+        &mut self,
+        capacity: u32,
+        representative_genes: Option<u32>,
+    ) -> Result<(), String> {
         if self.history_enable_closed {
             return Err("history must be enabled once, before initial seeding or stepping".into());
         }
-        let recorder = Recorder::try_new(capacity).map_err(|error| error.to_string())?;
-        self.history = Some(recorder);
+        let max_genes = self.world.params().storage.max_genes;
+        if let Some(genes) = representative_genes
+            && genes < max_genes
+        {
+            return Err(format!(
+                "{genes} representative genes cannot hold one maximum-size genome ({max_genes} genes)"
+            ));
+        }
+        let capture = CohortCapture::try_new(capacity, representative_genes)
+            .map_err(|error| error.to_string())?;
+        self.history = Some(capture);
         self.history_enable_closed = true;
         Ok(())
     }
 }
 
+/// Checks an archived representative the way the native reader does: within the
+/// archive's `storage.max_genes` and a coherent core genome. Import-time only.
+#[wasm_bindgen]
+pub fn validate_representative(genes_json: &str, params_json: &str) -> Result<(), JsError> {
+    let params = parse_params(Some(params_json))?;
+    let genes: Vec<Gene> =
+        serde_json::from_str(genes_json).map_err(|error| js_error("representative", error))?;
+    if genes.len() > params.storage.max_genes as usize {
+        return Err(js_error("representative", "exceeds storage.max_genes"));
+    }
+    genome::validate(&genes).map_err(|error| js_error("representative", format!("{error:?}")))
+}
+
 #[wasm_bindgen]
 impl Sim {
     /// Enables a preallocated recorder before any initial seeding or stepping (§3.4).
+    /// With `representative_genes`, origins also stage their representative genome in
+    /// a buffer of that many genes, which must hold one `storage.max_genes` genome.
     ///
     /// Capture cannot be restarted on the same World, even after it is disabled.
-    pub fn enable_history(&mut self, capacity: u32) -> Result<(), JsError> {
-        self.try_enable_history(capacity)
+    pub fn enable_history(
+        &mut self,
+        capacity: u32,
+        representative_genes: Option<u32>,
+    ) -> Result<(), JsError> {
+        self.try_enable_history(capacity, representative_genes)
             .map_err(|error| js_error("history capture", error))
     }
 
     /// True for queued events/gaps or a latched sequence error, without allocating.
     pub fn history_pending(&self) -> bool {
-        self.history
-            .as_ref()
-            .is_some_and(|recorder| recorder.pending_len() > 0 || recorder.sequence_exhausted())
+        self.history.as_ref().is_some_and(|capture| {
+            capture.recorder.pending_len() > 0 || capture.recorder.sequence_exhausted()
+        })
     }
 
     /// Drains every available record at the current World boundary, including a final gap.
@@ -95,18 +131,20 @@ impl Sim {
     /// shell boundary and may detach snapshot views (§7.3); it does not hash the World.
     /// Sequence exhaustion remains explicit on every drain until capture is disabled.
     pub fn drain_history(&mut self) -> Result<String, JsError> {
-        let recorder = self
+        let capture = self
             .history
             .as_mut()
             .ok_or_else(|| JsError::new("history capture is not enabled"))?;
+        let mut records = Vec::new();
+        while let Some(record) = capture.recorder.pop() {
+            records.push(HistoryRecord::drained(record, capture));
+        }
         let drain = Drain {
-            records: std::iter::from_fn(|| recorder.pop())
-                .map(HistoryRecord::from)
-                .collect(),
+            records,
             through_tick: Decimal(self.world.tick_count()),
-            next_sequence: Decimal(recorder.next_sequence()),
-            dropped_events: Decimal(recorder.dropped_events()),
-            sequence_exhausted: recorder.sequence_exhausted(),
+            next_sequence: Decimal(capture.recorder.next_sequence()),
+            dropped_events: Decimal(capture.recorder.dropped_events()),
+            sequence_exhausted: capture.recorder.sequence_exhausted(),
         };
         serde_json::to_string(&drain).map_err(|error| js_error("history drain", error))
     }
@@ -128,7 +166,7 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
     use sim_core::control::BrainInheritance;
-    use sim_core::history::{EventKind, Parent};
+    use sim_core::history::{Event, EventKind, Parent};
     use sim_core::ids::{BirthId, SpeciesId};
     use sim_core::params::SimParams;
 
@@ -203,7 +241,7 @@ mod tests {
             let mut sim = make(7, mode);
             assert!(!sim.history_pending());
             let hash = sim.state_hash();
-            sim.enable_history(4).unwrap();
+            sim.enable_history(4, None).unwrap();
             assert_eq!(sim.state_hash(), hash);
             assert!(!sim.history_pending());
             assert_eq!(sim.seed_founders(2), 2);
@@ -250,8 +288,8 @@ mod tests {
                 let mut plain = make(seed, mode);
                 let mut full = make(seed, mode);
                 let mut lossy = make(seed, mode);
-                full.enable_history(4096).unwrap();
-                lossy.enable_history(1).unwrap();
+                full.enable_history(4096, None).unwrap();
+                lossy.enable_history(1, None).unwrap();
                 for sim in [&mut plain, &mut full, &mut lossy] {
                     assert_eq!(sim.seed_founders(4), 4);
                 }
@@ -294,7 +332,7 @@ mod tests {
                     saw_observed_parent,
                     "birth history callback was not exercised"
                 );
-                assert!(lossy.history.as_ref().unwrap().dropped_events() > 0);
+                assert!(lossy.history.as_ref().unwrap().recorder.dropped_events() > 0);
             }
         }
     }
@@ -304,7 +342,7 @@ mod tests {
     fn overflow_drains_final_gap_then_resumes_in_sequence_at_the_next_boundary() {
         for mode in MODES {
             let mut sim = make(7, mode);
-            sim.enable_history(1).unwrap();
+            sim.enable_history(1, None).unwrap();
             assert_eq!(sim.seed_founders(4), 4);
             let first = drain(&mut sim);
             assert_eq!(first["records"].as_array().unwrap().len(), 2);
@@ -356,7 +394,7 @@ mod tests {
                 mode,
             )
             .unwrap();
-            sim.enable_history(8).unwrap();
+            sim.enable_history(8, None).unwrap();
             sim.seed_founders(1);
             sim.push_command(r#"{"apply_at_tick":2,"kind":{"SpawnFounder":{"position":[0,0,0]}}}"#)
                 .unwrap();
@@ -402,7 +440,7 @@ mod tests {
         for mode in MODES {
             let mut plain = make(7, mode);
             let mut observed = make(7, mode);
-            observed.enable_history(1).unwrap();
+            observed.enable_history(1, None).unwrap();
             plain.seed_founders(4);
             observed.seed_founders(4);
             assert!(observed.history_pending());
@@ -412,7 +450,7 @@ mod tests {
             assert!(!observed.history_pending());
             assert!(observed.history.is_none());
             assert_eq!(observed.state_hash(), hash);
-            assert!(observed.try_enable_history(4).is_err());
+            assert!(observed.try_enable_history(4, None).is_err());
             plain.step_many(20);
             observed.step_many(20);
             assert_eq!(plain.state_hash(), observed.state_hash());
@@ -435,53 +473,59 @@ mod tests {
                     sim.step_many(amount);
                 }
                 let hash = sim.state_hash();
-                assert!(sim.try_enable_history(4).is_err());
+                assert!(sim.try_enable_history(4, None).is_err());
                 assert_eq!(sim.state_hash(), hash);
                 assert!(!sim.history_pending());
             }
             let mut sim = make(7, mode);
-            assert!(sim.try_enable_history(0).is_err());
-            assert!(sim.try_enable_history(u32::MAX).is_err());
+            assert!(sim.try_enable_history(0, None).is_err());
+            assert!(sim.try_enable_history(u32::MAX, None).is_err());
             assert!(
                 !sim.history_enable_closed,
                 "failed reservation consumed admission"
             );
-            sim.try_enable_history(4).unwrap();
-            assert!(sim.try_enable_history(4).is_err());
+            sim.try_enable_history(4, None).unwrap();
+            assert!(sim.try_enable_history(4, None).is_err());
             sim.disable_history();
-            assert!(sim.try_enable_history(4).is_err());
+            assert!(sim.try_enable_history(4, None).is_err());
         }
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn exact_decimal_envelope_uses_shared_parent_and_event_encoding() {
+        // Representatives off: rows keep the event-only encoding.
+        let mut capture = CohortCapture::try_new(1, None).unwrap();
         let drain = Drain {
             records: vec![
-                Record::Event {
-                    sequence: 9_007_199_254_740_993,
-                    event: Event {
-                        tick: u64::MAX,
-                        kind: EventKind::SpeciesOrigin {
-                            species_id: SpeciesId::new(1),
-                            founder_birth_id: BirthId::new(u64::MAX - 1),
-                            parent_a: Parent::Observed {
-                                birth_id: BirthId::new(9_007_199_254_740_993),
-                                species_id: None,
-                            },
-                            parent_b: Parent::Observed {
-                                birth_id: BirthId::NULL,
-                                species_id: Some(SpeciesId::new(0)),
+                HistoryRecord::drained(
+                    Record::Event {
+                        sequence: 9_007_199_254_740_993,
+                        event: Event {
+                            tick: u64::MAX,
+                            kind: EventKind::SpeciesOrigin {
+                                species_id: SpeciesId::new(1),
+                                founder_birth_id: BirthId::new(u64::MAX - 1),
+                                parent_a: Parent::Observed {
+                                    birth_id: BirthId::new(9_007_199_254_740_993),
+                                    species_id: None,
+                                },
+                                parent_b: Parent::Observed {
+                                    birth_id: BirthId::NULL,
+                                    species_id: Some(SpeciesId::new(0)),
+                                },
                             },
                         },
                     },
-                }
-                .into(),
-                Record::Gap {
-                    first_sequence: 9_007_199_254_740_994,
-                    last_sequence: u64::MAX - 1,
-                }
-                .into(),
+                    &mut capture,
+                ),
+                HistoryRecord::drained(
+                    Record::Gap {
+                        first_sequence: 9_007_199_254_740_994,
+                        last_sequence: u64::MAX - 1,
+                    },
+                    &mut capture,
+                ),
             ],
             through_tick: Decimal(u64::MAX),
             next_sequence: Decimal(u64::MAX),
@@ -523,15 +567,149 @@ mod tests {
             let mut sim = make(7, mode);
             let hash = sim.state_hash();
             assert!(sim.drain_history().is_err());
-            assert!(sim.enable_history(0).is_err());
-            assert!(sim.enable_history(u32::MAX).is_err());
+            assert!(sim.enable_history(0, None).is_err());
+            assert!(sim.enable_history(u32::MAX, None).is_err());
             assert_eq!(sim.state_hash(), hash);
-            sim.enable_history(1).unwrap();
-            assert!(sim.enable_history(1).is_err());
+            sim.enable_history(1, None).unwrap();
+            assert!(sim.enable_history(1, None).is_err());
             sim.disable_history();
-            assert!(sim.enable_history(1).is_err());
+            assert!(sim.enable_history(1, None).is_err());
             assert!(sim.drain_history().is_err());
             assert_eq!(sim.state_hash(), hash);
         }
+    }
+
+    fn origins(batch: &Value) -> Vec<&Value> {
+        batch["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["data"]["event"]["kind"] == "species_origin")
+            .collect()
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn origins_carry_the_classifiers_stored_representative() {
+        for mode in MODES {
+            let mut plain = make(7, mode);
+            let mut observed = make(7, mode);
+            observed.enable_history(64, Some(65_536)).unwrap();
+            assert_eq!(plain.seed_founders(8), 8);
+            assert_eq!(observed.seed_founders(8), 8);
+            plain.step_many(20);
+            observed.step_many(20);
+            assert_eq!(
+                observed.state_hash(),
+                plain.state_hash(),
+                "staging changed the World"
+            );
+            let batch = drain(&mut observed);
+            let origins = origins(&batch);
+            assert!(origins.len() >= 8, "every founder originated a species");
+            for row in &batch["records"].as_array().unwrap()[..] {
+                let origin = row["data"]["event"]["kind"] == "species_origin";
+                assert_eq!(row["data"].get("representative").is_some(), origin);
+            }
+            for row in origins {
+                let representative = &row["data"]["representative"];
+                assert_eq!(representative["status"], "recorded");
+                let genes: Vec<Gene> =
+                    serde_json::from_value(representative["genes"].clone()).unwrap();
+                let id =
+                    SpeciesId::new(row["data"]["event"]["species_id"].as_u64().unwrap() as u32);
+                // Extinct species are no longer in the classifier, which is why capture
+                // happens at origin rather than by a later lookup (spec §3.4).
+                if let Some(live) = observed.world.species().representative(id) {
+                    assert_eq!(genes, live);
+                }
+                validate_representative(
+                    &serde_json::to_string(&genes).unwrap(),
+                    &serde_json::to_string(&params()).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn full_staging_archives_capture_pressure_and_recovers_after_a_drain() {
+        let mut sim = make(7, BrainInheritance::Evolving);
+        let max_genes = params().storage.max_genes;
+        sim.enable_history(64, Some(max_genes)).unwrap();
+        // Fewer founders than the pool holds, so births can originate species later.
+        assert_eq!(sim.seed_founders(20), 20);
+        let first = drain(&mut sim);
+        let statuses: Vec<_> = origins(&first)
+            .iter()
+            .map(|row| row["data"]["representative"].clone())
+            .collect();
+        let recorded = statuses
+            .iter()
+            .filter(|r| r["status"] == "recorded")
+            .count();
+        assert!(recorded > 0, "the buffer holds some genomes");
+        assert!(
+            recorded < statuses.len(),
+            "the buffer cannot hold every founder"
+        );
+        for status in statuses.iter().filter(|r| r["status"] != "recorded") {
+            assert_eq!(
+                *status,
+                json!({"status": "unavailable", "reason": "capture_pressure"})
+            );
+        }
+        let staged_genes: usize = statuses
+            .iter()
+            .filter_map(|r| r["genes"].as_array())
+            .map(Vec::len)
+            .sum();
+        assert!(staged_genes <= max_genes as usize);
+        let mut recovered = None;
+        for _ in 0..50 {
+            sim.step_many(4);
+            let batch = drain(&mut sim);
+            if let Some(row) = origins(&batch).first() {
+                recovered = Some(row["data"]["representative"]["status"].clone());
+                break;
+            }
+        }
+        assert_eq!(
+            recovered.expect("a birth originated a species"),
+            "recorded",
+            "claimed space is reused after a drain"
+        );
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn staging_must_hold_one_maximum_size_genome() {
+        let mut sim = make(7, BrainInheritance::Evolving);
+        let max_genes = params().storage.max_genes;
+        assert!(sim.try_enable_history(4, Some(max_genes - 1)).is_err());
+        assert!(sim.history.is_none(), "a refused enable leaves capture off");
+        sim.try_enable_history(4, Some(max_genes)).unwrap();
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test]
+    fn imported_representatives_are_validated_like_the_native_reader() {
+        let mut sim = make(7, BrainInheritance::Evolving);
+        sim.enable_history(8, Some(65_536)).unwrap();
+        assert_eq!(sim.seed_founders(1), 1);
+        let batch = drain(&mut sim);
+        let genes = origins(&batch)[0]["data"]["representative"]["genes"].clone();
+        let params_json = serde_json::to_string(&params()).unwrap();
+        assert!(validate_representative(&genes.to_string(), &params_json).is_ok());
+        let mut unsorted: Vec<Value> = genes.as_array().unwrap().clone();
+        unsorted.swap(0, 1);
+        assert!(validate_representative(&Value::from(unsorted).to_string(), &params_json).is_err());
+        let mut small = params();
+        small.storage.max_genes = genes.as_array().unwrap().len() as u32 - 1;
+        assert!(
+            validate_representative(&genes.to_string(), &serde_json::to_string(&small).unwrap())
+                .is_err()
+        );
     }
 }

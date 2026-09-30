@@ -40,7 +40,11 @@ export function parseLine(line) {
       if (frame?.seen) frame.key = true;
       else if (frame) frame.index++;
     } else if (/^-?[0-9]/.test(token)) {
-      const integer = path[0] !== 'data' || path[1] !== 'params' || integerParam(path.slice(2));
+      // Representative genes are core Gene JSON with real-valued fields; the WASM
+      // validator checks them on import, as the native reader does.
+      const genes = path[0] === 'data' && path[1] === 'representative' && path[2] === 'genes';
+      const integer = !genes &&
+        (path[0] !== 'data' || path[1] !== 'params' || integerParam(path.slice(2)));
       requireThat(!integer || /^(0|[1-9][0-9]*)$/.test(token), 'unsigned integer encoded as a non-integer JSON number');
     }
   }

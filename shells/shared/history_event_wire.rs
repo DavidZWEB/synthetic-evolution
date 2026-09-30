@@ -1,9 +1,10 @@
 //! Exact species-history event encoding shared by the native and WASM shells.
 //!
-//! Owns decimal counters and explicit parent metadata, not archive provenance,
-//! capture policy, or persistence.
+//! Owns decimal counters, explicit parent metadata, and origin representatives, not
+//! archive provenance, capture policy, or persistence.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use sim_core::genome::Gene;
 use sim_core::history::{EventKind, Parent};
 use sim_core::ids::{BirthId, SpeciesId};
 
@@ -101,4 +102,37 @@ impl From<EventKind> for EventRecord {
             EventKind::SpeciesExtinct { species_id } => Self::SpeciesExtinct { species_id },
         }
     }
+}
+
+/// A species' representative genome at origin, or why it was not archived.
+///
+/// Unavailable is final: nothing later may reconstruct it from descendants (spec §3.4).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum RepresentativeRecord {
+    Recorded { genes: Vec<Gene> },
+    Unavailable { reason: UnavailableRepresentative },
+}
+
+impl RepresentativeRecord {
+    /// A claimed staging result: the genome, or capture pressure when it was refused.
+    pub(crate) fn staged(genes: Option<&[Gene]>) -> Self {
+        match genes {
+            Some(genes) => Self::Recorded {
+                genes: genes.to_vec(),
+            },
+            None => Self::Unavailable {
+                reason: UnavailableRepresentative::CapturePressure,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UnavailableRepresentative {
+    /// The bounded staging buffer was full when the species originated.
+    CapturePressure,
+    /// The origin record with its genome would exceed the archive line limit.
+    LineLimit,
 }

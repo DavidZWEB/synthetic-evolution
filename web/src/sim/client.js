@@ -11,6 +11,7 @@ import { EVOLVING } from './brain-inheritance.js';
 
 export function createSim({
   seed, founders, params = null, brainInheritance = EVOLVING, historyRunId = null,
+  historyRepresentatives = false,
 }) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
@@ -71,7 +72,9 @@ export function createSim({
     });
   };
 
-  worker.postMessage({ kind: 'create', seed, params, founders, brainInheritance, historyRunId });
+  worker.postMessage({
+    kind: 'create', seed, params, founders, brainInheritance, historyRunId, historyRepresentatives,
+  });
 
   const send = (kind, payload = {}) => {
     if (!destroyed) worker.postMessage({ kind, ...payload });

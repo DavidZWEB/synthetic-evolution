@@ -617,8 +617,11 @@ bounded staging buffer until the origin record drains. When staging is full, or 
 record would exceed the archive line limit, the origin is archived with an explicit
 unavailable reason. History schema 3 is that extension for both the native and
 browser archive shapes. Native output stays schema 1 unless representatives are
-requested. The browser capture and a representative comparison view follow as a
-separate slice; the comparison view's design needs its own approval.
+requested. The browser offers representative capture as its own opt-in, separate
+from recording, because genomes consume the same per-run archive budget; without it
+browser archives stay schema 2. Browser staging is fixed at 65,536 genes, matching
+the native default, and is not user-configurable. A representative comparison view
+follows as a separate slice; its design needs its own approval.
 
 Uses:
 - **Species assignment** by threshold clustering, for visualization and stats.

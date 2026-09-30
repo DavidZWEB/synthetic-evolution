@@ -69,6 +69,7 @@
   let transitioning = $state(false);
   let showHistory = $state(false);
   let captureNext = $state(false);
+  let captureRepresentatives = $state(false);
   let captureStatus = $state('off');
   let historyMessage = $state(null);
   let historyRuns = $state([]);
@@ -143,10 +144,13 @@
       }
       const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
         .decode(await file.arrayBuffer());
-      const { default: init, validate_params } = await import('./wasm/wasm.js');
+      const { default: init, validate_params, validate_representative } = await import('./wasm/wasm.js');
       await init();
-      const archive = await parseArchive(text, (params) =>
-        JSON.parse(validate_params(JSON.stringify(params))));
+      const archive = await parseArchive(
+        text,
+        (params) => JSON.parse(validate_params(JSON.stringify(params))),
+        (genes, params) => validate_representative(JSON.stringify(genes), JSON.stringify(params)),
+      );
       await (await getHistoryStore()).importArchive(archive);
       historyMessage = 'History imported. No simulation was started or resumed.';
     });
@@ -300,7 +304,10 @@
     const startingSource = runSource;
     const previousShareUrl = shareUrl;
     const historyRunId = captureNext ? crypto.randomUUID() : null;
-    const nextSim = createSim({ seed, founders, params: runParams, brainInheritance, historyRunId });
+    const nextSim = createSim({
+      seed, founders, params: runParams, brainInheritance, historyRunId,
+      historyRepresentatives: Boolean(historyRunId) && captureRepresentatives,
+    });
     sim = nextSim;
     activeHistoryId = null;
     captureStatus = historyRunId ? 'starting' : 'off';
@@ -555,6 +562,8 @@
       <HistoryPanel
         {captureNext}
         oncapture={(value) => (captureNext = value)}
+        {captureRepresentatives}
+        onrepresentatives={(value) => (captureRepresentatives = value)}
         runs={historyRuns}
         activeId={activeHistoryId}
         {captureStatus}

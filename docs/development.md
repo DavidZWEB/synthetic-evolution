@@ -600,9 +600,14 @@ or `{"status":"unavailable","reason":...}`. Footer counts add `representatives` 
 `unavailable_representatives`. The reader validates each recorded genome against
 `storage.max_genes` and core genome coherence. It rejects representatives in schemas
 1–2, on extinctions, or missing from schema 3 origins. Earlier archives carry no
-genomes, and nothing reconstructs them from descendants. Browser import of schema 3,
-and browser representative capture, are the next M6 slice. Until then the browser
-rejects schema 3 files explicitly.
+genomes, and nothing reconstructs them from descendants. The browser imports both
+schema 3 shapes and applies the same genome check through WASM
+`validate_representative`.
+
+`shells/shared/cohort_capture.rs` stages and claims representatives for both shells,
+and `shells/shared/history_event_wire.rs` owns the `representative` encoding, so the
+two cannot drift. `history-v3-native.ndjson` is a native export that a native test
+reproduces byte for byte and the browser codec imports.
 
 `history PATH` validates sequences/gap continuity separately per cohort, ordered and
 bounded ticks, IDs/parent metadata, available lifecycle links, and footer totals and
@@ -642,9 +647,9 @@ metrics `complexity`, and must match exactly for the same seed, params, and tick
 native unit tests, WASM tests, and the browser suite all check.
 
 This is live observation, not a historical species graph or genome comparison.
-Later M6 slices will add bounded representative-genome retention before historical
-comparisons. Older event-only archives retain their ancestry
-records but cannot supply genomes they did not record.
+Representative genomes can be archived (see below); comparing them is a later M6
+slice. Older event-only archives retain their ancestry records but cannot supply
+genomes they did not record.
 
 ### Browser species-history archives (M5)
 
@@ -654,6 +659,17 @@ an existing World. Play/pause/step keep the same archive; each new/reseeded Worl
 even with the same seed and parameters, gets a unique run ID. The panel lists local
 archives and supports export, JSONL import, explicit deletion, and stopping capture.
 Selecting/importing history does not construct a World or resume an old one.
+
+**Representative genomes (M6, schema 3).** Also enable **include representative
+genomes** to archive each new species' genome at its origin. It is separate from
+recording, and off by default, because genomes consume the same 10 MiB per-run
+budget: a dense genome is about 25 KB, so high-speciation runs reach the limit, and
+stop recording, much sooner. Staging is fixed at **65,536 genes** (native's
+`--representative-genes` default), is reserved in WASM only when requested, and must
+hold one `storage.max_genes` genome or capture is refused at world creation. A full
+buffer archives the origin as `capture_pressure`; a record over the 1 MiB line
+limit becomes `line_limit`. Neither makes event history incomplete. Without the
+option, browser archives remain schema 2.
 
 The worker drains the 4,096-record FIFO independently of snapshot publication and
 keeps only one unacknowledged batch outside WASM. Acknowledgement follows the
