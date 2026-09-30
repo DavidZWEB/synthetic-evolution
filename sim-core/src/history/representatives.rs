@@ -31,6 +31,10 @@ pub struct RepresentativeBuffer {
     genes: Vec<Gene>,
     entries: VecDeque<Entry>,
     entry_capacity: u32,
+    /// Whether the newest genomes form a second run at the front, before the oldest.
+    /// Tracked rather than inferred from starts: an empty genome placed at the end of
+    /// that run can share the oldest's start and would read as one unwrapped run.
+    wrapped: bool,
 }
 
 impl RepresentativeBuffer {
@@ -62,6 +66,7 @@ impl RepresentativeBuffer {
             genes,
             entries,
             entry_capacity: genome_capacity,
+            wrapped: false,
         })
     }
 
@@ -81,9 +86,10 @@ impl RepresentativeBuffer {
         if self.entries.len() == self.entry_capacity as usize {
             return false;
         }
-        let Some(start) = self.place(genes.len()) else {
+        let Some((start, wraps)) = self.place(genes.len()) else {
             return false;
         };
+        self.wrapped |= wraps;
         let len = genes.len() as u32;
         self.genes[start as usize..(start + len) as usize].copy_from_slice(genes);
         // Within the reserved capacity, so the push never reallocates.
@@ -95,26 +101,37 @@ impl RepresentativeBuffer {
         true
     }
 
-    /// Where a contiguous genome of `len` genes fits without overlapping live ones.
-    fn place(&self, len: usize) -> Option<u32> {
+    /// Where a contiguous genome of `len` genes fits without overlapping live ones, and
+    /// whether placing it there starts the wrapped run.
+    fn place(&self, len: usize) -> Option<(u32, bool)> {
         let capacity = self.genes.len();
         let (Some(oldest), Some(newest)) = (self.entries.front(), self.entries.back()) else {
-            return (len <= capacity).then_some(0);
+            return (len <= capacity).then_some((0, false));
         };
         let (oldest, end) = (oldest.start as usize, newest.end() as usize);
-        if newest.start as usize >= oldest {
+        if self.wrapped {
+            // Only the gap between the wrapped run and the oldest genome is free.
+            (len <= oldest - end).then_some((end as u32, false))
+        } else if len <= capacity - end {
             // Live genomes are one run: free space follows it and precedes it.
-            if len <= capacity - end {
-                Some(end as u32)
-            } else if len <= oldest {
-                Some(0)
-            } else {
-                None
-            }
+            Some((end as u32, false))
         } else {
-            // The newest genome wrapped to the front; only the gap before the oldest is free.
-            (len <= oldest - end).then_some(end as u32)
+            (len <= oldest).then_some((0, true))
         }
+    }
+
+    fn pop_front(&mut self) -> Option<Entry> {
+        let claimed = self.entries.pop_front()?;
+        // Every wrapped genome starts before every older one, so a lower start next
+        // means the older run is gone and one run remains.
+        if self
+            .entries
+            .front()
+            .is_none_or(|next| next.start < claimed.start)
+        {
+            self.wrapped = false;
+        }
+        Some(claimed)
     }
 
     /// The genome staged for `sequence`, discarding older entries that were never
@@ -125,12 +142,12 @@ impl RepresentativeBuffer {
             .front()
             .is_some_and(|entry| entry.sequence < sequence)
         {
-            self.entries.pop_front();
+            self.pop_front();
         }
         if self.entries.front()?.sequence != sequence {
             return None;
         }
-        let entry = self.entries.pop_front()?;
+        let entry = self.pop_front()?;
         Some(&self.genes[entry.start as usize..entry.end() as usize])
     }
 }
@@ -217,6 +234,42 @@ mod tests {
             buffer.store(5, &genome(10)),
             "an empty ring offers its whole capacity"
         );
+    }
+
+    #[test]
+    fn an_empty_genome_ending_the_wrapped_run_cannot_unwrap_it() {
+        // Distinct contents, so an overwrite shows up as a changed genome.
+        let tagged = |len: u32, tag: f32| -> Vec<Gene> {
+            (0..len)
+                .map(|id| {
+                    Gene::Neuron(NeuronGene {
+                        id: InnovationId::new(id),
+                        bias: tag,
+                        ..Default::default()
+                    })
+                })
+                .collect()
+        };
+        let mut buffer = RepresentativeBuffer::try_new(10, 8).unwrap();
+        assert!(buffer.store(0, &tagged(4, 0.0)));
+        assert!(buffer.store(1, &tagged(4, 1.0)));
+        assert_eq!(buffer.take(0), Some(&tagged(4, 0.0)[..]));
+        assert!(buffer.store(2, &tagged(3, 2.0)), "wraps to the front");
+        assert!(buffer.store(3, &tagged(1, 3.0)), "fills up to genome 1");
+        assert!(buffer.store(4, &[]), "an empty genome needs no space");
+        assert!(
+            !buffer.store(5, &tagged(6, 5.0)),
+            "the empty genome shares genome 1's start but must not free genome 1's space"
+        );
+        assert_eq!(buffer.take(1), Some(&tagged(4, 1.0)[..]));
+        assert_eq!(buffer.take(2), Some(&tagged(3, 2.0)[..]));
+        assert_eq!(buffer.take(3), Some(&tagged(1, 3.0)[..]));
+        assert_eq!(buffer.take(4), Some(&[][..]));
+        assert!(
+            buffer.store(5, &tagged(10, 5.0)),
+            "one run again once drained"
+        );
+        assert_eq!(buffer.take(5), Some(&tagged(10, 5.0)[..]));
     }
 
     #[test]
