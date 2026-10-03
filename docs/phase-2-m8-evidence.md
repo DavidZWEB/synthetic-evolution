@@ -23,7 +23,7 @@ than v2 on all three seeds; the sparse configuration showed no consistent gap (s
 | Founders / ticks / sample interval | 2,000 / 200,000 / 5,000 |
 | Controls | scalar `randomized_at_birth_v3` and structural null `structural_null_v1`, each a separate run beside the same evolving world |
 | Command | `JOBS=6 scripts/experiment.sh OUT 200000 2000 5000 "42 117 314" experiments/phase-2-m8/*.json` |
-| Configurations | [`dense-static`](../experiments/phase-2-m8/dense-static.json), [`dense-growth`](../experiments/phase-2-m8/dense-growth.json), [`sparse-chemo-growth`](../experiments/phase-2-m8/sparse-chemo-growth.json) |
+| Configurations | `dense-static`, `dense-growth`, `sparse-chemo-growth`, described below (params files retired after the founder switch) |
 | Full summaries | [`experiments/phase-2-m8/results/`](../experiments/phase-2-m8/results/) (text and JSON, per-seed values in the JSON) |
 
 The evolving world's final state hashes matched between each seed's scalar and null

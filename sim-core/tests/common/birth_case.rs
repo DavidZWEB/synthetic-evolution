@@ -7,13 +7,11 @@ use sim_core::control::BrainInheritance;
 use sim_core::ids::BirthId;
 use sim_core::{SimParams, World};
 
-pub const EVOLVING_GOLDEN: u64 = 0x9e90_47a8_cf30_5c55;
-pub const CONTROL_GOLDEN: u64 = 0xcc32_6408_4021_6426;
+pub const EVOLVING_GOLDEN: u64 = 0xb65b_101b_e21b_cb91;
+pub const CONTROL_GOLDEN: u64 = 0x5402_abcc_03c4_c75e;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 3;
     params.plants.max_plants = 1;
     params.plants.max_energy = 300.0;

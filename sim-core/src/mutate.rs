@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn mutation_moves_weights() {
-        let params = SimParams::default().with_dense_founder();
+        let params = SimParams::default();
         let mut next_id = 0;
         let plan = crate::founder::FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             let id = crate::ids::InnovationId::new(next_id);
@@ -130,8 +130,15 @@ mod tests {
         plan.instantiate(&mut Rng::from_seed(2), &params, &mut genes);
         let before = weights(&genes);
         let mut rng = Rng::from_seed(1);
-        mutate(&mut genes, &mut rng, &params.mutation);
-        assert_ne!(weights(&genes), before, "nothing changed at default rates");
+        let mut mutation = params.mutation.clone();
+        // Every connection eligible, so the test does not hinge on a 4-connection draw.
+        mutation.weight_perturb_rate = 1.0;
+        mutate(&mut genes, &mut rng, &mutation);
+        assert_ne!(
+            weights(&genes),
+            before,
+            "perturbation left every weight unchanged"
+        );
     }
 
     #[test]

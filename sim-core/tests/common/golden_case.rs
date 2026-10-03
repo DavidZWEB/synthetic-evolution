@@ -6,34 +6,9 @@
 //! criterion exists to rule out. Included by path rather than imported because a test
 //! fixture is not part of `sim-core`'s public surface and should not become one.
 //!
-//! Phase 2 M1 refreshes references solely to include variable-arena capacity/free-span
-//! state and live handle placement. The preceding storage-integration commit retains
-//! the old references, proving that shipped trajectories did not move. Earlier hashes
-//! already covered recurrent state, pool order/incarnations, parts, and turn metadata.
-//!
-//! Phase 2 M3 refreshes them again solely to cover the cached founder template.
-//! Sparse wiring survives RNG advancement and affects later founder commands.
-//! The preceding M3 implementation commit preserves the old reference values.
-//!
-//! M4's classifier-state coverage refresh follows a separate species-label metadata
-//! integration commit. It adds frozen policy, future IDs, representatives, membership,
-//! and allocation state without changing ecological dynamics.
-//!
-//! M5 refreshes coverage for the birth counter and lifetime/parent identities.
-//! The preceding identity-integration commit retains the M4 references unchanged.
-//!
-//! Phase 2 M8 changes dynamics deliberately: the shipped founder became the minimal
-//! chemo-led one (spec §3.1, `SimParams` founder fields). Both references moved for
-//! that reason alone; every mechanism scenario pins the dense founder explicitly and
-//! keeps its references, so this is the only golden change in that commit.
-//!
-//! The minimal founder then regained two oscillators (Phase 2 M8, human decision), a
-//! deliberate dynamics change that again moved only these shipped references.
-//!
-//! Structural and sensor mutation then shipped enabled (Phase 2 M8, human decision).
-//! The shipped run is unchanged because its first birth comes after tick 300; the
-//! breeding run moves because its children now receive structural edits. Mechanism
-//! scenarios pin zero structural rates and keep their references.
+//! These runs track shipped defaults, so a deliberate default change moves them; the
+//! commit that moves them says why (`sim-core/tests/golden.rs`). Mechanism scenarios
+//! pin their own params and should not move with defaults.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
@@ -57,8 +32,8 @@ pub fn shipped() -> SimParams {
 
 /// A short-run configuration that makes reproduction prominent in the golden hash.
 ///
-/// The tuned defaults do reproduce, but seed 42's first birth is tick 367 (482 with
-/// Phase 1's dense founder), after the shipped golden run ends at tick 300. These
+/// The tuned defaults do reproduce, but seed 42's first birth is tick 367, after the
+/// shipped golden run ends at tick 300. These
 /// overrides move the first birth to tick 101 and leave 69 descendants at tick 500,
 /// robustly pinning `resolve_births`.
 pub fn breeding() -> SimParams {

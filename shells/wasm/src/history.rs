@@ -635,8 +635,21 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     fn full_staging_archives_capture_pressure_and_recovers_after_a_drain() {
-        let mut sim = make(7, BrainInheritance::Evolving);
-        let max_genes = params().storage.max_genes;
+        // Genomes may grow to two founders' size, and staging holds exactly one such
+        // genome, so it cannot stage all twenty founders seeded below.
+        let mut small = params();
+        let founder = sim_core::World::new(7, small.clone())
+            .unwrap()
+            .founder_plan()
+            .len() as u32;
+        small.storage.max_genes = 2 * founder;
+        let max_genes = small.storage.max_genes;
+        let mut sim = Sim::with_brain_inheritance(
+            7,
+            Some(&serde_json::to_string(&small).unwrap()),
+            BrainInheritance::Evolving,
+        )
+        .unwrap();
         sim.enable_history(64, Some(max_genes)).unwrap();
         // Fewer founders than the pool holds, so births can originate species later.
         assert_eq!(sim.seed_founders(20), 20);

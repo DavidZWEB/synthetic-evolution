@@ -14,8 +14,8 @@ use sim_core::species::SpeciesEventCounts;
 use sim_core::{SimParams, SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xd289_de28_768c_0abb;
-pub const CONTROL_GOLDEN: u64 = 0x01c1_544b_d717_81fb;
+pub const EVOLVING_GOLDEN: u64 = 0x7693_6bb1_5102_1ff7;
+pub const CONTROL_GOLDEN: u64 = 0x8160_0a17_bee5_d406;
 
 fn genes(weight: f32) -> [Gene; 4] {
     [
@@ -46,9 +46,7 @@ fn genes(weight: f32) -> [Gene; 4] {
 }
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 4;
     params.plants.max_plants = 1;
     params.plants.max_energy = 600.0;

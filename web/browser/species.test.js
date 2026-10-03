@@ -219,11 +219,17 @@ test('genome complexity matches the native reference at the same completed tick'
     const table = panel.getByRole('table', { name: 'Genome complexity' });
     const rows = await table.locator('tbody tr').evaluateAll((nodes) => nodes.map((row) =>
       [...row.children].map((cell) => cell.textContent)));
+    // Read the shared reference itself, so this cannot drift from native and WASM.
+    const source = readFileSync(
+      new URL('../../shells/shared/complexity_case.rs', import.meta.url), 'utf8');
+    const expected = JSON.parse([...source.matchAll(/r#"(.*?)"#/g)].map((m) => m[1]).join(''));
+    const row = (label, d) => [label, String(d.median), `${d.p25}–${d.p75}`, `${d.min}–${d.max}`,
+      d.mean.toFixed(1)];
     assert.deepEqual(rows, [
-      ['all genes', '81', '81–82', '68–95', '83.1'],
-      ['neurons', '15', '15–15', '15–15', '15.0'],
-      ['connections', '52', '52–53', '39–66', '54.1'],
-      ['enabled connections', '50', '49–51', '36–66', '52.2'],
+      row('all genes', expected.genome_genes),
+      row('neurons', expected.neurons),
+      row('connections', expected.connections),
+      row('enabled connections', expected.enabled_connections),
     ]);
   }, { ...structural, species: { capacity: 256, threshold: 0.5 } }, { seed: '7', runFounders: 8 });
 });

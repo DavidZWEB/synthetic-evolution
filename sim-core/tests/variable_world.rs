@@ -11,11 +11,27 @@ use sim_core::spawn::{ArenaKind, SpawnError, SpawnFailureCounts};
 use sim_core::{InnovationId, SimParams, SpawnSpec, World};
 
 fn params() -> SimParams {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
     params
+}
+
+/// Elements one founder occupies in `kind`'s arena, measured in a probe world.
+fn founder_usage(params: &SimParams, kind: ArenaKind) -> u32 {
+    let mut probe = World::new(1, params.clone()).unwrap();
+    let before = probe.storage_usage();
+    probe.spawn_founder(Vec3::ZERO).unwrap();
+    let after = probe.storage_usage();
+    let free = |usage: &[sim_core::spawn::ArenaUsage]| {
+        usage
+            .iter()
+            .find(|u| u.arena == kind)
+            .unwrap()
+            .free_elements
+    };
+    free(&before) - free(&after)
 }
 
 fn spec() -> SpawnSpec {
@@ -108,12 +124,16 @@ fn every_variable_arena_refusal_rolls_back_all_claims_and_slot_identity() {
     ] {
         let mut params = params();
         params.world.max_agents = 4;
+        // Three sensors, so a four-slot sensor arena can hold one founder but not two.
+        params.sensing.chemo_sensors = 3;
+        // Four slots pooling room for exactly one founder in this arena, not two.
+        let per_slot = founder_usage(&params, kind).div_ceil(4);
         match kind {
-            ArenaKind::Neurons => params.storage.neurons_per_slot = 7,
-            ArenaKind::Synapses => params.storage.synapses_per_slot = 60,
-            ArenaKind::Sensors => params.storage.sensors_per_slot = 2,
-            ArenaKind::Effectors => params.storage.effectors_per_slot = 1,
-            ArenaKind::Genes => params.storage.genes_per_slot = 100,
+            ArenaKind::Neurons => params.storage.neurons_per_slot = per_slot,
+            ArenaKind::Synapses => params.storage.synapses_per_slot = per_slot,
+            ArenaKind::Sensors => params.storage.sensors_per_slot = per_slot,
+            ArenaKind::Effectors => params.storage.effectors_per_slot = per_slot,
+            ArenaKind::Genes => params.storage.genes_per_slot = per_slot,
             ArenaKind::Parts => unreachable!(),
         }
         let mut world = World::new(7, params).unwrap();
@@ -173,7 +193,8 @@ fn fragmented_genes_refuse_without_leaking_preceding_compiled_claims() {
 fn failed_birth_preserves_parent_energy_and_reports_storage_pressure() {
     let mut params = params();
     params.world.max_agents = 4;
-    params.storage.genes_per_slot = 100;
+    // Room for the parent's genes, not a child's as well.
+    params.storage.genes_per_slot = founder_usage(&params, ArenaKind::Genes).div_ceil(4);
     let mut world = World::new(8, params).unwrap();
     let parent = world.spawn_founder(Vec3::ZERO).unwrap();
     world.agents_mut().energy[parent.index()] = 300.0;
@@ -245,7 +266,8 @@ fn sensing_retunes_do_not_budget_a_replacement_grid() {
 #[test]
 fn observing_refusals_does_not_change_simulation_state() {
     let mut params = params();
-    params.storage.genes_per_slot = 50;
+    // Eight slots pool room for only four founders, so seeding meets the arena limit.
+    params.storage.genes_per_slot = founder_usage(&params, ArenaKind::Genes).div_ceil(2);
     let mut a = World::new(42, params.clone()).unwrap();
     let mut b = World::new(42, params).unwrap();
     assert_eq!(a.seed_founders(8), b.seed_founders(8));

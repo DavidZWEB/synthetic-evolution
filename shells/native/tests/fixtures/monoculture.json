@@ -6,7 +6,7 @@
     "size": 1.5
   },
   "metabolism": {
-    "base": 0.0,
+    "base": 0.02,
     "k_size": 0.0,
     "k_brain": 0.0,
     "k_sensor": 0.003125,
@@ -51,15 +51,5 @@
       32,
       1
     ]
-  },
-  "sensing": {
-    "vision_rays": 3,
-    "chemo_sensors": 1,
-    "energy_sensors": 1
-  },
-  "brain": {
-    "hidden_neurons": 6,
-    "oscillators": 2,
-    "connections_per_target": null
   }
 }

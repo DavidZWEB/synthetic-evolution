@@ -479,8 +479,7 @@ fn failed_validation_and_admission_do_not_clobber_outputs() {
     }
     fs::write(
         &params,
-        // Half the dense founder's 284 genes per slot (spec section 2.2a).
-        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142},"sensing":{"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},"brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null}}"#,
+        half_founder_slot(r#"{"world":{"max_agents":2},"storage":{},"sensing":{"vision_rays":1}}"#),
     )
     .unwrap();
     for metrics_enabled in [false, true] {
@@ -658,4 +657,22 @@ fn open_and_broken_pipe_errors_are_command_failures() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+}
+
+/// `params` with `genes_per_slot` set to half its founder's genes, so two slots hold
+/// exactly one founder and a second is refused (spec section 2.2a).
+fn half_founder_slot(params: &str) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(params).unwrap();
+    let parsed: sim_core::SimParams = serde_json::from_value(value.clone()).unwrap();
+    let founder = sim_core::World::new(1, parsed)
+        .unwrap()
+        .founder_plan()
+        .len();
+    assert_eq!(
+        founder % 2,
+        0,
+        "an odd founder cannot fill two slots exactly"
+    );
+    value["storage"]["genes_per_slot"] = (founder / 2).into();
+    value.to_string()
 }

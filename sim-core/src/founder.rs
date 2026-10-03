@@ -484,8 +484,10 @@ mod tests {
             }),
         ];
         for (name, invalidate) in cases {
-            // Dense, so the arena and connection-limit cases are actually exceeded.
-            let mut params = SimParams::default().with_dense_founder();
+            // Dense wiring, so the arena and connection-limit cases are exceeded.
+            let mut params = SimParams::default();
+            params.brain.hidden_neurons = 6;
+            params.brain.connections_per_target = None;
             invalidate(&mut params);
             let mut requested = 0;
             let mut rng = Rng::from_seed(42);
@@ -639,61 +641,6 @@ mod tests {
             params.brain.connections_per_target = fan_in;
             assert_counts_and_wiring(&params, seed);
         }
-    }
-
-    #[test]
-    fn full_connectivity_is_dense_with_identical_ids_scalars_and_rng() {
-        let params = SimParams::default().with_dense_founder();
-        let sources =
-            FounderPlan::checked_counts(&params).unwrap().neurons - EFFECTORS.len() as u32;
-        for seed in [0, 1, 42] {
-            let mut dense_rng = Rng::from_seed(seed);
-            let before = dense_rng.clone();
-            let dense = plan_with_rng(&params, &mut dense_rng);
-            assert_eq!(dense_rng, before, "dense construction consumed RNG");
-            let mut dense_genes = vec![Gene::default(); dense.len()];
-            dense.instantiate(&mut dense_rng, &params, &mut dense_genes);
-            for fan_in in [sources, sources + 1, u32::MAX] {
-                let mut explicit = params.clone();
-                explicit.brain.connections_per_target = Some(fan_in);
-                let mut rng = Rng::from_seed(seed);
-                let full = plan_with_rng(&explicit, &mut rng);
-                assert_eq!(rng, before, "full construction consumed RNG");
-                assert_eq!(full.genes(), dense.genes());
-                assert_eq!(full.fan_in_scale, dense.fan_in_scale);
-                let mut genes = vec![Gene::default(); full.len()];
-                full.instantiate(&mut rng, &explicit, &mut genes);
-                assert_eq!(genes, dense_genes);
-                assert_eq!(rng, dense_rng);
-            }
-        }
-    }
-
-    #[test]
-    fn default_dense_connections_keep_source_major_innovation_order() {
-        let params = SimParams::default().with_dense_founder();
-        let plan = plan(&params);
-        assert_eq!(plan.len(), 284);
-        assert_eq!(plan.neuron_count(), 28);
-        let expected: Vec<_> = (0..16)
-            .chain(20..28)
-            .flat_map(|from| (16..26).map(move |to| (from, to)))
-            .enumerate()
-            .map(|(offset, (from, to))| (37 + offset as u32, from, to))
-            .collect();
-        let actual: Vec<_> = plan
-            .genes()
-            .iter()
-            .filter_map(|gene| match gene {
-                Gene::Connection(connection) => Some((
-                    connection.id.raw(),
-                    connection.from.raw(),
-                    connection.to.raw(),
-                )),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -1082,40 +1029,6 @@ mod tests {
     }
 
     #[test]
-    fn initial_weights_are_scaled_down_by_fan_in() {
-        // The bound in `MutationParams::weight_limit` is where evolution may take a
-        // weight; it is not where one should start. With 24 inputs per neuron the full
-        // bound sums to order ±20 and every sigmoid saturates on tick one.
-        let params = SimParams::default().with_dense_founder();
-        let genes = instantiate(&plan(&params), &params, 5);
-        let fan_in = 24.0;
-        let expected = params.brain.weight_init_scale / crate::math::sqrt(fan_in);
-
-        let weights: Vec<f32> = genes
-            .iter()
-            .filter_map(|g| match g {
-                Gene::Connection(c) => Some(c.weight),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            weights.len(),
-            240,
-            "the default topology is fully connected"
-        );
-        for w in &weights {
-            assert!(
-                w.abs() <= expected + 1e-6,
-                "weight {w} exceeds the fan-in-scaled draw of ±{expected}"
-            );
-        }
-        assert!(
-            weights.iter().any(|w| w.abs() > expected * 0.9),
-            "the draw is not using its whole range"
-        );
-    }
-
-    #[test]
     fn the_init_scale_is_a_live_parameter() {
         // Only the topology half is baked into the plan, so a runtime change to
         // `weight_init_scale` takes effect without rebuilding it (spec §7.6).
@@ -1138,12 +1051,12 @@ mod tests {
 
     #[test]
     fn brain_width_tracks_the_parameters() {
-        let mut params = SimParams::default().with_dense_founder();
+        let mut params = SimParams::default();
         params.brain.hidden_neurons = 3;
         params.brain.oscillators = 2;
         params.sensing.vision_rays = 2;
         let p = plan(&params);
-        // 2 eyes x 4 channels + chemo 3 + interoception 1 = 12 inputs, 4 outputs.
-        assert_eq!(p.neuron_count(), 12 + 4 + 3 + 2);
+        // 2 eyes x 4 channels + chemo 3 = 11 inputs, 4 outputs, 3 hidden, 2 clocks.
+        assert_eq!(p.neuron_count(), 11 + 4 + 3 + 2);
     }
 }

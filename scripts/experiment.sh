@@ -42,7 +42,7 @@ done | xargs -0 -n 3 -P "${JOBS:-4}" bash -c '
 
 for params in "$@"; do
   name=$(basename "$params" .json)
-  # Seeds are numeric, so `dense` cannot also collect `dense-growth` runs.
+  # Seeds are numeric, so `base` cannot also collect `base-growth` runs.
   runs=("$out/$name"-[0-9]*-scalar.jsonl "$out/$name"-[0-9]*-structural-null.jsonl)
   "$native" summarize "${runs[@]}" > "$out/$name-summary.txt"
   "$native" summarize --json "${runs[@]}" > "$out/$name-summary.json"

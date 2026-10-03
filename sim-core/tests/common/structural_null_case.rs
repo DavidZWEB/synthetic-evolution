@@ -8,17 +8,15 @@ use sim_core::control::BrainInheritance;
 use sim_core::{SimParams, World};
 
 // New scenario for the structural_null_v1 heredity mode (spec section 7.8).
-pub const NULL_GOLDEN: u64 = 0x7e74_bff6_f2d8_da6e;
+pub const NULL_GOLDEN: u64 = 0xb41e_ed86_1fb8_72c9;
 // The same scenario under structural_null_v2 (spec section 7.8).
-pub const NULL_V2_GOLDEN: u64 = 0x9e5d_695d_4b39_f598;
+pub const NULL_V2_GOLDEN: u64 = 0x48be_8a21_8ab6_ed9f;
 
 const FOUNDERS: u32 = 32;
 const TICKS: u64 = 500;
 
 fn run(mode: BrainInheritance) -> World {
-    let mut params = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 512;
     params.body.size = 1.5;
     params.metabolism.k_sensor = 0.003_125;
