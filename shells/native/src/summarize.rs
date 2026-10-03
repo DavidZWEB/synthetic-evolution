@@ -426,6 +426,19 @@ fn format_value(value: Option<f64>) -> String {
     }
 }
 
+fn cell(metric: &MetricStats) -> String {
+    if metric.n == 0 {
+        return "unavailable".to_owned();
+    }
+    format!(
+        "{} ± {} [{}–{}]",
+        format_value(metric.mean),
+        format_value(metric.sd),
+        format_value(metric.min),
+        format_value(metric.max)
+    )
+}
+
 pub(crate) fn write_human(output: &mut impl Write, summary: &Summary) -> io::Result<()> {
     for configuration in &summary.configurations {
         writeln!(
@@ -449,31 +462,46 @@ pub(crate) fn write_human(output: &mut impl Write, summary: &Summary) -> io::Res
                 configuration.unpaired.join(", ")
             )?;
         }
-        write!(output, "  {:<26}", "metric (mean ± sd [min–max])")?;
-        for cohort in &configuration.cohorts {
-            write!(
-                output,
-                " | {:<34}",
-                format!("{} (n={})", cohort.name, cohort.seeds.len())
-            )?;
+        // Columns are sized to their widest entry, so no header or value overruns.
+        // Format width counts chars, which keeps `±` and `–` aligned.
+        const METRIC_HEADER: &str = "metric (mean ± sd [min–max])";
+        let titles: Vec<String> = configuration
+            .cohorts
+            .iter()
+            .map(|cohort| format!("{} (n={})", cohort.name, cohort.seeds.len()))
+            .collect();
+        let cells: Vec<Vec<String>> = configuration
+            .cohorts
+            .iter()
+            .map(|cohort| cohort.metrics.iter().map(cell).collect())
+            .collect();
+        let first = METRICS
+            .iter()
+            .map(|name| name.chars().count())
+            .chain([METRIC_HEADER.chars().count()])
+            .max()
+            .unwrap_or(0);
+        let widths: Vec<usize> = titles
+            .iter()
+            .zip(&cells)
+            .map(|(title, column)| {
+                column
+                    .iter()
+                    .chain([title])
+                    .map(|text| text.chars().count())
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect();
+        write!(output, "  {METRIC_HEADER:<first$}")?;
+        for (title, width) in titles.iter().zip(&widths) {
+            write!(output, " | {title:<width$}")?;
         }
         writeln!(output)?;
-        for (index, &name) in METRICS.iter().enumerate() {
-            write!(output, "  {name:<26}")?;
-            for cohort in &configuration.cohorts {
-                let metric = &cohort.metrics[index];
-                let cell = if metric.n == 0 {
-                    "unavailable".to_owned()
-                } else {
-                    format!(
-                        "{} ± {} [{}–{}]",
-                        format_value(metric.mean),
-                        format_value(metric.sd),
-                        format_value(metric.min),
-                        format_value(metric.max)
-                    )
-                };
-                write!(output, " | {cell:<34}")?;
+        for (index, name) in METRICS.iter().enumerate() {
+            write!(output, "  {name:<first$}")?;
+            for (column, width) in cells.iter().zip(&widths) {
+                write!(output, " | {:<width$}", column[index])?;
             }
             writeln!(output)?;
         }
@@ -545,6 +573,56 @@ mod tests {
             species_persistence(&legacy, 1_000, &|s| &s.evolving),
             (None, None)
         );
+    }
+
+    #[test]
+    fn table_columns_fit_their_widest_entry() {
+        let runs = vec![sample(0, &[1]), sample(1_000, &[1])];
+        let mut groups = BTreeMap::new();
+        let header = RunHeader {
+            schema_version: crate::metrics::SCHEMA_VERSION,
+            sim_version: "test".to_owned(),
+            source_revision: "test".to_owned(),
+            phase: 2,
+            seed: "7".to_owned(),
+            ticks: 1_000,
+            founders: 1,
+            sample_every: 1_000,
+            params: sim_core::SimParams::default(),
+            control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+        };
+        add(
+            &mut groups,
+            Run {
+                header,
+                samples: runs,
+            },
+        )
+        .unwrap();
+        let summary = Summary {
+            configurations: groups
+                .into_iter()
+                .map(|(params, group)| configuration(&params, group))
+                .collect(),
+            notes: Vec::new(),
+        };
+        let mut output = Vec::new();
+        write_human(&mut output, &summary).unwrap();
+        let text = String::from_utf8(output).unwrap();
+        let rows: Vec<&str> = text.lines().filter(|line| line.contains(" | ")).collect();
+        assert_eq!(rows.len(), METRICS.len() + 1);
+        // Every separator sits in the same character column on every row.
+        let separators = |line: &str| -> Vec<usize> {
+            let chars: Vec<char> = line.chars().collect();
+            (0..chars.len().saturating_sub(2))
+                .filter(|&i| chars[i..i + 3] == [' ', '|', ' '])
+                .collect()
+        };
+        let expected = separators(rows[0]);
+        assert_eq!(expected.len(), 2, "{}", rows[0]);
+        for row in &rows {
+            assert_eq!(separators(row), expected, "{row}");
+        }
     }
 
     #[test]
