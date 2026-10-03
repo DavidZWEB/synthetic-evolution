@@ -9,8 +9,11 @@ acceptance and tuning evidence remain in
 coloring, schema 8 complexity/history telemetry, representative-genome archives
 (history schema 3), the species-origin graph, and representative comparison. M7
 delivered exact save/resume as saved-run bundles in both shells. M8 is in progress:
-the approved donor-topology structural null (`structural_null_v1`) is implemented;
-the multi-seed experiments and their evidence report come next.
+the approved donor-topology structural null (`structural_null_v1`) is implemented and
+the first multi-seed experiments are reported in
+[`phase-2-m8-evidence.md`](phase-2-m8-evidence.md). That comparison is inconclusive
+because both controls collapse before structure can matter; the protocol awaits a
+human decision.
 Distance/deletion-default calibration remains pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
@@ -33,7 +36,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | implemented: live species browser/coloring, schema 8 telemetry, representative archives, species-origin graph, and representative comparison |
 | M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | implemented: core checkpoints, saved-run bundles, native save/resume with resumed-segment history, and browser Save run / Load run |
-| M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | in progress: `structural_null_v1` control implemented; experiments pending |
+| M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | in progress: `structural_null_v1` implemented and run (3 configs × 3 seeds); structural comparison inconclusive, protocol decision pending |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
 Each milestone can span several PRs. Keep allocation, mutation, classification,
