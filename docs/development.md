@@ -296,7 +296,9 @@ holds M8's declared configurations.
 
 ### Opt-in neural structural mutation (M2)
 
-All five shipped rates under **`SimParams.mutation.structural` are zero**. Missing
+All six shipped rates under **`SimParams.mutation.structural` are zero**, including
+M8's `add_oscillator_rate` (an oscillator plus one outgoing connection; 0.01 is an
+opt-in example). Missing
 fields, including old saved params and shared URLs, retain zero rates; the default
 scalar-only dynamics and random-draw sequences remain unchanged. To opt in, pass a
 partial params document such as this with `--params params.json` (the WASM constructor

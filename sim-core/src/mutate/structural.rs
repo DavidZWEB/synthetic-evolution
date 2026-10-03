@@ -37,6 +37,7 @@ pub(crate) fn apply(
         ),
         (StructuralOperator::AddConnection, rates.add_connection_rate),
         (StructuralOperator::AddNeuron, rates.add_neuron_rate),
+        (StructuralOperator::AddOscillator, rates.add_oscillator_rate),
     ] {
         if rate <= 0.0 || !state.rng.chance(rate) {
             continue;
@@ -49,6 +50,7 @@ pub(crate) fn apply(
             StructuralOperator::ToggleConnection => toggle_connection(genes, state.rng),
             StructuralOperator::AddConnection => add_connection(genes, params, state),
             StructuralOperator::AddNeuron => add_neuron(genes, params, state),
+            StructuralOperator::AddOscillator => add_oscillator(genes, params, state),
             StructuralOperator::RemoveSensor | StructuralOperator::AddSensor => {
                 unreachable!("organ operators have their own pass")
             }
@@ -302,6 +304,67 @@ fn add_neuron(
     StructuralMutationResult::Applied
 }
 
+/// Adds a free-running oscillator and one enabled connection from it to a uniformly
+/// chosen non-oscillator neuron. Oscillators ignore their inputs, so an unwired clock
+/// would be inert until a later edit wired it; this one can act at once (spec §3.2).
+fn add_oscillator(
+    genes: &mut Vec<Gene>,
+    params: &SimParams,
+    state: &mut super::MutationState<'_>,
+) -> StructuralMutationResult {
+    let is_target =
+        |gene: &Gene| matches!(gene, Gene::Neuron(n) if n.activation != Activation::Oscillator);
+    let Some(index) = select_index(genes, state.rng, is_target) else {
+        return StructuralMutationResult::NoCandidate;
+    };
+    let to = genes[index].as_neuron().expect("neuron prefix").id;
+    if let Err(outcome) = preflight_growth(
+        genes,
+        &params.storage,
+        state.neuron_scratch,
+        Growth {
+            neurons: 1,
+            connections: 1,
+            ..Growth::default()
+        },
+    ) {
+        return outcome;
+    }
+    let Ok(id) = reserve_innovations(state.next_innovation, 2) else {
+        return StructuralMutationResult::InnovationExhausted;
+    };
+    let fan_in = genes
+        .iter()
+        .filter(|gene| matches!(gene, Gene::Connection(c) if c.enabled && c.to == to))
+        .count() as u64;
+    let brain = &params.brain;
+    // Drawn like a founder oscillator and an added connection, in that order.
+    let neuron = NeuronGene {
+        id,
+        bias: state.rng.range(-1.0, 1.0),
+        tau: state.rng.range(brain.tau_min, brain.tau_max),
+        activation: Activation::Oscillator,
+        period: state
+            .rng
+            .range(brain.oscillator_period_min, brain.oscillator_period_max),
+    };
+    let half_width =
+        brain.weight_init_scale.min(params.mutation.weight_limit) / math::sqrt((fan_in + 1) as f32);
+    let weight = state.rng.range(-half_width, half_width);
+    insert_gene(genes, Gene::Neuron(neuron));
+    insert_gene(
+        genes,
+        Gene::Connection(ConnectionGene {
+            id: InnovationId::new(id.raw() + 1),
+            from: id,
+            to,
+            weight,
+            enabled: true,
+        }),
+    );
+    StructuralMutationResult::Applied
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,12 +376,13 @@ mod tests {
     use crate::rng::Rng;
     use proptest::prelude::*;
 
-    const OPERATORS: [StructuralOperator; 5] = [
+    const OPERATORS: [StructuralOperator; 6] = [
         StructuralOperator::RemoveConnection,
         StructuralOperator::RemoveNeuron,
         StructuralOperator::ToggleConnection,
         StructuralOperator::AddConnection,
         StructuralOperator::AddNeuron,
+        StructuralOperator::AddOscillator,
     ];
     const OUTCOMES: [StructuralMutationResult; 5] = [
         StructuralMutationResult::Applied,
@@ -368,6 +432,7 @@ mod tests {
             StructuralOperator::ToggleConnection => structural.toggle_connection_rate = rate,
             StructuralOperator::AddConnection => structural.add_connection_rate = rate,
             StructuralOperator::AddNeuron => structural.add_neuron_rate = rate,
+            StructuralOperator::AddOscillator => structural.add_oscillator_rate = rate,
             StructuralOperator::RemoveSensor | StructuralOperator::AddSensor => {
                 unreachable!("neural test helper")
             }
@@ -1081,6 +1146,92 @@ mod tests {
     }
 
     #[test]
+    fn added_oscillators_get_a_period_and_drive_one_non_oscillator() {
+        let params = params_for(StructuralOperator::AddOscillator);
+        for seed in 0..32 {
+            let mut genes = reserved(
+                [
+                    neuron(1, Activation::Sigmoid),
+                    neuron(2, Activation::Oscillator),
+                    neuron(3, Activation::Sigmoid),
+                    connection(4, 1, 3, 0.5, true),
+                ],
+                params.storage.max_genes as usize,
+            );
+            let before = genes.clone();
+            let mut rng = Rng::from_seed(seed);
+            let mut next = 10;
+            let mut scratch = vec![0; params.storage.max_neurons as usize];
+            let mut outcome = None;
+            apply(
+                &mut genes,
+                &params,
+                &mut MutationState {
+                    rng: &mut rng,
+                    next_innovation: &mut next,
+                    neuron_scratch: &mut scratch,
+                },
+                |event| outcome = Some(event),
+            );
+            assert_eq!(
+                outcome,
+                Some(StructuralMutationEvent {
+                    operator: StructuralOperator::AddOscillator,
+                    outcome: StructuralMutationResult::Applied,
+                })
+            );
+            assert_eq!(next, 12, "a neuron and a connection");
+            assert_eq!(genes.len(), before.len() + 2);
+            let Some(Gene::Neuron(added)) = genes
+                .iter()
+                .find(|gene| gene.innovation() == Some(InnovationId::new(10)))
+            else {
+                panic!("no added neuron");
+            };
+            assert_eq!(added.activation, Activation::Oscillator);
+            assert!(
+                (params.brain.oscillator_period_min..=params.brain.oscillator_period_max)
+                    .contains(&added.period)
+            );
+            let Some(Gene::Connection(wire)) = genes
+                .iter()
+                .find(|gene| gene.innovation() == Some(InnovationId::new(11)))
+            else {
+                panic!("no added connection");
+            };
+            assert_eq!(wire.from, added.id);
+            assert!(wire.enabled);
+            assert!(
+                [1, 3].contains(&wire.to.raw()),
+                "an oscillator ignores its inputs"
+            );
+            assert!(genome::validate_architecture(&genes).is_ok());
+        }
+    }
+
+    #[test]
+    fn oscillator_addition_needs_a_non_oscillator_target() {
+        let params = params_for(StructuralOperator::AddOscillator);
+        let mut genes = reserved(
+            [neuron(1, Activation::Oscillator)],
+            params.storage.max_genes as usize,
+        );
+        let mut outcome = None;
+        apply(
+            &mut genes,
+            &params,
+            &mut MutationState {
+                rng: &mut Rng::from_seed(1),
+                next_innovation: &mut 10,
+                neuron_scratch: &mut vec![0; params.storage.max_neurons as usize],
+            },
+            |event| outcome = Some(event.outcome),
+        );
+        assert_eq!(outcome, Some(StructuralMutationResult::NoCandidate));
+        assert_eq!(genes.len(), 1);
+    }
+
+    #[test]
     fn counters_record_each_outcome_and_operator_and_round_trip() {
         let mut counts = StructuralMutationCounts::default();
         for operator in OPERATORS {
@@ -1112,6 +1263,7 @@ mod tests {
                 toggle_connection: expected,
                 add_connection: expected,
                 add_neuron: expected,
+                add_oscillator: Some(expected),
                 ..StructuralMutationCounts::default()
             }
         );
@@ -1140,6 +1292,7 @@ mod tests {
             toggle_connection: almost,
             add_connection: almost,
             add_neuron: almost,
+            add_oscillator: Some(almost),
             ..StructuralMutationCounts::default()
         };
         for _ in 0..2 {
@@ -1165,6 +1318,7 @@ mod tests {
                 toggle_connection: saturated,
                 add_connection: saturated,
                 add_neuron: saturated,
+                add_oscillator: Some(saturated),
                 ..StructuralMutationCounts::default()
             }
         );

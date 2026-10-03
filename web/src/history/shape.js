@@ -73,7 +73,8 @@ const PARAMS = {
   mutation: {
     structural: {
       remove_connection_rate: f, remove_neuron_rate: f, toggle_connection_rate: f,
-      add_connection_rate: f, add_neuron_rate: f, split_neuron_bias: f, split_input_weight: f,
+      add_connection_rate: f, add_neuron_rate: f, add_oscillator_rate: f,
+      split_neuron_bias: f, split_input_weight: f,
     },
     organs: {
       remove_sensor_rate: f, add_sensor_rate: f, vision_weight: f, chemo_weight: f,
@@ -92,6 +93,12 @@ const PARAMS = {
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
 
+/**
+ * Params fields added after archives were first written. An older archive omits them
+ * because it ran without them, which their zero default describes exactly.
+ */
+const LATER_PARAMS = new Set(['add_oscillator_rate']);
+
 export function integerParam(path) {
   let shape = PARAMS;
   for (const key of path) shape = Array.isArray(shape) ? shape[0] : shape?.[key];
@@ -103,8 +110,9 @@ export function validateParamsShape(value, shape = PARAMS, path = 'params') {
     requireThat(Array.isArray(value) && (shape[1] === undefined || value.length === shape[1]), `${path} is not a valid array`);
     value.forEach((item) => validateParamsShape(item, shape[0], path));
   } else if (typeof shape === 'object') {
-    object(value, Object.keys(shape), path);
-    for (const key of Object.keys(shape)) validateParamsShape(value[key], shape[key], `${path}.${key}`);
+    const keys = Object.keys(shape).filter((key) => !LATER_PARAMS.has(key) || Object.hasOwn(value ?? {}, key));
+    object(value, keys, path);
+    for (const key of keys) validateParamsShape(value[key], shape[key], `${path}.${key}`);
   } else if (shape === f) {
     requireThat(typeof value === 'number' && Number.isFinite(value), `${path} must be finite`);
   } else if (shape !== 'nullable-u32' || value !== null) {

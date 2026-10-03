@@ -649,6 +649,7 @@ fn operator_name(operator: StructuralOperator) -> &'static str {
         StructuralOperator::ToggleConnection => "toggle_connection",
         StructuralOperator::AddConnection => "add_connection",
         StructuralOperator::AddNeuron => "add_neuron",
+        StructuralOperator::AddOscillator => "add_oscillator",
     }
 }
 
@@ -664,6 +665,7 @@ fn operator_counts(
         StructuralOperator::ToggleConnection => Some(counts.toggle_connection),
         StructuralOperator::AddConnection => Some(counts.add_connection),
         StructuralOperator::AddNeuron => Some(counts.add_neuron),
+        StructuralOperator::AddOscillator => counts.add_oscillator,
     }
 }
 
@@ -676,6 +678,7 @@ fn diagnose_structural_mutations(metrics: &[(u64, &WorldMetrics)], findings: &mu
         (StructuralOperator::ToggleConnection, false),
         (StructuralOperator::AddConnection, false),
         (StructuralOperator::AddNeuron, false),
+        (StructuralOperator::AddOscillator, false),
     ];
     for &(tick, sample) in metrics.iter().rev() {
         let Some(counts) = sample.structural_mutations else {
@@ -1325,6 +1328,7 @@ mod tests {
                 toggle_connection: pressure(offset + 5),
                 add_connection: pressure(offset + 6),
                 add_neuron: pressure(offset + 7),
+                add_oscillator: Some(pressure(offset + 8)),
             });
         }
         let mut findings = Vec::new();
@@ -1340,6 +1344,7 @@ mod tests {
             ("toggle_connection", 15),
             ("add_connection", 16),
             ("add_neuron", 17),
+            ("add_oscillator", 18),
         ];
         assert_eq!(findings.len(), expected.len());
         for (finding, (operator, count)) in findings.iter().zip(expected) {

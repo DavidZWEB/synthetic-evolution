@@ -445,6 +445,11 @@ pub struct StructuralMutationParams {
     pub toggle_connection_rate: f32,
     pub add_connection_rate: f32,
     pub add_neuron_rate: f32,
+    /// Chance per birth of adding one oscillator neuron, wired by a single outgoing
+    /// connection to a random non-oscillator neuron, so a lineage can gain a clock it
+    /// was not founded with (spec §3.2-§3.3). Zero by default like every structural
+    /// addition; 0.01 is an opt-in example, not a tuned value.
+    pub add_oscillator_rate: f32,
     pub split_neuron_bias: f32,
     /// Initial incoming weight when splitting an edge; outgoing weight is inherited.
     pub split_input_weight: f32,
@@ -458,6 +463,7 @@ impl Default for StructuralMutationParams {
             toggle_connection_rate: 0.0,
             add_connection_rate: 0.0,
             add_neuron_rate: 0.0,
+            add_oscillator_rate: 0.0,
             split_neuron_bias: 0.0,
             split_input_weight: 1.0,
         }
@@ -471,6 +477,7 @@ impl StructuralMutationParams {
             && self.toggle_connection_rate == 0.0
             && self.add_connection_rate == 0.0
             && self.add_neuron_rate == 0.0
+            && self.add_oscillator_rate == 0.0
     }
 }
 
@@ -927,6 +934,10 @@ impl SimParams {
             (
                 structural.add_neuron_rate,
                 "mutation.structural.add_neuron_rate must be in [0, 1]",
+            ),
+            (
+                structural.add_oscillator_rate,
+                "mutation.structural.add_oscillator_rate must be in [0, 1]",
             ),
         ] {
             if !(0.0..=1.0).contains(&rate) {

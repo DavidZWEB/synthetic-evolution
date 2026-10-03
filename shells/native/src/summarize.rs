@@ -373,6 +373,7 @@ fn cohort_values(
                 e.add_neuron,
             ]
             .iter()
+            .chain(e.add_oscillator.as_ref())
             .map(|counts| counts.applied as f64)
             .sum()
         }),

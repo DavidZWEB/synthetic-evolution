@@ -167,10 +167,12 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
                     validate_complexity(run, metrics)?;
+                    // Oscillator addition first shipped with schema 8.
                     if let Some(counts) = metrics.structural_mutations
                         && (run.schema_version == 3
                             || (run.schema_version == 4
-                                && (counts.remove_sensor.is_some() || counts.add_sensor.is_some())))
+                                && (counts.remove_sensor.is_some() || counts.add_sensor.is_some()))
+                            || (run.schema_version < 8 && counts.add_oscillator.is_some()))
                     {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -588,6 +590,13 @@ mod tests {
                 for field in ["species", "complexity", "history"] {
                     metrics.remove(field);
                 }
+                // Oscillator addition did not exist in any legacy schema.
+                if let Some(counts) = metrics
+                    .get_mut("structural_mutations")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    counts.remove("add_oscillator");
+                }
             }
         }
     }
@@ -787,6 +796,7 @@ mod tests {
                     .unwrap();
             counts.as_object_mut().unwrap().remove("remove_sensor");
             counts.as_object_mut().unwrap().remove("add_sensor");
+            counts.as_object_mut().unwrap().remove("add_oscillator");
             counts["add_neuron"]["attempted"] = 2.into();
             counts["add_neuron"]["applied"] = 2.into();
             records[1]["data"][cohort]["structural_mutations"] = counts;
@@ -1208,6 +1218,52 @@ mod tests {
     }
 
     #[test]
+    fn oscillator_addition_counts_are_unknown_before_they_were_recorded() {
+        let with_counts = |records: &mut [serde_json::Value], oscillator: bool| {
+            for cohort in ["evolving", "random_control"] {
+                let mut counts =
+                    serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
+                        .unwrap();
+                if !oscillator {
+                    counts.as_object_mut().unwrap().remove("add_oscillator");
+                }
+                records[1]["data"][cohort]["structural_mutations"] = counts;
+            }
+        };
+        let mut legacy = final_records();
+        records_at_schema_seven(&mut legacy);
+        with_counts(&mut legacy, false);
+        parse_values(&legacy).expect("schema 7 without oscillator observations");
+        with_counts(&mut legacy, true);
+        assert!(
+            parse_values(&legacy).is_err(),
+            "schema 7 cannot claim oscillator-addition observations"
+        );
+
+        let mut current = final_records();
+        with_counts(&mut current, false);
+        let data = parse_values(&current).expect("schema 8 written before the operator");
+        for metrics in [&data.samples[0].evolving, &data.samples[0].random_control] {
+            assert_eq!(metrics.structural_mutations.unwrap().add_oscillator, None);
+        }
+        with_counts(&mut current, true);
+        let data = parse_values(&current).unwrap();
+        assert!(
+            data.samples[0]
+                .evolving
+                .structural_mutations
+                .unwrap()
+                .add_oscillator
+                .is_some()
+        );
+    }
+
+    fn records_at_schema_seven(records: &mut [serde_json::Value]) {
+        records[0]["data"]["schema_version"] = 7.into();
+        strip_schema_eight_observations(records);
+    }
+
+    #[test]
     fn legacy_sensor_observations_are_unknown_never_measured_zero() {
         for schema in [3, 4] {
             for cohort in ["evolving", "random_control"] {
@@ -1219,6 +1275,7 @@ mod tests {
                             .unwrap();
                     counts["remove_sensor"] = serde_json::Value::Null;
                     counts["add_sensor"] = serde_json::Value::Null;
+                    counts.as_object_mut().unwrap().remove("add_oscillator");
                     records[1]["data"][cohort]["structural_mutations"] = counts;
                     if schema == 4 {
                         parse_values(&records).expect("explicit null remains unavailable");

@@ -12,6 +12,7 @@ pub enum StructuralOperator {
     ToggleConnection,
     AddConnection,
     AddNeuron,
+    AddOscillator,
     RemoveSensor,
     AddSensor,
 }
@@ -48,6 +49,9 @@ pub struct StructuralMutationCounts {
     pub toggle_connection: OperatorCounts,
     pub add_connection: OperatorCounts,
     pub add_neuron: OperatorCounts,
+    /// Absent before the operator existed, so older observations stay unknown.
+    #[serde(default)]
+    pub add_oscillator: Option<OperatorCounts>,
     #[serde(default)]
     pub remove_sensor: Option<OperatorCounts>,
     #[serde(default)]
@@ -62,6 +66,7 @@ impl Default for StructuralMutationCounts {
             toggle_connection: OperatorCounts::default(),
             add_connection: OperatorCounts::default(),
             add_neuron: OperatorCounts::default(),
+            add_oscillator: Some(OperatorCounts::default()),
             remove_sensor: Some(OperatorCounts::default()),
             add_sensor: Some(OperatorCounts::default()),
         }
@@ -77,6 +82,7 @@ impl StructuralMutationCounts {
             StructuralOperator::ToggleConnection => Some(&mut self.toggle_connection),
             StructuralOperator::AddConnection => Some(&mut self.add_connection),
             StructuralOperator::AddNeuron => Some(&mut self.add_neuron),
+            StructuralOperator::AddOscillator => self.add_oscillator.as_mut(),
             StructuralOperator::RemoveSensor => self.remove_sensor.as_mut(),
             StructuralOperator::AddSensor => self.add_sensor.as_mut(),
         };
