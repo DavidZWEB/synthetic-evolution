@@ -53,6 +53,8 @@ pub struct Provenance {
     pub source_revision: String,
     pub phase: u8,
     pub seed: Decimal,
+    /// Generation-zero population, which later history segments still describe.
+    pub founders: u32,
     pub control: String,
     /// Browser runs name themselves; native runs are identified by their files.
     pub run_id: Option<String>,
@@ -160,6 +162,9 @@ impl Manifest {
                 "unsupported saved-run format {} v{}",
                 self.format, self.version
             ));
+        }
+        if self.provenance.founders == 0 {
+            return Err("saved-run provenance needs a nonzero founder count".into());
         }
         let cohorts: Vec<Cohort> = self.cohorts.iter().map(|c| c.cohort).collect();
         if !matches!(

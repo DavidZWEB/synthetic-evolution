@@ -2,7 +2,8 @@
 //!
 //! Native export remains version one unless representatives are requested; version
 //! two also describes browser capture prefixes; version three adds each species'
-//! representative genome at origin to either shape. Shared events describe founding
+//! representative genome at origin to either shape; version four is a segment that
+//! resumes mid-run from a checkpoint, with or without representatives. Shared events describe founding
 //! admissions, not complete genealogy.
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -20,6 +21,8 @@ pub(crate) use history_event_wire::{
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 pub(crate) const BROWSER_SCHEMA_VERSION: u32 = 2;
 pub(crate) const REPRESENTATIVE_SCHEMA_VERSION: u32 = 3;
+/// A segment that begins mid-run from a checkpoint, with unknown prior lineage.
+pub(crate) const RESUMED_SCHEMA_VERSION: u32 = 4;
 pub(crate) const MAX_LINE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +78,14 @@ pub(crate) struct Header {
         deserialize_with = "present_value"
     )]
     pub representative_genes: Option<u32>,
+    /// Version four only: the checkpoint tick this segment resumes from. Lineage
+    /// before it is unknown to this archive, as after a gap (spec §7.10).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_value"
+    )]
+    pub resumed_from_tick: Option<Decimal>,
     pub params: SimParams,
 }
 
@@ -83,9 +94,12 @@ impl Header {
         run: &RunHeader,
         capacity: u32,
         representative_genes: Option<u32>,
+        resumed_from_tick: Option<u64>,
     ) -> crate::Result<Self> {
         Ok(Self {
-            schema_version: if representative_genes.is_some() {
+            schema_version: if resumed_from_tick.is_some() {
+                RESUMED_SCHEMA_VERSION
+            } else if representative_genes.is_some() {
                 REPRESENTATIVE_SCHEMA_VERSION
             } else {
                 SCHEMA_VERSION
@@ -104,6 +118,7 @@ impl Header {
             drain_every: Some(Decimal(run.sample_every)),
             capacity_per_cohort: capacity,
             representative_genes,
+            resumed_from_tick: resumed_from_tick.map(Decimal),
             params: run.params.clone(),
         })
     }

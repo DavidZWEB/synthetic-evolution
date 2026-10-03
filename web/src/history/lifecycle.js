@@ -10,12 +10,14 @@ export function countKeys(representatives) {
   return representatives ? [...COUNT_KEYS, ...REPRESENTATIVE_COUNT_KEYS] : COUNT_KEYS;
 }
 
-export function newState(representatives = false) {
+export function newState(representatives = false, resumedFrom = null) {
   return {
     counts: Object.fromEntries(countKeys(representatives).map((key) => [key, 0n])),
-    representatives,
+    representatives, resumedFrom,
     lastTick: null, greatestSpecies: null, lastFounder: null,
-    birthIdsExhausted: false, active: new Map(), hasGap: false,
+    // A resumed segment cannot see lineage before its first tick, exactly as after
+    // a gap: earlier origins may be active or already extinct (spec §7.10).
+    birthIdsExhausted: false, active: new Map(), hasGap: resumedFrom !== null,
   };
 }
 
@@ -120,8 +122,12 @@ export function acceptRow(state, row, params, boundary, founders) {
   const tick = decimal(data.tick, 'event tick');
   requireThat(sequence === state.counts.next_sequence && sequence !== U64_MAX,
     'history event sequence is not contiguous');
-  requireThat((boundary === null || tick <= (boundary === 0n ? 0n : boundary - 1n)) &&
-    (state.lastTick === null || tick >= state.lastTick), 'history event tick is out of order or outside the run');
+  // A resumed segment has no seeding tick: its events fall strictly inside it.
+  const inside = state.resumedFrom !== null
+    ? tick >= state.resumedFrom && (boundary === null || tick < boundary)
+    : boundary === null || tick <= (boundary === 0n ? 0n : boundary - 1n);
+  requireThat(inside && (state.lastTick === null || tick >= state.lastTick),
+    'history event tick is out of order or outside the run');
   requireThat(data.event && typeof data.event === 'object', 'event must be an object');
   if (data.event.kind === 'species_origin') {
     origin(state, data.event, params, boundary, founders);

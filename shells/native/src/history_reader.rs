@@ -16,7 +16,7 @@ use crate::Result;
 use crate::history_wire::{
     ArchiveRecord, BROWSER_SCHEMA_VERSION, CaptureEnd, Cohort, Completion, Counts, Decimal,
     EventRecord, Header, MAX_LINE_BYTES, ParentRecord, REPRESENTATIVE_SCHEMA_VERSION,
-    RepresentativeRecord, SCHEMA_VERSION,
+    RESUMED_SCHEMA_VERSION, RepresentativeRecord, SCHEMA_VERSION,
 };
 
 pub(crate) fn read(path: &Path) -> Result<Completion> {
@@ -33,7 +33,12 @@ pub(crate) fn read(path: &Path) -> Result<Completion> {
     }
 }
 
-pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
+pub(crate) fn parse(input: impl BufRead) -> Result<Completion> {
+    parse_archive(input).map(|(_, completion)| completion)
+}
+
+/// Validates an archive and returns its header alongside the completion.
+pub(crate) fn parse_archive(mut input: impl BufRead) -> Result<(Header, Completion)> {
     let mut header = None;
     let mut completion = None;
     let mut states: [CohortState; 2] = Default::default();
@@ -65,11 +70,14 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
                         return Err(invalid("duplicate history header").into());
                     }
                     validate_header(&next, &line)?;
-                    if next.representative_genes.is_some() {
-                        for state in &mut states {
+                    for state in &mut states {
+                        if next.representative_genes.is_some() {
                             state.counts.representatives = Some(Decimal(0));
                             state.counts.unavailable_representatives = Some(Decimal(0));
                         }
+                        // A resumed segment cannot see lineage before its first tick,
+                        // which is exactly what a gap means (spec §7.10).
+                        state.has_gap = next.resumed_from_tick.is_some();
                     }
                     header = Some(next);
                 }
@@ -116,28 +124,33 @@ pub(crate) fn parse(mut input: impl BufRead) -> Result<Completion> {
         })();
         result.map_err(|error| invalid(format!("history line {line_number}: {error}")))?;
     }
-    completion.ok_or_else(|| {
-        io::Error::new(
+    match (header, completion) {
+        (Some(header), Some(completion)) => Ok((*header, completion)),
+        _ => Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "history archive has no completion marker",
         )
-        .into()
-    })
+        .into()),
+    }
 }
 
 /// Version three keeps either earlier shape: native files name no run, browser files do.
 fn native_shape(header: &Header) -> bool {
     match header.schema_version {
         SCHEMA_VERSION => true,
-        REPRESENTATIVE_SCHEMA_VERSION => header.run_id.is_none(),
+        REPRESENTATIVE_SCHEMA_VERSION | RESUMED_SCHEMA_VERSION => header.run_id.is_none(),
         _ => false,
     }
 }
 
 fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
     let representatives = header.schema_version == REPRESENTATIVE_SCHEMA_VERSION;
+    let resumed = header.schema_version == RESUMED_SCHEMA_VERSION;
     let shape = match header.schema_version {
-        SCHEMA_VERSION | BROWSER_SCHEMA_VERSION | REPRESENTATIVE_SCHEMA_VERSION => {
+        SCHEMA_VERSION
+        | BROWSER_SCHEMA_VERSION
+        | REPRESENTATIVE_SCHEMA_VERSION
+        | RESUMED_SCHEMA_VERSION => {
             if native_shape(header) {
                 header.run_id.is_none()
                     && header.cohorts == Cohort::ALL
@@ -155,15 +168,20 @@ fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
         }
         _ => false,
     };
+    // Version four may carry representatives or not; version three always does.
     let staging = match header.representative_genes {
         None => !representatives,
         Some(genes) => {
-            representatives
+            (representatives || resumed)
                 && genes >= header.params.storage.max_genes
                 && u64::from(genes) * size_of::<sim_core::genome::Gene>() as u64 <= i32::MAX as u64
         }
     };
-    let supported_schema = shape && staging;
+    let resume = match header.resumed_from_tick {
+        None => !resumed,
+        Some(tick) => resumed && header.ticks.is_none_or(|end| tick.0 <= end.0),
+    };
+    let supported_schema = shape && staging && resume;
     if !supported_schema
         || header.provenance.phase != 2
         || header.provenance.control != RANDOMIZED_AT_BIRTH_PROTOCOL
@@ -272,11 +290,14 @@ impl CohortState {
         if sequence != self.counts.next_sequence.0 || sequence == u64::MAX {
             return Err(invalid("history event sequence is not contiguous").into());
         }
-        if header
-            .ticks
-            .is_some_and(|end| tick > end.0.saturating_sub(1))
-            || self.last_tick.is_some_and(|last| tick < last)
-        {
+        // A resumed segment has no seeding tick: its events fall strictly inside it.
+        let outside = match header.resumed_from_tick {
+            Some(start) => tick < start.0 || header.ticks.is_some_and(|end| tick >= end.0),
+            None => header
+                .ticks
+                .is_some_and(|end| tick > end.0.saturating_sub(1)),
+        };
+        if outside || self.last_tick.is_some_and(|last| tick < last) {
             return Err(invalid("history event tick is out of order or outside the run").into());
         }
         if header.params.species.capacity == 0 {
@@ -472,7 +493,11 @@ fn validate_completion(
             return Err(invalid("history events are outside the captured tick boundary").into());
         }
         if row.cohort != cohort
-            || (!incomplete && header.params.species.capacity > 0 && counts.next_sequence.0 == 0)
+            // Seeding always records origins; a resumed segment may be quiet.
+            || (!incomplete
+                && header.resumed_from_tick.is_none()
+                && header.params.species.capacity > 0
+                && counts.next_sequence.0 == 0)
             || row.counts != *counts
             || row.history_complete != (!incomplete && counts.dropped_events.0 == 0)
             || !valid_hash

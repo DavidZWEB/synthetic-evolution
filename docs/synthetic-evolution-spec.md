@@ -1331,10 +1331,15 @@ to share params, and requires each included archive to belong to the run and its
 cohorts and to end exactly at its segment boundary, so later events cannot leak in.
 
 A resumed run keeps the restored segments as saved and begins a new segment at its
-resume tick; saving again appends that segment. Capturing history into a resumed
-segment requires archives that begin mid-run with unknown prior lineage, which is a
-separate history-schema extension; until it lands, resumed segments are recorded as
-`not_recorded` and native `resume` does not accept `--history` or `--metrics`.
+resume tick; saving again appends that segment, included when its archive could be
+re-read and otherwise marked. **History schema 4** is that resumed segment, in either
+archive shape: its header adds `resumed_from_tick` and may declare representative
+staging. Its lineage before that tick is unknown, exactly as after a gap, so it may
+record extinctions of species it never saw originate. Its events fall at or after
+the resume tick and strictly before its end, it numbers its own sequences from zero,
+and, unlike a run that seeds founders, it may legitimately be empty. A bundle's
+first segment uses schemas 1-3; later included segments must be schema 4 resuming at
+their own `starts_at`. Metrics for resumed runs are not yet produced.
 
 Periodic autosaves and retention scheduling remain Phase 7 work. Cross-version
 migration, timeline scrubbing/indexing, compression, and storage optimization are
