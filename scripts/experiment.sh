@@ -20,27 +20,31 @@ native=$root/target/release/native
 cargo build --release -p native --manifest-path "$root/Cargo.toml"
 mkdir -p "$out"
 
+# NUL-separated triples passed as positional arguments, so params paths may
+# contain spaces or quotes.
 for params in "$@"; do
   for seed in $seeds; do
     for control in scalar structural-null; do
-      printf '%s %s %s\n' "$params" "$seed" "$control"
+      printf '%s\0%s\0%s\0' "$params" "$seed" "$control"
     done
   done
-done | xargs -P "${JOBS:-4}" -L 1 bash -c '
-  params=$0 seed=$1 control=$2
+done | xargs -0 -n 3 -P "${JOBS:-4}" bash -c '
+  native=$1 out=$2 ticks=$3 founders=$4 every=$5 params=$6 seed=$7 control=$8
   name=$(basename "$params" .json)
-  run="'"$out"'/$name-$seed-$control"
+  run="$out/$name-$seed-$control"
   start=$SECONDS
-  "'"$native"'" --seed "$seed" --ticks "'"$ticks"'" --founders "'"$founders"'" \
-    --sample-every "'"$every"'" --params "$params" --control "$control" \
+  "$native" --seed "$seed" --ticks "$ticks" --founders "$founders" \
+    --sample-every "$every" --params "$params" --control "$control" \
     --metrics "$run.jsonl" > "$run.log"
   echo $((SECONDS - start)) > "$run.seconds"
   echo "done $name seed=$seed control=$control in $((SECONDS - start))s"
-'
+' experiment "$native" "$out" "$ticks" "$founders" "$every"
 
 for params in "$@"; do
   name=$(basename "$params" .json)
-  "$native" summarize "$out/$name"-*.jsonl > "$out/$name-summary.txt"
-  "$native" summarize --json "$out/$name"-*.jsonl > "$out/$name-summary.json"
+  # Seeds are numeric, so `dense` cannot also collect `dense-growth` runs.
+  runs=("$out/$name"-[0-9]*-scalar.jsonl "$out/$name"-[0-9]*-structural-null.jsonl)
+  "$native" summarize "${runs[@]}" > "$out/$name-summary.txt"
+  "$native" summarize --json "${runs[@]}" > "$out/$name-summary.json"
   echo "summary: $out/$name-summary.txt"
 done
