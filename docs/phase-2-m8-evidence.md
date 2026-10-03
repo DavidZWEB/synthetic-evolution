@@ -5,11 +5,14 @@ complexity and distinct species appear*). This report records what the headless 
 measured. It is not a judgment: whether anything interesting evolved is for a human
 watching the sim to decide (spec §7.8 tier 3). Nothing here is ranked.
 
-**Headline: the structural-null comparison, as approved, is inconclusive.** Both
-controls collapse early to a few surviving founders in every configuration and
-seed, so the comparison with the evolving world cannot separate structural
-inheritance from scalar inheritance. The protocol needs a human decision before M8 can
-complete (see [Decision needed](#decision-needed)).
+**Headline (updated with v2):** the first structural null (v1) was inconclusive
+because it collapsed like the scalar control. Its human-approved replacement, v2
+(donor topology, parent scalars), survives and makes the comparison informative.
+**Over 400k ticks, v2 grew genomes as much as the evolving world did**, so genome growth
+here cannot be credited to lineages inheriting useful structure. The one consistent
+gap is population: in the dense configuration the evolving world ended 7–16% larger
+than v2 on all three seeds; the sparse configuration showed no consistent gap (see
+[Structural null v2 results](#structural-null-v2-results)).
 
 ## Provenance
 
@@ -150,6 +153,57 @@ Whichever is chosen also needs the same three configurations rerun; a growth
 configuration with nonzero deletion (after D4 calibration) would make "growth" a
 balance between gain and loss rather than a ratchet.
 
+## Structural null v2 results
+
+Rerun of both growth configurations under `structural_null_v2` (spec §7.8) beside the
+scalar control, at revision `1d120c8` (main after #58; dense founder still the default,
+so `dense-growth` and `sparse-chemo-growth` are exactly the configurations above),
+seeds 42/117/314, 2,000 founders, **400,000 ticks**, samples every 5,000. Summaries are
+in [`experiments/phase-2-m8/results-v2/`](../experiments/phase-2-m8/results-v2/).
+
+Per seed (42, 117, 314), final sample, evolving vs structural null v2:
+
+| Metric | dense-growth evolving | dense-growth v2 | sparse evolving | sparse v2 |
+|---|---|---|---|---|
+| population | 681, 696, 676 | 583, 635, 608 | 1559, 1327, 1592 | 1464, 1464, 1956 |
+| genome genes, mean | 289.4, 287.7, 284.9 | 288.0, 287.7, 290.3 | 27.9, 28.8, 26.5 | 29.8, 27.8, 28.5 |
+| neurons, mean | 28.9, 28.6, 28.4 | 29.0, 28.8, 29.6 | 8.3, 7.9, 8.1 | 8.6, 8.5, 8.4 |
+| connections, mean | 244.6, 244.2, 242.2 | 243.8, 243.2, 244.8 | 8.5, 9.3, 7.4 | 9.6, 7.6, 9.2 |
+| sensor load, mean | 15.3, 11.9, 10.2 | 13.1, 15.1, 16.0 | 0.35, 1.79, 0.02 | 2.00, 1.95, 0.02 |
+| active species | 1, 1, 1 | 1, 1, 1 | 29, 40, 57 | 33, 36, 40 |
+| persistent species | 1, 1, 1 | 1, 1, 1 | 16, 23, 16 | 23, 28, 18 |
+
+The scalar control again collapsed (4–24 agents at the end) in both configurations;
+the evolving worlds' final hashes matched between each seed's two runs.
+
+What this shows:
+
+- **Genome growth is not evidence of useful inherited structure here.** v2 children
+  take a random living agent's structure, yet v2 genomes grew as much as or more than
+  the evolving world's in both configurations (sparse mean 23 → 27.8–29.8 vs
+  26.5–28.8). On sparse seeds 42 and 314, v2 grew faster throughout the run. Selection
+  on which structures survive, plus mutation, produces this growth without any
+  lineage-specific fit between structure and weights.
+- **Lineage coupling matters for population in the dense configuration.** The evolving
+  world ended larger than v2 on all three dense seeds (paired gaps of 98, 61, and 68
+  agents). This is consistent with dense brains whose evolved weights fit their own
+  structure, but three seeds and one metric are thin, and a human should weigh it.
+  The sparse configuration shows no consistent population gap (one seed each way, one
+  near-equal).
+- **Sensor loss is lineage-driven in dense, ambiguous in sparse.** Dense evolving
+  worlds kept fewer sensors than v2 on two of three seeds. Sparse seed 314 lost nearly
+  all sensors in *both* worlds (0.02): that world is mostly sensorless and still
+  thriving, which a human should look at before reading any behavior into it.
+- **Species are not distinguished by the null.** v2 forms as many, and as persistent,
+  species as the evolving world, so species counts alone do not show heritable
+  structural divergence beyond what donor mixing also produces.
+
+Interpretation limits: three seeds; final samples only; v2 tests coupling between a
+lineage's structure and its weights, not whether a particular circuit is adaptive;
+neural deletion was off, so growth is a ratchet tempered only by selection and
+disabling. v2 runs take about 1.7× longer than scalar-control runs because the null
+world sustains a full population.
+
 ## Unranked shortlist for watching
 
 Same-seed browser runs are reproducible from the params files above. In the browser,
@@ -159,8 +213,9 @@ the structural null is not selectable; compare against the scalar control.
   growth. Check whether species are behaviorally distinct or threshold labels.
 - **sparse-chemo-growth, seed 117** — the largest genomes (max 38 genes). Check whether
   added neurons are wired into behavior.
-- **sparse-chemo-growth, seed 314** — mean sensor load 0.34. Check whether sensorless
-  lineages forage or drift.
+- **sparse-chemo-growth, seed 314** — mean sensor load 0.34 at 200k and 0.02 at 400k
+  (both evolving and v2): nearly sensorless yet thriving. Check whether these agents
+  forage or simply graze a rich food field.
 - **dense-growth, seed 42** — the dense baseline with growth on, for comparison with the
   Phase 1 behavior already accepted.
 
