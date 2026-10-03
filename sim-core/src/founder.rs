@@ -898,14 +898,19 @@ mod tests {
                 .count(),
             params.sensing.vision_rays as usize
         );
-        assert_eq!(sensors.iter().filter(|m| **m == Modality::Chemo).count(), 1);
+        assert_eq!(
+            sensors.iter().filter(|m| **m == Modality::Chemo).count(),
+            params.sensing.chemo_sensors as usize
+        );
         assert_eq!(
             sensors
                 .iter()
                 .filter(|m| **m == Modality::Interoception)
                 .count(),
-            1
+            params.sensing.energy_sensors as usize
         );
+        // The shipped founder is chemo-led (spec §3.1); every action is still wired.
+        assert_eq!(sensors, [Modality::Chemo]);
 
         let actions: Vec<Action> = p
             .genes()

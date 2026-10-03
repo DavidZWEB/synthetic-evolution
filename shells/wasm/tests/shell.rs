@@ -609,7 +609,11 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
         "every activation is zero, so this would pass on an empty brain"
     );
     let genome = v["genome"].as_array().expect("genome");
-    assert!(genome.len() > 100, "the default topology is 284 genes");
+    assert_eq!(
+        genome.len(),
+        23,
+        "slot 0 is still a shipped minimal founder"
+    );
     assert!(
         sim.inspect_agent(0, 2).is_err(),
         "a stale slot incarnation inspected its replacement"

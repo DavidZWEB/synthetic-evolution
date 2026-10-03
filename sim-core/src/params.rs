@@ -270,10 +270,19 @@ pub struct SensingParams {
     pub vision_fov: f32,
     /// Founder vision-ray count; evolved ray limits live in `StorageParams`.
     /// Perception remains a metered metabolic cost (spec §2.2c).
+    ///
+    /// Default 0 since Phase 2 M8 (was 3): the shipped founder is the minimal
+    /// chemo-led one. It was the most viable founder measured (2.2x the dense
+    /// founder's final population over 3 seeds x 200k ticks) and a human approved
+    /// it after watching (`docs/phase-2-m8-evidence.md`). Vision remains reachable
+    /// through sensor addition.
     pub vision_rays: u32,
     /// Founder food-chemoreceptor count, not an evolved-organ capacity.
     pub chemo_sensors: u32,
     /// Founder energy-interoceptor count, not an evolved-organ capacity.
+    ///
+    /// Default 0 since Phase 2 M8 (was 1), with the minimal chemo-led founder; see
+    /// `vision_rays`.
     pub energy_sensors: u32,
     /// Radius over which the chemo sensor samples concentration and gradient.
     pub chemo_radius: f32,
@@ -296,12 +305,23 @@ impl SensingParams {
 #[serde(default, deny_unknown_fields)]
 pub struct BrainParams {
     /// Hidden neurons in the founding template.
+    ///
+    /// Default 0 since Phase 2 M8 (was 6): the minimal chemo-led founder (7 neurons,
+    /// 4 connections, 23 genes) replaced the dense one after multi-seed viability
+    /// evidence and human approval (`docs/phase-2-m8-evidence.md`). Structural
+    /// mutation, not the founder, is now the source of hidden structure.
     pub hidden_neurons: u32,
     /// Always-present oscillator neurons. Cheap scaffold — evolution finds them fast
     /// and builds gaits and timing on them (spec §3.2).
+    ///
+    /// Default 0 since Phase 2 M8 (was 2), with the minimal founder; see
+    /// `hidden_neurons`. Oscillators can still arise through neuron addition.
     pub oscillators: u32,
     /// Founder incoming connections per hidden/output target. None means dense;
     /// a finite count selects distinct sources once per world, shared by all founders.
+    ///
+    /// Default `Some(1)` since Phase 2 M8 (was dense `None`), with the minimal
+    /// founder; see `hidden_neurons`.
     pub connections_per_target: Option<u32>,
     /// Inclusive range for a neuron's time constant. Small tau reacts, large tau
     /// integrates; the spread is what gives the brain a memory of any length.
@@ -375,6 +395,10 @@ pub struct MutationParams {
     /// **0.025 rather than the original 0.8.** With 240 founding connections, 0.8
     /// changed roughly 192 weights at every birth and erased useful behavior faster
     /// than selection could retain it. This rate changes about six.
+    ///
+    /// Unchanged by M8's switch to the minimal founder, whose 4 connections see about
+    /// 0.1 nudges per birth. Its multi-seed runs adapted at this rate; per-gene rates
+    /// scale with genome size, so revisit them if small genomes look mutation-starved.
     pub weight_perturb_rate: f32,
     /// Standard deviation of that nudge.
     pub weight_perturb_sigma: f32,
@@ -1088,9 +1112,9 @@ impl Default for SensingParams {
         Self {
             vision_range: 60.0,
             vision_fov: 0.5,
-            vision_rays: 3,
+            vision_rays: 0,
             chemo_sensors: 1,
-            energy_sensors: 1,
+            energy_sensors: 0,
             chemo_radius: 40.0,
         }
     }
@@ -1099,9 +1123,9 @@ impl Default for SensingParams {
 impl Default for BrainParams {
     fn default() -> Self {
         Self {
-            hidden_neurons: 6,
-            oscillators: 2,
-            connections_per_target: None,
+            hidden_neurons: 0,
+            oscillators: 0,
+            connections_per_target: Some(1),
             tau_min: 0.05,
             tau_max: 2.0,
             oscillator_period_min: 10.0,
