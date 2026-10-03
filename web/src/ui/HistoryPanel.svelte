@@ -2,7 +2,7 @@
   let {
     captureNext, oncapture, captureRepresentatives, onrepresentatives,
     runs, activeId, captureStatus, message, busy,
-    onclose, onrefresh, onsave, onload, ondelete, onstop,
+    onclose, onrefresh, onsave, onload, onlineage, ondelete, onstop,
   } = $props();
 </script>
 
@@ -72,6 +72,8 @@
           ? 'recording in this tab' : 'unfinalized / possibly active')}</span>
         <span>{run.eventCount} events · {run.gapCount} gaps · {(run.bytes / 1024).toFixed(1)} KiB</span>
         <div class="actions">
+          <button disabled={busy} onclick={() => onlineage(run.id)}
+            aria-label={`lineage for archive ${run.id} (seed ${run.seed})`}>lineage</button>
           <button disabled={busy} onclick={() => ondelete(run.id)}
             aria-label={`delete archive ${run.id} (seed ${run.seed})`}>delete</button>
         </div>

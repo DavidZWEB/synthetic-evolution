@@ -81,6 +81,60 @@ pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
 }
 
+#[derive(Serialize)]
+struct Comparison {
+    disjoint: usize,
+    excess: usize,
+    normalizer: usize,
+    matching_connections: usize,
+    mean_weight_difference: f64,
+    /// Each weighted term of `value`, so marker turnover is visible apart from weights.
+    disjoint_term: f64,
+    excess_term: f64,
+    weight_term: f64,
+    value: f64,
+    threshold: f64,
+}
+
+/// Genetic distance between two archived representatives under an archive's params,
+/// exactly as the classifier computes it (spec §3.4). Observation only.
+#[wasm_bindgen]
+pub fn compare_representatives(
+    a_json: &str,
+    b_json: &str,
+    params_json: &str,
+) -> Result<String, JsError> {
+    let params = parse_params(Some(params_json))?;
+    let genome = |json: &str| -> Result<Vec<sim_core::genome::Gene>, JsError> {
+        let genes: Vec<sim_core::genome::Gene> =
+            serde_json::from_str(json).map_err(|e| js_error("representative", e))?;
+        if genes.len() > params.storage.max_genes as usize {
+            return Err(js_error("representative", "exceeds storage.max_genes"));
+        }
+        sim_core::genome::validate(&genes)
+            .map_err(|e| js_error("representative", format!("{e:?}")))?;
+        Ok(genes)
+    };
+    let (a, b) = (genome(a_json)?, genome(b_json)?);
+    let coefficients = &params.distance;
+    let d = sim_core::distance::between(&a, &b, coefficients);
+    let comparison = Comparison {
+        disjoint: d.disjoint,
+        excess: d.excess,
+        normalizer: d.normalizer,
+        matching_connections: d.matching_connections,
+        mean_weight_difference: d.mean_weight_difference,
+        disjoint_term: f64::from(coefficients.disjoint_coefficient)
+            * (d.disjoint as f64 / d.normalizer as f64),
+        excess_term: f64::from(coefficients.excess_coefficient)
+            * (d.excess as f64 / d.normalizer as f64),
+        weight_term: f64::from(coefficients.weight_coefficient) * d.mean_weight_difference,
+        value: d.value,
+        threshold: params.species.threshold,
+    };
+    serde_json::to_string(&comparison).map_err(|e| js_error("comparison", e))
+}
+
 /// The core checkpoint format this build reads and writes.
 #[wasm_bindgen]
 pub fn checkpoint_format() -> u32 {

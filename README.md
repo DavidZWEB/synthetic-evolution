@@ -23,8 +23,8 @@ highlighting, and genome-size telemetry shared by browser and native metrics.
 Native and browser history can also archive each species' representative genome at
 origin (`--representatives`, or **include representative genomes** in the browser);
 **Save run / Load run** (browser) and `--save-run` / `resume` (native) checkpoint a
-whole world with its history and continue it exactly. Representative comparison and
-the ancestry graph remain pending. The
+whole world with its history and continue it exactly. Each archive's **lineage** view
+draws the species-origin tree and compares two species' representative genomes. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control

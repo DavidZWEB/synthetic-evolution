@@ -5,6 +5,7 @@
   import InspectorPanel from './ui/InspectorPanel.svelte';
   import HistoryPanel from './ui/HistoryPanel.svelte';
   import SpeciesPanel from './ui/SpeciesPanel.svelte';
+  import LineagePanel from './ui/LineagePanel.svelte';
   import { createSpeciesController } from './species/controller.js';
   import { createHistorySession } from './history/controller.js';
   import { parseArchive } from './history/archive.js';
@@ -93,6 +94,8 @@
   let selectedSpecies = $state(null);
   let speciesMessage = $state(null);
   let colorMode = $state('signature');
+  /** The archive whose species-origin graph is open, or null. */
+  let lineageArchive = $state(null);
 
   function getHistoryStore() {
     historyStore ??= openHistoryStore().catch((error) => {
@@ -145,6 +148,19 @@
   }
 
   /** Bounded like history boundaries, so a replaced or failed worker cannot wedge saving. */
+  function openLineage(id) {
+    return historyAction(async () => {
+      lineageArchive = await (await getHistoryStore()).get(id);
+      showHistory = false;
+    });
+  }
+
+  /** The classifier's own distance between two archived representatives, via WASM. */
+  async function compareRepresentatives(a, b, params) {
+    const wasm = await wasmModule();
+    return JSON.parse(wasm.compare_representatives(JSON.stringify(a), JSON.stringify(b), JSON.stringify(params)));
+  }
+
   function requestCheckpoint(timeoutMs = 15_000) {
     const requestId = ++checkpointSerial;
     const owner = sim;
@@ -287,6 +303,7 @@
     showSpecies = open;
     if (open) {
       showHistory = false;
+      lineageArchive = null;
       inspector.select(null);
     }
     species.setOpen(open);
@@ -684,9 +701,14 @@
         onrefresh={() => historyAction(refreshHistory)}
         onsave={saveRun}
         onload={loadRun}
+        onlineage={openLineage}
         ondelete={deleteHistory}
         onstop={() => historyAction(() => historySession?.boundary('stopped'))}
       />
+    {/if}
+    {#if lineageArchive}
+      <LineagePanel archive={lineageArchive} compare={compareRepresentatives}
+        onclose={() => (lineageArchive = null)} />
     {/if}
     {#if showSpecies}
       <SpeciesPanel sample={speciesSample} selected={selectedSpecies} message={speciesMessage}
@@ -716,6 +738,7 @@
     onhistory={() => {
       showHistory = !showHistory;
       if (showHistory) {
+        lineageArchive = null;
         setSpeciesOpen(false);
         void historyAction(refreshHistory);
       }

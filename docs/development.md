@@ -683,6 +683,14 @@ an existing World. Play/pause/step keep the same archive; each new/reseeded Worl
 even with the same seed and parameters, gets a unique run ID. The panel lists local
 archives and supports explicit deletion and stopping capture.
 
+**Lineage and comparison (M6).** Each archive's **lineage** action opens its
+species-origin graph: a layered tree per cohort in which each species links to its
+founding parent's species. Depth counts speciation steps, not time; `?` marks a parent
+the archive cannot know (unclassified, unavailable, or lost to a gap or a resume), and
+dashed nodes are extinct. Select two species to compare their representatives: shared
+and unique genes by kind, differing connections, and the classifier's exact distance
+terms. Archives recorded without representative genomes still show lineage and say so.
+
 **Save run / Load run (M7).** **save run** downloads a `.sevrun` bundle: the world's
 checkpoint and its available history (spec section 7.10). While recording, the
 checkpoint is taken at the same boundary as the history snapshot; otherwise the
