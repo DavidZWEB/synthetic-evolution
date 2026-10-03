@@ -1315,6 +1315,27 @@ reproduce the saved hash. A retuned world keeps its construction grid, which may
 coarser but never finer than its current params allow. Encoding is byte-identical on
 native and WASM, so saved runs transfer in both directions.
 
+**DECIDED saved-run bundle (M7):** one container shared by both shells: the
+8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
+manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
+then each cohort's core checkpoint followed by each included history archive. The
+manifest records the container and checkpoint formats, the originating run's
+provenance (kept unchanged across resumes), the build that wrote the bundle, the
+save tick, one cohort or both in canonical order with each checkpoint's state hash
+and length, and an ordered list of **history segments**. Each segment starts at a
+tick (the first at 0), ends where the next starts or at the save tick, and is either
+an included archive or explicitly unavailable (`not_recorded`, or `not_retained`
+when capture streamed somewhere the shell cannot read back). Loading validates every
+checkpoint against the manifest (heredity, seed, tick, hash), requires paired cohorts
+to share params, and requires each included archive to belong to the run and its
+cohorts and to end exactly at its segment boundary, so later events cannot leak in.
+
+A resumed run keeps the restored segments as saved and begins a new segment at its
+resume tick; saving again appends that segment. Capturing history into a resumed
+segment requires archives that begin mid-run with unknown prior lineage, which is a
+separate history-schema extension; until it lands, resumed segments are recorded as
+`not_recorded` and native `resume` does not accept `--history` or `--metrics`.
+
 Periodic autosaves and retention scheduling remain Phase 7 work. Cross-version
 migration, timeline scrubbing/indexing, compression, and storage optimization are
 also deferred, not requirements of the Phase 2 save/load milestone.

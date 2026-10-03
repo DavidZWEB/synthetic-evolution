@@ -13,6 +13,7 @@ use crate::Result;
 use crate::cli::RunArgs;
 use crate::history::{self, ArchiveWriter, Capture, CohortCapture};
 use crate::metrics::{MetricsRecord, RunHeader, SCHEMA_VERSION, sample_pair};
+use crate::saved_run::{self, Cohort, Decimal, Provenance, Segment, Unavailable};
 
 pub fn run(args: RunArgs) -> Result<()> {
     if args.sample_every == 0 {
@@ -99,7 +100,7 @@ pub fn run(args: RunArgs) -> Result<()> {
     }
     let mut final_sample = None;
     if let Some(output) = output.as_mut() {
-        write_record(output, &MetricsRecord::Header(Box::new(header)))?;
+        write_record(output, &MetricsRecord::Header(Box::new(header.clone())))?;
         let sample = sample_pair(
             &evolving,
             &random_control,
@@ -184,7 +185,71 @@ pub fn run(args: RunArgs) -> Result<()> {
         final_sample.random_control.population,
         hashes.random_control
     );
+    if let Some(path) = &args.save_run {
+        save_run(path, &args, &header, &evolving, &random_control)?;
+    }
     Ok(())
+}
+
+/// Bundles both cohorts with the finished history, read back from its file. History
+/// streamed to stdout cannot be re-read, so the bundle says so rather than omit it.
+fn save_run(
+    path: &std::path::Path,
+    args: &RunArgs,
+    header: &RunHeader,
+    evolving: &World,
+    random_control: &World,
+) -> Result<()> {
+    let start = Decimal(0);
+    let history = match args.history.as_deref() {
+        None => (
+            Segment::Unavailable {
+                starts_at: start,
+                reason: Unavailable::NotRecorded,
+            },
+            None,
+        ),
+        // Only a regular file can be re-read faithfully; a pipe or device cannot.
+        Some(history)
+            if history == std::path::Path::new("-")
+                || !std::fs::metadata(history).is_ok_and(|m| m.is_file()) =>
+        {
+            (
+                Segment::Unavailable {
+                    starts_at: start,
+                    reason: Unavailable::NotRetained,
+                },
+                None,
+            )
+        }
+        Some(history) => {
+            let archive = std::fs::read(history)?;
+            (
+                Segment::Included {
+                    starts_at: start,
+                    bytes: Decimal(archive.len() as u64),
+                },
+                Some(archive),
+            )
+        }
+    };
+    let provenance = Provenance {
+        sim_version: header.sim_version.clone(),
+        source_revision: header.source_revision.clone(),
+        phase: header.phase as u8,
+        seed: Decimal(args.seed),
+        control: header.control.clone(),
+        run_id: None,
+    };
+    let bytes = saved_run::assemble(
+        provenance,
+        &[
+            (Cohort::Evolving, evolving),
+            (Cohort::RandomControl, random_control),
+        ],
+        vec![history],
+    )?;
+    saved_run::write(path, &bytes)
 }
 
 fn load_params(path: Option<&std::path::Path>) -> Result<SimParams> {

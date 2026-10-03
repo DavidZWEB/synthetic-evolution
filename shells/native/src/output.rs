@@ -25,7 +25,22 @@ pub(crate) fn validate(args: &RunArgs) -> Result<()> {
     {
         return Err(conflict("--metrics and --history must use distinct outputs").into());
     }
-    for output in [metrics, history].into_iter().flatten() {
+    let save_run = match args.save_run.as_deref() {
+        Some(path) if path == Path::new("-") => {
+            return Err(conflict("--save-run needs a file, not stdout").into());
+        }
+        Some(path) => Some(file_identity(path)?),
+        None => None,
+    };
+    if let Some(save) = &save_run
+        && [&metrics, &history]
+            .into_iter()
+            .flatten()
+            .any(|output| save.aliases(output))
+    {
+        return Err(conflict("--save-run must not reuse the metrics or history output").into());
+    }
+    for output in [metrics, history, save_run].into_iter().flatten() {
         if params.as_ref().is_some_and(|params| output.aliases(params)) {
             return Err(conflict("output must not overwrite --params input").into());
         }
