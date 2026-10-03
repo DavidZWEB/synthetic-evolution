@@ -611,7 +611,7 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
     let genome = v["genome"].as_array().expect("genome");
     assert_eq!(
         genome.len(),
-        23,
+        25,
         "slot 0 is still a shipped minimal founder"
     );
     assert!(

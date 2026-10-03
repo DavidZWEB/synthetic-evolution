@@ -376,9 +376,10 @@ budgets must describe the exact sparse template without charging for dense wirin
 A no-eye, one-chemoreceptor, zero-hidden/oscillator founder with one incoming edge
 per target was introduced as an opt-in small-controller candidate.
 
-**DECIDED (M8): that minimal chemo-led founder is the shipped default.** It was the
-most viable founder measured across seeds (`docs/phase-2-m8-evidence.md`) and a human
-approved it. Phase 1's dense founder remains a reproducible preset for comparisons
+**DECIDED (M8): that minimal chemo-led founder is the shipped default,** with two
+oscillators restored. It was the most viable founder measured across seeds
+(`docs/phase-2-m8-evidence.md`) and a human approved it. A human then chose to keep
+the oscillator scaffold, since no operator could otherwise create one. Phase 1's dense founder remains a reproducible preset for comparisons
 and for scenarios whose coverage depends on dense topology.
 
 ### 3.4 Crossover and speciation

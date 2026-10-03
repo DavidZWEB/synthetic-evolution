@@ -378,16 +378,17 @@ shared URL `params` fragment:
   },
   "brain": {
     "hidden_neurons": 0,
-    "oscillators": 0,
+    "oscillators": 2,
     "connections_per_target": 1
   }
 }
 ```
 
-This has **seven neurons and four connections**: three chemo inputs and the four
-required effector outputs (thrust, turn, ingest, reproduce). It retains four body and
-three meta genes, for 23 total genes including the sensor and effectors. **Since
-Phase 2 M8 this is the shipped default founder**, chosen after multi-seed viability
+This has **nine neurons and four connections**: three chemo inputs, two oscillators,
+and the four required effector outputs (thrust, turn, ingest, reproduce), each output
+taking one input drawn per world from the chemo inputs and oscillators. It retains
+four body and three meta genes, for 25 total genes including the sensor and
+effectors. **Since Phase 2 M8 this is the shipped default founder**, chosen after multi-seed viability
 evidence and human approval (`docs/phase-2-m8-evidence.md`). Phase 1's dense founder
 remains available for comparisons: `vision_rays: 3`, `chemo_sensors: 1`,
 `energy_sensors: 1`, six hidden neurons, two oscillators, and
