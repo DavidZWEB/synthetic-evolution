@@ -11,6 +11,7 @@
 pub mod agents;
 pub mod arena;
 pub mod brain;
+pub mod checkpoint;
 pub mod chemo;
 pub mod command;
 pub mod control;

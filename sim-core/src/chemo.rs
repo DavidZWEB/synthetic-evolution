@@ -237,6 +237,23 @@ impl ChemoField {
     /// Every cell of one channel, for tests and for whatever reads the field whole.
     /// Empty for a channel that does not exist.
     #[inline]
+    /// Every channel's concentrations, channel-major, for checkpoints.
+    pub(crate) fn concentrations(&self) -> &[f32] {
+        &self.cells
+    }
+
+    /// Restores saved concentrations into a field of the same layout.
+    ///
+    /// The grid itself is fixed for a world's life; only values are state. Refused
+    /// input (wrong length or a non-finite value) leaves the field unchanged.
+    pub(crate) fn restore_concentrations(&mut self, values: &[f32]) -> Result<(), &'static str> {
+        if values.len() != self.cells.len() || !values.iter().all(|v| v.is_finite()) {
+            return Err("chemo concentrations do not match the field or are not finite");
+        }
+        self.cells.copy_from_slice(values);
+        Ok(())
+    }
+
     pub fn channel(&self, channel: usize) -> &[f32] {
         if channel >= self.channels {
             return &[];

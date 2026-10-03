@@ -123,6 +123,43 @@ impl SlotPool {
         &self.free
     }
 
+    /// Rebuilds a saved pool. `free` keeps its exact stack order, because it decides
+    /// which slot every later birth receives (spec §2.4); live slots are the rest.
+    ///
+    /// Untrusted input: lengths must match capacity and each free index must be in
+    /// range and unique. A refused restore leaves this pool unchanged.
+    pub(crate) fn restore(
+        &mut self,
+        incarnation: &[u32],
+        free: &[u32],
+    ) -> Result<(), &'static str> {
+        let capacity = self.alive.len();
+        if incarnation.len() != capacity || free.len() > capacity {
+            return Err("pool lengths do not match its capacity");
+        }
+        let mut alive = vec![1u8; capacity];
+        for &index in free {
+            match alive.get_mut(index as usize) {
+                Some(flag) if *flag == 1 => *flag = 0,
+                _ => return Err("pool free list is out of range or repeats a slot"),
+            }
+        }
+        // Allocation never issues incarnation zero; observers rely on it for identity.
+        if alive
+            .iter()
+            .zip(incarnation)
+            .any(|(&live, &generation)| live == 1 && generation == 0)
+        {
+            return Err("a live pool slot has incarnation zero");
+        }
+        self.alive = alive;
+        self.incarnation.copy_from_slice(incarnation);
+        self.free.clear();
+        self.free.extend_from_slice(free);
+        self.live_count = (capacity - free.len()) as u32;
+        Ok(())
+    }
+
     /// Live slots in ascending index order.
     ///
     /// Ascending on purpose: every system that touches shared state must resolve in

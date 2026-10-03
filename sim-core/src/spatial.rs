@@ -128,7 +128,22 @@ impl SpatialHash {
     pub fn new(world_size: f32, min_cell_size: f32, capacity: u32) -> Self {
         debug_assert!(world_size > 0.0, "world must have extent");
         debug_assert!(min_cell_size > 0.0, "cells must have extent");
-        let per_axis = ((world_size / min_cell_size) as u32).max(1);
+        Self::with_cells_per_axis(
+            world_size,
+            ((world_size / min_cell_size) as u32).max(1),
+            capacity,
+        )
+    }
+
+    /// Cells along each horizontal axis.
+    pub fn cells_per_axis(&self) -> u32 {
+        self.dims[0]
+    }
+
+    /// A grid with an exact cell count, so a restored world keeps the grid it was
+    /// built with even after a retune lowered the sensing radius (spec section 2.3).
+    pub(crate) fn with_cells_per_axis(world_size: f32, per_axis: u32, capacity: u32) -> Self {
+        debug_assert!(per_axis > 0, "a grid needs at least one cell");
         // World construction budgets this separately; the standalone constructor
         // still requires a representable cell-start buffer on WASM32 (spec section 2.2a).
         debug_assert!(
