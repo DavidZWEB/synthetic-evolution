@@ -252,6 +252,11 @@ impl World {
         self.seed
     }
 
+    /// How this world assigns neural scalars to offspring, fixed at construction.
+    pub fn brain_inheritance(&self) -> BrainInheritance {
+        self.brain_inheritance
+    }
+
     pub fn species_count(&self) -> u32 {
         self.classifier.active().count() as u32
     }

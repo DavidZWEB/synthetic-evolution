@@ -223,6 +223,28 @@ npm install package-name --prefix web    # updates package.json + package-lock.j
 
 Commit the lockfile change in the same commit as the manifest change. A manifest change without its lockfile change is what breaks the next machine.
 
+## Saved runs
+
+Add `--save-run PATH` to a native run to write a saved-run bundle after the final
+tick: both cohorts' checkpoints plus whatever history the run captured. History
+written to a file is included; history streamed to stdout cannot be re-read and is
+marked `not_retained`; no `--history` is marked `not_recorded`.
+
+```bash
+cargo run --release -p native -- --seed 42 --ticks 200000 \
+  --history history.jsonl --save-run run.sevrun
+cargo run -p native -- saved-run run.sevrun            # validate and summarize
+cargo run --release -p native -- resume run.sevrun --ticks 100000 --save-run later.sevrun
+```
+
+`resume` restores every saved cohort and continues them together; it never reseeds
+a control. A resumed run ends exactly where an uninterrupted run of the same seed
+would. Its bundle keeps the original history and starts a new segment at the resume
+tick, currently marked `not_recorded`: capturing history or metrics into a resumed
+run is not supported yet. `--max-core-bytes` (default 8 GiB) caps the saved world's
+`storage.max_memory_bytes` this host will restore. The bundle format is in spec
+section 7.10; standalone history files remain readable with `native history`.
+
 ## Headless metrics
 
 The native shell runs an evolving world beside a same-seed, same-params scalar-heredity

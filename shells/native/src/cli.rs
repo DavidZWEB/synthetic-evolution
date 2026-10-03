@@ -19,7 +19,14 @@ pub enum Command {
     Diagnose(DiagnoseArgs),
     /// Validate and summarize a species-history archive or explicit capture prefix.
     History(HistoryArgs),
+    /// Continue a saved run's worlds from their checkpoint, without replaying.
+    Resume(ResumeArgs),
+    /// Validate every component of a saved run and summarize it.
+    SavedRun(SavedRunArgs),
 }
+
+/// Native hosts accept saved worlds up to this core budget unless told otherwise.
+const DEFAULT_MAX_CORE_BYTES: u64 = 8 << 30;
 
 #[derive(Clone, Debug, Args)]
 pub struct RunArgs {
@@ -54,6 +61,9 @@ pub struct RunArgs {
     /// with --representatives. A full buffer records the representative as unavailable.
     #[arg(long, default_value_t = 65_536, requires = "representatives", value_parser = clap::value_parser!(u32).range(1..))]
     pub representative_genes: u32,
+    /// Write a saved-run bundle (checkpoints plus available history) after the final tick.
+    #[arg(long)]
+    pub save_run: Option<PathBuf>,
 }
 
 impl RunArgs {
@@ -70,6 +80,33 @@ pub struct DiagnoseArgs {
     /// Emit the report as JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct ResumeArgs {
+    /// Saved-run bundle to continue.
+    pub bundle: PathBuf,
+    /// Additional ticks to run after the saved boundary.
+    #[arg(long)]
+    pub ticks: u64,
+    /// Write a new saved-run bundle at the end of the continuation.
+    #[arg(long)]
+    pub save_run: Option<PathBuf>,
+    /// Largest saved core budget (`storage.max_memory_bytes`) this host will restore.
+    #[arg(long, default_value_t = DEFAULT_MAX_CORE_BYTES)]
+    pub max_core_bytes: u64,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct SavedRunArgs {
+    /// Saved-run bundle to validate.
+    pub bundle: PathBuf,
+    /// Emit the manifest as JSON instead of a human-readable summary.
+    #[arg(long)]
+    pub json: bool,
+    /// Largest saved core budget (`storage.max_memory_bytes`) this host will restore.
+    #[arg(long, default_value_t = DEFAULT_MAX_CORE_BYTES)]
+    pub max_core_bytes: u64,
 }
 
 #[derive(Clone, Debug, Args)]
