@@ -7,7 +7,7 @@
 use std::io;
 
 use serde::Serialize;
-use sim_core::control::STRUCTURAL_NULL_PROTOCOL;
+use sim_core::control::{STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL};
 use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOperator};
 
 use crate::Result;
@@ -137,11 +137,11 @@ impl Cohort {
 }
 
 /// The reader admits only known protocols, so anything else is a scalar control.
-fn control_label(protocol: &str) -> &'static str {
-    if protocol == STRUCTURAL_NULL_PROTOCOL {
-        "structural null"
-    } else {
-        "scalar control"
+pub(crate) fn control_label(protocol: &str) -> &'static str {
+    match protocol {
+        STRUCTURAL_NULL_PROTOCOL => "structural null v1",
+        STRUCTURAL_NULL_V2_PROTOCOL => "structural null v2",
+        _ => "scalar control",
     }
 }
 
@@ -1849,27 +1849,32 @@ mod tests {
     }
 
     #[test]
-    fn a_structural_null_control_is_named_as_one() {
+    fn structural_null_controls_are_named_by_version() {
         let samples = vec![sample(0, 100, 4), sample(1_000, 100, 4)];
-        let mut null = header(1_000);
-        null.control = STRUCTURAL_NULL_PROTOCOL.to_owned();
-        let report = diagnose(&null, &samples);
-        assert_eq!(report.control_label, "structural null");
         assert_eq!(
             diagnose(&header(1_000), &samples).control_label,
             "scalar control"
         );
-        let mut output = Vec::new();
-        crate::diagnose_output::write_human(&mut output, &report).unwrap();
-        let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("  - structural null: off"), "{output}");
-        assert!(!output.contains("scalar control"), "{output}");
-        assert!(
-            report
-                .unavailable
-                .iter()
-                .all(|reason| !reason.contains("scalar control"))
-        );
+        for (protocol, label) in [
+            (STRUCTURAL_NULL_PROTOCOL, "structural null v1"),
+            (STRUCTURAL_NULL_V2_PROTOCOL, "structural null v2"),
+        ] {
+            let mut null = header(1_000);
+            null.control = protocol.to_owned();
+            let report = diagnose(&null, &samples);
+            assert_eq!(report.control_label, label);
+            let mut output = Vec::new();
+            crate::diagnose_output::write_human(&mut output, &report).unwrap();
+            let output = String::from_utf8(output).unwrap();
+            assert!(output.contains(&format!("  - {label}: off")), "{output}");
+            assert!(!output.contains("scalar control"), "{output}");
+            assert!(
+                report
+                    .unavailable
+                    .iter()
+                    .all(|reason| !reason.contains("scalar control"))
+            );
+        }
     }
 
     #[test]

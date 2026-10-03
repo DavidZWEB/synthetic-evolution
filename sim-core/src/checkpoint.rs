@@ -312,6 +312,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         0 => BrainInheritance::Evolving,
         1 => BrainInheritance::RandomizedAtBirth,
         2 => BrainInheritance::StructuralNull,
+        3 => BrainInheritance::StructuralNullV2,
         _ => return Err(invalid("unknown brain inheritance")),
     };
     // Construction validates params and the core budget, and regenerates the

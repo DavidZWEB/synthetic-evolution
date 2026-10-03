@@ -298,6 +298,7 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
+        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(7, params.clone(), mode).unwrap();
         let parent = world
@@ -355,6 +356,7 @@ fn neural_structural_births_and_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
+        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
@@ -389,14 +391,22 @@ fn neural_structural_births_and_observers_never_allocate() {
 
 #[test]
 fn structural_null_donor_births_never_allocate() {
+    for mode in [
+        BrainInheritance::StructuralNull,
+        BrainInheritance::StructuralNullV2,
+    ] {
+        donor_births_never_allocate(mode);
+    }
+}
+
+fn donor_births_never_allocate(mode: BrainInheritance) {
     let mut params = SimParams::default();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
     // Donor copies then grow, so later births copy genomes of varying length.
     params.mutation.structural.add_neuron_rate = 1.0;
-    let mut world =
-        World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNull).unwrap();
+    let mut world = World::new_with_brain_inheritance(42, params, mode).unwrap();
     let parent = world.spawn_founder(Vec3::ZERO).unwrap();
     let donor = world.spawn_founder(Vec3::ONE).unwrap();
     let observed = count_allocations(|| {
@@ -415,7 +425,7 @@ fn structural_null_donor_births_never_allocate() {
             world.despawn(child);
         }
     });
-    assert_eq!(observed, 0, "donor birth allocated");
+    assert_eq!(observed, 0, "{mode:?} donor birth allocated");
 }
 
 #[test]
@@ -440,6 +450,7 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
+        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();

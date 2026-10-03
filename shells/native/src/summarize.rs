@@ -10,10 +10,13 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use serde::Serialize;
-use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
+use sim_core::control::{
+    RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL,
+};
 
 use crate::Result;
 use crate::cli::SummarizeArgs;
+use crate::diagnose::control_label;
 use crate::metrics::{RunHeader, RunSample, WorldMetrics};
 use crate::metrics_reader::read_metrics;
 
@@ -108,15 +111,22 @@ struct Group {
     ticks: u64,
     sample_every: u64,
     revisions: Vec<String>,
-    /// Seed -> (evolving values and final hash, scalar control, structural null).
     seeds: BTreeMap<u64, SeedRuns>,
 }
 
+/// Phase 2 control protocols a summary can pair, in output order.
+const CONTROLS: [&str; 3] = [
+    RANDOMIZED_AT_BIRTH_PROTOCOL,
+    STRUCTURAL_NULL_PROTOCOL,
+    STRUCTURAL_NULL_V2_PROTOCOL,
+];
+
 #[derive(Default)]
 struct SeedRuns {
+    /// Evolving values and the final state hash that pairs runs of one seed.
     evolving: Option<(Vec<Option<f64>>, Option<String>)>,
-    scalar: Option<Vec<Option<f64>>>,
-    null: Option<Vec<Option<f64>>>,
+    /// One slot per entry of [`CONTROLS`].
+    controls: [Option<Vec<Option<f64>>>; CONTROLS.len()],
 }
 
 pub fn run(args: SummarizeArgs) -> Result<()> {
@@ -206,16 +216,16 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         None => runs.evolving = Some((evolving, hash)),
     }
     let control = cohort_values(&run.samples, header.ticks, |sample| &sample.random_control);
-    let slot = match header.control.as_str() {
-        STRUCTURAL_NULL_PROTOCOL => &mut runs.null,
-        RANDOMIZED_AT_BIRTH_PROTOCOL => &mut runs.scalar,
-        other => {
-            return Err(invalid(format!(
-                "control protocol {other} predates this phase's comparisons"
-            )));
-        }
+    let Some(index) = CONTROLS
+        .iter()
+        .position(|&protocol| protocol == header.control)
+    else {
+        return Err(invalid(format!(
+            "control protocol {} predates this phase's comparisons",
+            header.control
+        )));
     };
-    if slot.replace(control).is_some() {
+    if runs.controls[index].replace(control).is_some() {
         return Err(invalid(format!(
             "seed {seed} has two runs with control {}",
             header.control
@@ -226,34 +236,37 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
 
 fn configuration(params: &str, group: Group) -> Configuration {
     let seeds: Vec<String> = group.seeds.keys().map(u64::to_string).collect();
-    let any_scalar = group.seeds.values().any(|runs| runs.scalar.is_some());
-    let any_null = group.seeds.values().any(|runs| runs.null.is_some());
+    let present: Vec<bool> = (0..CONTROLS.len())
+        .map(|index| {
+            group
+                .seeds
+                .values()
+                .any(|runs| runs.controls[index].is_some())
+        })
+        .collect();
     let unpaired = group
         .seeds
         .iter()
         .filter(|(_, runs)| {
-            (any_scalar && runs.scalar.is_none()) || (any_null && runs.null.is_none())
+            present
+                .iter()
+                .zip(&runs.controls)
+                .any(|(&run_somewhere, run)| run_somewhere && run.is_none())
         })
         .map(|(seed, _)| seed.to_string())
         .collect();
     let mut cohorts = vec![cohort("evolving", None, &group, |runs| {
         runs.evolving.as_ref().map(|(values, _)| values)
     })];
-    if any_scalar {
-        cohorts.push(cohort(
-            "scalar control",
-            Some(RANDOMIZED_AT_BIRTH_PROTOCOL),
-            &group,
-            |runs| runs.scalar.as_ref(),
-        ));
-    }
-    if any_null {
-        cohorts.push(cohort(
-            "structural null",
-            Some(STRUCTURAL_NULL_PROTOCOL),
-            &group,
-            |runs| runs.null.as_ref(),
-        ));
+    for (index, protocol) in CONTROLS.into_iter().enumerate() {
+        if present[index] {
+            cohorts.push(cohort(
+                control_label(protocol),
+                Some(protocol),
+                &group,
+                |runs| runs.controls[index].as_ref(),
+            ));
+        }
     }
     Configuration {
         params_digest: format!("{:016x}", fnv1a(params.as_bytes())),

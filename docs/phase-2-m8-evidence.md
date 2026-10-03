@@ -126,6 +126,9 @@ The mechanism tests confirm the donor transfer, body retention, and scalar redra
 
 ## Decision needed
 
+**Decided:** option 2, implemented as `structural_null_v2` (spec §7.8). The
+options as they were presented follow.
+
 Before M8 can complete, a human must choose how to proceed (spec §7.8 records design
 changes after discussion). Options, without recommendation weight:
 

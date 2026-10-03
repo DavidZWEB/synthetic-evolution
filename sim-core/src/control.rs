@@ -2,8 +2,9 @@
 //!
 //! Each control is a separate world with the same seed and [`SimParams`]. The scalar
 //! control redraws neural scalars instead of inheriting a mutated parent brain; the
-//! structural null also replaces the inherited topology with a living donor's. All
-//! modes use the same mutation rules (spec §7.8, §10). Choosing which world runs which
+//! structural nulls replace the inherited topology with a living donor's, v1 redrawing
+//! scalars and v2 keeping the parent's on shared genes. All modes use the same mutation
+//! rules (spec §7.8, §10). Choosing which world runs which
 //! mode is the shells' concern.
 
 use crate::founder::FounderPlan;
@@ -17,8 +18,11 @@ use structural::StructuralMutationEvent;
 /// Telemetry distinguishes topology-aware controls from Phase 1's fixed-topology run.
 pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v3";
 
-/// Telemetry identity of the donor-topology structural null (spec §7.8).
+/// Telemetry identity of the donor-topology, redrawn-scalar structural null (spec §7.8).
 pub const STRUCTURAL_NULL_PROTOCOL: &str = "structural_null_v1";
+
+/// Telemetry identity of the donor-topology, parent-scalar structural null (spec §7.8).
+pub const STRUCTURAL_NULL_V2_PROTOCOL: &str = "structural_null_v2";
 
 /// What offspring inherit from the parent's brain: scalars and topology, topology only, or
 /// neither.
@@ -33,6 +37,17 @@ pub enum BrainInheritance {
     /// Start from a living donor's topology with the parent's body, then proceed as
     /// [`Self::RandomizedAtBirth`]. Breaks parent-to-child structural inheritance.
     StructuralNull = 2,
+    /// Start from a living donor's topology with the parent's body and the parent's
+    /// neural scalars on every gene the two share, then mutate as [`Self::Evolving`].
+    /// Decouples a lineage's structure from its weights while keeping brains working.
+    StructuralNullV2 = 3,
+}
+
+impl BrainInheritance {
+    /// Whether children start from a donor's topology rather than the parent's.
+    pub fn takes_donor_topology(self) -> bool {
+        matches!(self, Self::StructuralNull | Self::StructuralNullV2)
+    }
 }
 
 impl BrainInheritance {
@@ -44,12 +59,13 @@ impl BrainInheritance {
         state: &mut MutationState<'_>,
         mut on_event: impl FnMut(StructuralMutationEvent),
     ) {
-        if self == Self::Evolving {
+        let redraws = matches!(self, Self::RandomizedAtBirth | Self::StructuralNull);
+        if !redraws {
             mutate::mutate(genes, state.rng, &params.mutation);
         }
         organs::apply(genes, params, state, &mut on_event);
         structural::apply(genes, params, state, on_event);
-        if self != Self::Evolving {
+        if redraws {
             plan.randomize_brain(state.rng, params, genes, state.neuron_scratch);
         }
     }
@@ -80,6 +96,32 @@ pub(crate) fn donor_topology(parent: &[Gene], donor: &[Gene], out: &mut Vec<Gene
     out.extend(donor.iter().filter(|gene| !is_body(gene)));
     out.extend(parent.iter().filter(is_body));
     debug_assert_eq!(out.len(), donor.len());
+}
+
+/// Gives a donor-topology genome the parent's neural scalars (weights, biases, taus,
+/// oscillator periods) wherever the parent has the same gene. A gene counts as shared
+/// only when its innovation ID and structural fields agree, so the donor's structure,
+/// connection enable states, and organ parameters are never changed. Both genomes are
+/// sorted by [`Gene::sort_key`], so lookup is a binary search.
+pub(crate) fn parent_scalars(parent: &[Gene], genes: &mut [Gene]) {
+    for gene in genes {
+        let Ok(index) = parent.binary_search_by_key(&gene.sort_key(), Gene::sort_key) else {
+            continue;
+        };
+        match (gene, &parent[index]) {
+            (Gene::Neuron(child), Gene::Neuron(from)) if child.activation == from.activation => {
+                child.bias = from.bias;
+                child.tau = from.tau;
+                child.period = from.period;
+            }
+            (Gene::Connection(child), Gene::Connection(from))
+                if (child.from, child.to) == (from.from, from.to) =>
+            {
+                child.weight = from.weight;
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -167,7 +209,7 @@ mod tests {
             let mut b = Rng::from_seed(17);
             let mut expected_scratch = vec![0; params.storage.max_neurons as usize];
             match mode {
-                BrainInheritance::Evolving => {
+                BrainInheritance::Evolving | BrainInheritance::StructuralNullV2 => {
                     mutate::mutate(&mut expected, &mut a, &params.mutation)
                 }
                 BrainInheritance::RandomizedAtBirth | BrainInheritance::StructuralNull => {

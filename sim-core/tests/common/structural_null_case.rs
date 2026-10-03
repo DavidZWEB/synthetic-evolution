@@ -9,6 +9,8 @@ use sim_core::{SimParams, World};
 
 // New scenario for the structural_null_v1 heredity mode (spec section 7.8).
 pub const NULL_GOLDEN: u64 = 0x7e74_bff6_f2d8_da6e;
+// The same scenario under structural_null_v2 (spec section 7.8).
+pub const NULL_V2_GOLDEN: u64 = 0x9e5d_695d_4b39_f598;
 
 const FOUNDERS: u32 = 32;
 const TICKS: u64 = 500;
@@ -34,25 +36,33 @@ fn run(mode: BrainInheritance) -> World {
 }
 
 pub fn check_structural_null_run() {
-    let world = run(BrainInheritance::StructuralNull);
-    assert!(
-        world
-            .pool()
-            .iter_live()
-            .any(|id| u64::from(world.agents().age[id.index()]) < TICKS),
-        "nothing was born, so donor transfer never ran"
-    );
-    assert!((world.total_energy() - world.ledger().expected_stock()).abs() < 1e-6);
-    // Same seed, params, and draws apart from the donor: the null must not collapse
-    // into the scalar control.
-    assert_ne!(
-        world.state_hash(),
-        run(BrainInheritance::RandomizedAtBirth).state_hash()
-    );
+    let scalar = run(BrainInheritance::RandomizedAtBirth).state_hash();
+    let evolving = run(BrainInheritance::Evolving).state_hash();
+    let mut hashes = Vec::new();
+    for mode in [
+        BrainInheritance::StructuralNull,
+        BrainInheritance::StructuralNullV2,
+    ] {
+        let world = run(mode);
+        assert!(
+            world
+                .pool()
+                .iter_live()
+                .any(|id| u64::from(world.agents().age[id.index()]) < TICKS),
+            "{mode:?}: nothing was born, so donor transfer never ran"
+        );
+        assert!((world.total_energy() - world.ledger().expected_stock()).abs() < 1e-6);
+        // Same seed and params: neither null may collapse into a control or the
+        // evolving world it is compared with.
+        assert_ne!(world.state_hash(), scalar, "{mode:?}");
+        assert_ne!(world.state_hash(), evolving, "{mode:?}");
+        hashes.push(world.state_hash());
+    }
     assert_eq!(
-        world.state_hash(),
-        NULL_GOLDEN,
-        "structural null={:016x}",
-        world.state_hash()
+        hashes,
+        [NULL_GOLDEN, NULL_V2_GOLDEN],
+        "structural null v1={:016x}, v2={:016x}",
+        hashes[0],
+        hashes[1]
     );
 }

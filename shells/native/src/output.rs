@@ -17,11 +17,9 @@ pub(crate) type Output = BufWriter<Box<dyn Write>>;
 type FileKey = (u64, u64);
 
 pub(crate) fn validate(args: &RunArgs) -> Result<()> {
-    if args.control == Control::StructuralNull
-        && (args.history.is_some() || args.save_run.is_some())
-    {
+    if args.control != Control::Scalar && (args.history.is_some() || args.save_run.is_some()) {
         return Err(conflict(
-            "--control structural-null writes metrics only; history archives and saved runs carry the scalar control",
+            "structural-null controls write metrics only; history archives and saved runs carry the scalar control",
         )
         .into());
     }
