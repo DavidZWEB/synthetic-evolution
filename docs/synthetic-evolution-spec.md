@@ -617,7 +617,23 @@ bounded staging buffer until the origin record drains. When staging is full, or 
 record would exceed the archive line limit, the origin is archived with an explicit
 unavailable reason. History schema 3 is that extension for both the native and
 browser archive shapes. Native output stays schema 1 unless representatives are
-requested. The browser offers representative capture as its own opt-in, separate
+requested.
+
+**DECIDED species-origin graph (M6):** a **layered tree without a time axis**, built
+per archived cohort from recorded origins and extinctions only. Each species links to
+the species of its founding parent(s); a node's depth is one more than its deepest
+known parent, so depth counts speciation steps, not time. The model holds two parent
+links so a later sexual DAG fits. Unclassified or unavailable parents, and parent
+species lost to a capture gap or preceding a resumed segment, are marked unknown,
+never inferred. Extinct species are distinguished; pruning hides extinct lineages
+with no living descendants while keeping every ancestor of a living species.
+
+**DECIDED representative comparison (M6):** an **aligned gene diff** of two archived
+representatives: per-kind counts of shared and unique innovation IDs, every
+connection whose presence, weight, or enabled state differs, and the exact distance
+with its disjoint, excess, and weight terms against the archive's threshold, computed
+by the core through WASM so it matches the classifier. A missing representative is
+shown as unavailable with its reason; nothing is reconstructed. The browser offers representative capture as its own opt-in, separate
 from recording, because genomes consume the same per-run archive budget; without it
 browser archives stay schema 2. Browser staging is fixed at 65,536 genes, matching
 the native default, and is not user-configurable. A representative comparison view
