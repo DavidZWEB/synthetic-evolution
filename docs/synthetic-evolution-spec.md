@@ -317,6 +317,17 @@ founder range, and the outgoing weight is inherited. The incoming weight must fi
 the configured weight limit when splitting is enabled. A CTRNN split is not assumed
 to preserve behavior.
 
+**DECIDED (M8): oscillator addition.** Founders' oscillators are otherwise the only
+clocks a lineage can have, since splits add sigmoid neurons. A sixth neural operator,
+run after the split with its own rate (`add_oscillator_rate`, zero by default like
+the other additions), adds one oscillator neuron, drawn like a founder oscillator
+(bias in [-1, 1], tau and period from the founder ranges), and one enabled connection
+from it to a uniformly chosen non-oscillator neuron, weighted as an added connection.
+Wiring it at once matters because an oscillator ignores its inputs: an unwired clock
+would wait on a later edit. With no non-oscillator neuron there is no candidate.
+Neuron removal keeps protecting oscillators, so oscillator counts only grow.
+Observations count it separately (`add_oscillator`), unknown in older telemetry.
+
 Operator observations count candidate edits, not necessarily surviving births.
 Record applied edits and refusal reasons separately from spawn failures; observers
 are optional and must not alter RNG, identities, or simulation state.
@@ -1397,7 +1408,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats, the originating run's
+manifest records the container and checkpoint formats (checkpoint format 2 since M8
+added `add_oscillator_rate` to the encoded params; format 1 is refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a

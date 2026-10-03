@@ -123,7 +123,8 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
             let mutations = sample["data"][cohort]["structural_mutations"]
                 .as_object()
                 .unwrap();
-            assert_eq!(mutations.len(), 7);
+            // Five neural, one oscillator, and two sensor operators.
+            assert_eq!(mutations.len(), 8);
             for counts in mutations.values() {
                 let counts = counts.as_object().unwrap();
                 assert_eq!(counts.len(), 6);

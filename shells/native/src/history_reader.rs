@@ -220,15 +220,22 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
     Ok(())
 }
 
+/// Params fields added after archives were first written. An archive written before
+/// one existed ran without it, which its zero default describes exactly.
+const LATER_PARAMS: &[&str] = &["add_oscillator_rate"];
+
 fn require_fields(actual: &serde_json::Value, complete: &serde_json::Value) -> Result<()> {
     if let Some(fields) = complete.as_object() {
         let actual = actual
             .as_object()
             .ok_or_else(|| invalid("history requires complete params"))?;
         for (name, value) in fields {
-            let actual = actual
-                .get(name)
-                .ok_or_else(|| invalid(format!("history params missing {name}")))?;
+            let Some(actual) = actual.get(name) else {
+                if LATER_PARAMS.contains(&name.as_str()) {
+                    continue;
+                }
+                return Err(invalid(format!("history params missing {name}")).into());
+            };
             require_fields(actual, value)?;
         }
     }
