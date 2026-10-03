@@ -24,6 +24,8 @@ pub enum Command {
     Resume(ResumeArgs),
     /// Validate every component of a saved run and summarize it.
     SavedRun(SavedRunArgs),
+    /// Summarize several metrics files across seeds, per configuration and cohort.
+    Summarize(SummarizeArgs),
 }
 
 /// Native hosts accept saved worlds up to this core budget unless told otherwise.
@@ -152,6 +154,16 @@ pub struct SavedRunArgs {
     /// Largest saved core budget (`storage.max_memory_bytes`) this host will restore.
     #[arg(long, default_value_t = DEFAULT_MAX_CORE_BYTES)]
     pub max_core_bytes: u64,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct SummarizeArgs {
+    /// Completed metrics JSONL files: one per seed and control protocol.
+    #[arg(required = true)]
+    pub metrics: Vec<PathBuf>,
+    /// Emit the summary as JSON instead of human-readable text.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Clone, Debug, Args)]

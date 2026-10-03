@@ -1,0 +1,17 @@
+{
+  "mutation": {
+    "structural": {
+      "toggle_connection_rate": 0.02,
+      "add_connection_rate": 0.05,
+      "add_neuron_rate": 0.02
+    },
+    "organs": {
+      "remove_sensor_rate": 0.001,
+      "add_sensor_rate": 0.001,
+      "vision_weight": 1.0,
+      "chemo_weight": 1.0,
+      "energy_weight": 1.0,
+      "neuron_bias": 0.0
+    }
+  }
+}

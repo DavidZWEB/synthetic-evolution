@@ -15,6 +15,7 @@ mod metrics_reader;
 mod output;
 pub mod run;
 pub mod saved_run;
+pub mod summarize;
 
 use std::error::Error;
 
@@ -30,6 +31,7 @@ pub fn run_cli() -> Result<()> {
         Some(Command::History(args)) => history::summarize(args),
         Some(Command::Resume(args)) => saved_run::resume(args),
         Some(Command::SavedRun(args)) => saved_run::inspect(args),
+        Some(Command::Summarize(args)) => summarize::run(args),
         None => run::run(cli.run),
     }
 }

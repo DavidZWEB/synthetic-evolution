@@ -638,3 +638,82 @@ fn a_structural_null_control_writes_metrics_that_diagnose_names() {
         );
     }
 }
+
+fn metrics_run(seed: u64, control: &str) -> std::path::PathBuf {
+    let params = temporary("summary-params.json");
+    fs::write(&params, include_str!("fixtures/sustaining.json")).expect("write params");
+    let metrics = temporary("summary.jsonl");
+    let run = Command::new(env!("CARGO_BIN_EXE_native"))
+        .args([
+            "--seed",
+            &seed.to_string(),
+            "--ticks",
+            "10",
+            "--sample-every",
+            "5",
+        ])
+        .args(["--founders", "4", "--control", control, "--params"])
+        .arg(&params)
+        .arg("--metrics")
+        .arg(&metrics)
+        .output()
+        .expect("run native shell");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    fs::remove_file(params).expect("remove params");
+    metrics
+}
+
+fn summarize(files: &[&std::path::PathBuf]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_native"))
+        .arg("summarize")
+        .args(files)
+        .arg("--json")
+        .output()
+        .expect("summarize")
+}
+
+#[test]
+fn summarize_pairs_seeds_and_reports_every_cohort_unranked() {
+    let runs: Vec<_> = [(1, "scalar"), (1, "structural-null"), (2, "scalar")]
+        .into_iter()
+        .map(|(seed, control)| metrics_run(seed, control))
+        .collect();
+    let output = summarize(&runs.iter().collect::<Vec<_>>());
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let configurations = summary["configurations"].as_array().unwrap();
+    assert_eq!(configurations.len(), 1);
+    let configuration = &configurations[0];
+    assert_eq!(configuration["seeds"], serde_json::json!(["1", "2"]));
+    assert_eq!(configuration["unpaired"], serde_json::json!(["2"]));
+    let cohorts: Vec<_> = configuration["cohorts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cohort| (cohort["name"].clone(), cohort["seeds"].clone()))
+        .collect();
+    assert_eq!(
+        cohorts,
+        [
+            ("evolving".into(), serde_json::json!(["1", "2"])),
+            ("scalar control".into(), serde_json::json!(["1", "2"])),
+            ("structural null".into(), serde_json::json!(["1"])),
+        ]
+    );
+
+    // A duplicate seed/control is not a second sample of the same configuration.
+    let duplicate = summarize(&[&runs[0], &runs[0]]);
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("two runs with control"));
+    for run in runs {
+        fs::remove_file(run).expect("remove metrics");
+    }
+}

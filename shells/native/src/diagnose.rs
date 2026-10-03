@@ -785,14 +785,14 @@ fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonRepor
             Some(sample)
                 if sample.evolving.descendants == 0 || sample.random_control.descendants == 0 =>
             {
-                "scalar-control comparison requires living descendants in both cohorts"
+                "control comparison requires living descendants in both cohorts"
             }
             Some(sample)
                 if sample.evolving.population < 10 || sample.random_control.population < 10 =>
             {
-                "scalar-control comparison requires at least 10 living agents in both cohorts"
+                "control comparison requires at least 10 living agents in both cohorts"
             }
-            _ => "scalar-control comparison requires at least three consecutive eligible samples",
+            _ => "control comparison requires at least three consecutive eligible samples",
         };
         return ComparisonReport {
             tail_means: None,
@@ -1883,8 +1883,10 @@ mod tests {
         let mut output = Vec::new();
         crate::diagnose_output::write_human(&mut output, &report).expect("writes");
         let output = String::from_utf8(output).expect("UTF-8");
-        assert!(output.contains(
-            "comparison:\n  - not run: scalar-control comparison requires living descendants"
-        ));
+        assert!(
+            output.contains(
+                "comparison:\n  - not run: control comparison requires living descendants"
+            )
+        );
     }
 }
