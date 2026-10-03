@@ -273,6 +273,25 @@ It writes metrics only; `--history` and `--save-run` are refused because archive
 saved runs carry the scalar control. Run it as a separate invocation with the same
 seed, params, and founders as the scalar-control run it is compared with.
 
+### Multi-seed experiments (M8)
+
+`scripts/experiment.sh` runs each params file for every listed seed under both
+controls, `JOBS` at a time (default 4), and records each run's wall-clock seconds:
+
+```bash
+JOBS=6 scripts/experiment.sh runs/m8 200000 2000 5000 "42 117 314" \
+  experiments/phase-2-m8/dense-growth.json experiments/phase-2-m8/sparse-chemo-growth.json
+```
+
+It then calls `native summarize`, which groups metrics files by identical params,
+founders, ticks, and sample interval; pairs each seed's evolving world with its
+scalar-control and structural-null runs (refusing duplicates and evolving worlds
+that disagree between runs of one seed); and prints every metric's mean, sample
+standard deviation, and range across seeds for each cohort side by side. Use
+`--json` for per-seed values. The summary is deliberately unranked: no score, no
+winner, and metric definitions are printed with it. `experiments/phase-2-m8/`
+holds M8's declared configurations.
+
 ### Opt-in neural structural mutation (M2)
 
 All five shipped rates under **`SimParams.mutation.structural` are zero**. Missing
