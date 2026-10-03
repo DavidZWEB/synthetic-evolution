@@ -106,9 +106,8 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         "legacy randomized_at_birth protocol cannot have nonzero structural mutation rates",
                     ).into());
                 }
-                // These are Phase 1's historical counts, not today's defaults.
-                // Changing serde's founder defaults will also require legacy decoding
-                // to restore these values for omitted fields; leave this guard fixed.
+                // These are Phase 1's historical counts, not today's defaults; legacy
+                // decoding restores them for omitted fields. Leave this guard fixed.
                 if next.schema_version < 5
                     && (next.params.mutation.organs.remove_sensor_rate != 0.0
                         || next.params.mutation.organs.add_sensor_rate != 0.0
@@ -275,6 +274,24 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
                     "species".to_owned(),
                     serde_json::json!({"capacity": 0, "threshold": 0.5}),
                 );
+                // Schemas 3-4 predate configurable founder composition, and every such
+                // run used the dense founder. Omitted fields must not take today's
+                // sparse defaults, which would rewrite what those runs measured.
+                if matches!(schema, Some(3..=4)) {
+                    for (section, field, phase_one) in [
+                        ("sensing", "chemo_sensors", serde_json::json!(1)),
+                        ("sensing", "energy_sensors", serde_json::json!(1)),
+                        ("brain", "connections_per_target", serde_json::Value::Null),
+                    ] {
+                        if let Some(object) = params
+                            .entry(section)
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                        {
+                            object.entry(field).or_insert(phase_one);
+                        }
+                    }
+                }
             } else if schema
                 .is_some_and(|version| (6..=u64::from(SCHEMA_VERSION)).contains(&version))
             {
