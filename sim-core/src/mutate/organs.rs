@@ -140,7 +140,7 @@ mod tests {
     }
 
     fn params_for(modality: Modality) -> SimParams {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().without_structural_mutation();
         let organs = &mut params.mutation.organs;
         organs.add_sensor_rate = 1.0;
         organs.vision_weight = if modality == Modality::VisionRay {
@@ -277,7 +277,7 @@ mod tests {
             .copied()
             .filter(|g| !matches!(g, Gene::Sensor(_)))
             .collect();
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().without_structural_mutation();
         params.mutation.organs.remove_sensor_rate = 1.0;
         let mut next = NULL_ID;
         let events = run(
@@ -303,7 +303,7 @@ mod tests {
         assert!(
             run(
                 &mut genes,
-                &SimParams::default(),
+                &SimParams::default().without_structural_mutation(),
                 &mut rng,
                 &mut next,
                 &mut scratch
@@ -476,7 +476,7 @@ mod tests {
         ) {
             let execute = || {
                 let mut genes = prepared(64);
-                let mut params = SimParams::default();
+                let mut params = SimParams::default().without_structural_mutation();
                 params.storage.max_genes = 64;
                 params.storage.max_neurons = 32;
                 params.storage.max_sensors = 8;

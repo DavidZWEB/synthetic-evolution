@@ -23,7 +23,7 @@ fn birth_params() -> SimParams {
     let mut params: SimParams =
         serde_json::from_str(include_str!("../../native/tests/fixtures/structural.json")).unwrap();
     params.world.max_agents = 4;
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params.reproduction.energy_split = 0.9;
     params
 }

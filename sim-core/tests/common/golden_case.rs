@@ -29,6 +29,11 @@
 //!
 //! The minimal founder then regained two oscillators (Phase 2 M8, human decision), a
 //! deliberate dynamics change that again moved only these shipped references.
+//!
+//! Structural and sensor mutation then shipped enabled (Phase 2 M8, human decision).
+//! The shipped run is unchanged because its first birth comes after tick 300; the
+//! breeding run moves because its children now receive structural edits. Mechanism
+//! scenarios pin zero structural rates and keep their references.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
@@ -37,7 +42,7 @@ use sim_core::world::World;
 pub const SHIPPED_GOLDEN: u64 = 0xb672_8291_cd46_3868;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0xab26_2efb_43bf_3b6e;
+pub const BREEDING_GOLDEN: u64 = 0xc979_6937_52ef_ffd0;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;
@@ -54,7 +59,7 @@ pub fn shipped() -> SimParams {
 ///
 /// The tuned defaults do reproduce, but seed 42's first birth is tick 367 (482 with
 /// Phase 1's dense founder), after the shipped golden run ends at tick 300. These
-/// overrides move the first birth to tick 101 and leave 62 descendants at tick 500,
+/// overrides move the first birth to tick 101 and leave 69 descendants at tick 500,
 /// robustly pinning `resolve_births`.
 pub fn breeding() -> SimParams {
     let mut params = shipped();

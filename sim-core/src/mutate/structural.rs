@@ -396,10 +396,16 @@ mod tests {
         Gene::Neuron(NeuronGene {
             id: InnovationId::new(id),
             bias: -0.25,
-            tau: SimParams::default().brain.tau_min,
+            tau: SimParams::default()
+                .without_structural_mutation()
+                .brain
+                .tau_min,
             activation,
             period: if activation == Activation::Oscillator {
-                SimParams::default().brain.oscillator_period_min
+                SimParams::default()
+                    .without_structural_mutation()
+                    .brain
+                    .oscillator_period_min
             } else {
                 0.0
             },
@@ -440,7 +446,7 @@ mod tests {
     }
 
     fn params_for(operator: StructuralOperator) -> SimParams {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().without_structural_mutation();
         set_rate(&mut params, operator, 1.0);
         params
     }
@@ -542,7 +548,7 @@ mod tests {
         let mut scratch = [123; 1];
         apply(
             &mut genes,
-            &SimParams::default(),
+            &SimParams::default().without_structural_mutation(),
             &mut MutationState {
                 rng: &mut rng,
                 next_innovation: &mut next,
@@ -565,7 +571,7 @@ mod tests {
             let mut expected_rng = rng.clone();
             let draw = expected_rng.unit();
             assert!(draw > 0.0);
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().without_structural_mutation();
             set_rate(&mut params, operator, draw * 0.5);
             let mut next = 17;
             apply(
@@ -593,7 +599,7 @@ mod tests {
             ],
             8,
         );
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().without_structural_mutation();
         for operator in OPERATORS {
             set_rate(&mut params, operator, 1.0);
         }
@@ -1332,7 +1338,7 @@ mod tests {
             seed in any::<u64>(),
             rates in prop::array::uniform5(0u8..=100),
         ) {
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().without_structural_mutation();
             params.storage.max_genes = 128;
             params.storage.max_neurons = 32;
             params.storage.max_connections = 96;

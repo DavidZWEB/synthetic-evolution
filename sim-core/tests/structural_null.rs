@@ -9,7 +9,7 @@ use sim_core::ids::{AgentId, InnovationId};
 use sim_core::{SimParams, SpawnSpec, World};
 
 fn breeder_params() -> SimParams {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 8;
     params.reproduction.maturity_ticks = 0;
     params

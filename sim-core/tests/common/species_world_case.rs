@@ -46,7 +46,9 @@ fn genes(weight: f32) -> [Gene; 4] {
 }
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default()
+        .with_dense_founder()
+        .without_structural_mutation();
     params.world.max_agents = 4;
     params.plants.max_plants = 1;
     params.plants.max_energy = 600.0;

@@ -433,22 +433,32 @@ pub struct MutationParams {
 pub struct StructuralMutationParams {
     /// Physical deletion loses the edge's innovation marker. Re-adding the same
     /// endpoints gets a fresh ID, so distance can increase without changed wiring.
-    /// Keep the shipped default at zero until D4 calibrates distance coefficients
-    /// and the species threshold against deletion/recreation (spec §3.4).
-    /// Explicit calibration runs may opt in before changing the default.
+    ///
+    /// Default 0.02 since Phase 2 M8 (was 0): a human enabled deletion before D4's
+    /// distance/threshold calibration, accepting that marker turnover can create
+    /// species labels without real divergence (spec §3.4). Below the addition rates,
+    /// so genomes can still grow; the full default set was viable on seeds
+    /// 42/117/314 over 200k ticks (1,315-1,645 agents, mean genome 26-34 genes).
     pub remove_connection_rate: f32,
     /// Removing/rebuilding a neuron also replaces its incident-edge innovation
-    /// history. Keep the shipped default at zero until D4's coefficients and
-    /// threshold are calibrated against this marker turnover (spec §3.4);
-    /// nonzero rates remain available for explicit calibration runs.
+    /// history.
+    ///
+    /// Default 0.01 since Phase 2 M8 (was 0), enabled with connection removal and
+    /// under the same accepted calibration caveat; see `remove_connection_rate`.
     pub remove_neuron_rate: f32,
+    /// Default 0.02 since Phase 2 M8 (was 0): M8's growth rates, viable in every
+    /// growth run (`docs/phase-2-m8-evidence.md`). Shipping additions lets brains
+    /// change in the default world instead of staying at the founder.
     pub toggle_connection_rate: f32,
+    /// Default 0.05 since Phase 2 M8 (was 0); see `toggle_connection_rate`.
     pub add_connection_rate: f32,
+    /// Default 0.02 since Phase 2 M8 (was 0); see `toggle_connection_rate`.
     pub add_neuron_rate: f32,
     /// Chance per birth of adding one oscillator neuron, wired by a single outgoing
     /// connection to a random non-oscillator neuron, so a lineage can gain a clock it
-    /// was not founded with (spec §3.2-§3.3). Zero by default like every structural
-    /// addition; 0.01 is an opt-in example, not a tuned value.
+    /// was not founded with (spec §3.2-§3.3). Default 0.01 since its introduction
+    /// in Phase 2 M8, shipped with the other growth rates after the full default
+    /// set's viability check (see `remove_connection_rate`).
     pub add_oscillator_rate: f32,
     pub split_neuron_bias: f32,
     /// Initial incoming weight when splitting an edge; outgoing weight is inherited.
@@ -458,12 +468,12 @@ pub struct StructuralMutationParams {
 impl Default for StructuralMutationParams {
     fn default() -> Self {
         Self {
-            remove_connection_rate: 0.0,
-            remove_neuron_rate: 0.0,
-            toggle_connection_rate: 0.0,
-            add_connection_rate: 0.0,
-            add_neuron_rate: 0.0,
-            add_oscillator_rate: 0.0,
+            remove_connection_rate: 0.02,
+            remove_neuron_rate: 0.01,
+            toggle_connection_rate: 0.02,
+            add_connection_rate: 0.05,
+            add_neuron_rate: 0.02,
+            add_oscillator_rate: 0.01,
             split_neuron_bias: 0.0,
             split_input_weight: 1.0,
         }
@@ -481,11 +491,14 @@ impl StructuralMutationParams {
     }
 }
 
-/// Sensor edits, disabled by default to preserve existing runs (spec section 3.3).
+/// Sensor edits (spec section 3.3).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OrganMutationParams {
+    /// Default 0.001 since Phase 2 M8 (was 0), with the other structural defaults; the
+    /// M8 growth runs used this rate (`docs/phase-2-m8-evidence.md`).
     pub remove_sensor_rate: f32,
+    /// Default 0.001 since Phase 2 M8 (was 0); see `remove_sensor_rate`.
     pub add_sensor_rate: f32,
     pub vision_weight: f32,
     pub chemo_weight: f32,
@@ -497,8 +510,8 @@ pub struct OrganMutationParams {
 impl Default for OrganMutationParams {
     fn default() -> Self {
         Self {
-            remove_sensor_rate: 0.0,
-            add_sensor_rate: 0.0,
+            remove_sensor_rate: 0.001,
+            add_sensor_rate: 0.001,
             vision_weight: 1.0,
             chemo_weight: 1.0,
             energy_weight: 1.0,
@@ -1108,6 +1121,22 @@ impl Default for MovementParams {
 }
 
 impl SimParams {
+    /// These params with every structural and sensor mutation rate at zero, the
+    /// shipped default before Phase 2 M8. For runs and scenarios that must keep
+    /// topology fixed; other operator settings are unchanged.
+    pub fn without_structural_mutation(mut self) -> Self {
+        let structural = &mut self.mutation.structural;
+        structural.remove_connection_rate = 0.0;
+        structural.remove_neuron_rate = 0.0;
+        structural.toggle_connection_rate = 0.0;
+        structural.add_connection_rate = 0.0;
+        structural.add_neuron_rate = 0.0;
+        structural.add_oscillator_rate = 0.0;
+        self.mutation.organs.remove_sensor_rate = 0.0;
+        self.mutation.organs.add_sensor_rate = 0.0;
+        self
+    }
+
     /// These params with Phase 1's dense founder (3 vision rays, chemo and energy
     /// sensors, 6 hidden neurons, 2 oscillators, full connectivity), the shipped
     /// default before Phase 2 M8. Kept for comparisons and for scenarios whose
@@ -1283,8 +1312,9 @@ mod tests {
         use super::*;
 
         #[test]
-        fn structural_defaults_are_disabled_and_old_zero_weight_limits_stay_valid() {
-            let mut params = SimParams::default();
+        fn structural_defaults_ship_and_disabled_zero_weight_limits_stay_valid() {
+            assert!(!SimParams::default().mutation.structural.is_disabled());
+            let mut params = SimParams::default().without_structural_mutation();
             assert!(params.mutation.structural.is_disabled());
             params.mutation.weight_limit = 0.0;
             params.validate().unwrap();
@@ -1297,12 +1327,13 @@ mod tests {
         #[test]
         fn structural_rates_and_initializers_are_validated() {
             type Change = fn(&mut StructuralMutationParams, f32);
-            let rates: [Change; 5] = [
+            let rates: [Change; 6] = [
                 |p, v| p.remove_connection_rate = v,
                 |p, v| p.remove_neuron_rate = v,
                 |p, v| p.toggle_connection_rate = v,
                 |p, v| p.add_connection_rate = v,
                 |p, v| p.add_neuron_rate = v,
+                |p, v| p.add_oscillator_rate = v,
             ];
             for change in rates {
                 for value in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
@@ -1332,7 +1363,7 @@ mod tests {
 
         #[test]
         fn structural_controls_require_representable_single_input_weight_draws() {
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().without_structural_mutation();
             params.brain.weight_init_scale = f32::MAX * 0.75;
             params.validate().unwrap();
             params.mutation.structural.add_neuron_rate = 0.02;

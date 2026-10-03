@@ -10,7 +10,8 @@ Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
 now has pooled variable-length world storage, explicit memory budgets, and
 runtime-tunable neural and sensor structural mutation, and configurable sparse
-founders. New structural rates default to zero. Since M8 the shipped founder is the
+founders. Since M8 structural and sensor mutation ship enabled, so brains grow,
+rewire, and prune in the default world, and the shipped founder is the
 minimal chemo-led one (one chemoreceptor, two oscillators, 4 connections), chosen on multi-seed viability
 evidence and human approval; Phase 1's dense founder remains available as a preset.
 M4 now assigns species in the running world, with explicit unclassified population

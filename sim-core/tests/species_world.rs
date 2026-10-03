@@ -15,7 +15,7 @@ use sim_core::{SimParams, SpawnSpec, World};
 mod common;
 
 fn params() -> SimParams {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 8;
     params.plants.max_plants = 0;
     params.species.capacity = 2;

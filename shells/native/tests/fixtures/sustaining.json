@@ -47,5 +47,19 @@
       8,
       1
     ]
+  },
+  "mutation": {
+    "structural": {
+      "remove_connection_rate": 0.0,
+      "remove_neuron_rate": 0.0,
+      "toggle_connection_rate": 0.0,
+      "add_connection_rate": 0.0,
+      "add_neuron_rate": 0.0,
+      "add_oscillator_rate": 0.0
+    },
+    "organs": {
+      "remove_sensor_rate": 0.0,
+      "add_sensor_rate": 0.0
+    }
   }
 }
