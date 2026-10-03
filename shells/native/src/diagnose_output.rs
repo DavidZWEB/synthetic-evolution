@@ -16,14 +16,14 @@ pub(crate) fn print_human(report: &DiagnosisReport) -> io::Result<()> {
 pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> io::Result<()> {
     writeln!(output, "samples: {}", report.samples)?;
     write_findings(output, "evolving", &report.evolving)?;
-    write_findings(output, "scalar control", &report.random_control)?;
+    write_findings(output, report.control_label, &report.random_control)?;
     writeln!(
         output,
         "species (observational labels, not adaptive success; monoculture uses exact genomes):"
     )?;
     for (name, summary) in [
         ("evolving", &report.species.evolving),
-        ("scalar control", &report.species.random_control),
+        (report.control_label, &report.species.random_control),
     ] {
         if let Some(summary) = summary {
             writeln!(
@@ -44,7 +44,7 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
     )?;
     for (name, summary) in [
         ("evolving", &report.complexity.evolving),
-        ("scalar control", &report.complexity.random_control),
+        (report.control_label, &report.complexity.random_control),
     ] {
         let Some(summary) = summary else {
             writeln!(output, "  - {name}: unavailable")?;
@@ -64,7 +64,7 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
     writeln!(output, "history capture:")?;
     for (name, status) in [
         ("evolving", &report.history.evolving),
-        ("scalar control", &report.history.random_control),
+        (report.control_label, &report.history.random_control),
     ] {
         match status {
             HistoryStatus::Unknown => writeln!(

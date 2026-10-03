@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Headless Synthetic Evolution experiments")]
@@ -64,6 +65,35 @@ pub struct RunArgs {
     /// Write a saved-run bundle (checkpoints plus available history) after the final tick.
     #[arg(long)]
     pub save_run: Option<PathBuf>,
+    /// Heredity of the paired control world. The structural null supports metrics only.
+    #[arg(long, value_enum, default_value_t = Control::Scalar)]
+    pub control: Control,
+}
+
+/// The paired control world's heredity protocol (spec section 7.8).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum Control {
+    /// Inherit topology, redraw neural scalars (`randomized_at_birth_v3`).
+    #[default]
+    Scalar,
+    /// Take a living donor's topology, redraw neural scalars (`structural_null_v1`).
+    StructuralNull,
+}
+
+impl Control {
+    pub fn heredity(self) -> BrainInheritance {
+        match self {
+            Self::Scalar => BrainInheritance::RandomizedAtBirth,
+            Self::StructuralNull => BrainInheritance::StructuralNull,
+        }
+    }
+
+    pub fn protocol(self) -> &'static str {
+        match self {
+            Self::Scalar => RANDOMIZED_AT_BIRTH_PROTOCOL,
+            Self::StructuralNull => STRUCTURAL_NULL_PROTOCOL,
+        }
+    }
 }
 
 impl RunArgs {

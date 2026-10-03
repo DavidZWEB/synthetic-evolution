@@ -297,6 +297,7 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
     for mode in [
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
     ] {
         let mut world = World::new_with_brain_inheritance(7, params.clone(), mode).unwrap();
         let parent = world
@@ -353,6 +354,7 @@ fn neural_structural_births_and_observers_never_allocate() {
     for mode in [
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
@@ -386,6 +388,37 @@ fn neural_structural_births_and_observers_never_allocate() {
 }
 
 #[test]
+fn structural_null_donor_births_never_allocate() {
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    // Donor copies then grow, so later births copy genomes of varying length.
+    params.mutation.structural.add_neuron_rate = 1.0;
+    let mut world =
+        World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNull).unwrap();
+    let parent = world.spawn_founder(Vec3::ZERO).unwrap();
+    let donor = world.spawn_founder(Vec3::ONE).unwrap();
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            world.agents_mut().energy[parent.index()] = 300.0;
+            world.intents_mut().reproduce[parent.index()] = 1.0;
+            assert_eq!(
+                world.resolve_births_with_observer(|_| panic!("birth refused")),
+                1
+            );
+            let child = world
+                .pool()
+                .iter_live()
+                .find(|&id| id != parent && id != donor)
+                .unwrap();
+            world.despawn(child);
+        }
+    });
+    assert_eq!(observed, 0, "donor birth allocated");
+}
+
+#[test]
 fn sensor_edits_and_combined_mutation_observers_never_allocate() {
     use sim_core::mutate::StructuralMutationCounts;
     use sim_core::species::SpeciesEventCounts;
@@ -406,6 +439,7 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
     for mode in [
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();

@@ -4,7 +4,7 @@ use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
+use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -594,5 +594,47 @@ fn unsafe_params_are_reported_before_a_run_starts() {
         assert!(output.stdout.is_empty(), "invalid run emitted metrics");
         let error = String::from_utf8(output.stderr).expect("error UTF-8");
         assert!(error.contains(message), "unexpected error: {error}");
+    }
+}
+
+#[test]
+fn a_structural_null_control_writes_metrics_that_diagnose_names() {
+    let metrics = temporary("null.jsonl");
+    let run = Command::new(env!("CARGO_BIN_EXE_native"))
+        .args(["--seed", "7", "--ticks", "10", "--sample-every", "5"])
+        .args([
+            "--founders",
+            "4",
+            "--control",
+            "structural-null",
+            "--metrics",
+        ])
+        .arg(&metrics)
+        .output()
+        .expect("run native shell");
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let text = fs::read_to_string(&metrics).expect("metrics file");
+    let header: serde_json::Value =
+        serde_json::from_str(text.lines().next().unwrap()).expect("header JSON");
+    assert_eq!(header["data"]["control"], STRUCTURAL_NULL_PROTOCOL);
+    assert_eq!(diagnose_file(&metrics)["control_label"], "structural null");
+    fs::remove_file(metrics).expect("remove metrics");
+
+    for extra in [["--history", "-"], ["--save-run", "null.sevrun"]] {
+        let refused = Command::new(env!("CARGO_BIN_EXE_native"))
+            .args(["--ticks", "1", "--control", "structural-null"])
+            .args(extra)
+            .output()
+            .expect("run native shell");
+        assert!(!refused.status.success(), "{extra:?} accepted");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("metrics only"),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
     }
 }

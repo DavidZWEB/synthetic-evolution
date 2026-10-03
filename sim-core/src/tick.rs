@@ -28,6 +28,7 @@ use glam::Vec3;
 
 use crate::agents::SpawnSpec;
 use crate::brain;
+use crate::control::{self, BrainInheritance};
 use crate::effectors::{self, AgentIntents};
 use crate::energy;
 use crate::feeding;
@@ -435,7 +436,18 @@ impl World {
             let mut scratch = core::mem::take(&mut self.genome_scratch);
             let genome = self.agents.genome[p];
             scratch.clear();
-            scratch.extend_from_slice(self.genes.get(genome));
+            if self.brain_inheritance == BrainInheritance::StructuralNull {
+                // The donor replaces only the inherited topology; the body stays the
+                // parent's, so ecology and kin placement are unchanged (spec §7.8).
+                let donor = control::pick_donor(&self.pool, parent, &mut self.rng);
+                control::donor_topology(
+                    self.genes.get(genome),
+                    self.genes.get(self.agents.genome[donor.index()]),
+                    &mut scratch,
+                );
+            } else {
+                scratch.extend_from_slice(self.genes.get(genome));
+            }
             self.brain_inheritance.prepare_offspring(
                 &self.plan,
                 &mut scratch,

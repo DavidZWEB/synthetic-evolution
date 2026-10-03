@@ -264,6 +264,15 @@ use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-r
 report. Species history is a separate opt-in stream, described below; it does not add
 records or fields to metrics.
 
+`--control structural-null` replaces the scalar control with the donor-topology
+structural null (spec section 7.8): each control child starts from a random living
+non-parent's neural and sensory structure with its parent's body, then has every
+neural scalar redrawn. The header's `control` field becomes `structural_null_v1`, the
+JSON keys stay `random_control`, and `diagnose` labels the cohort "structural null".
+It writes metrics only; `--history` and `--save-run` are refused because archives and
+saved runs carry the scalar control. Run it as a separate invocation with the same
+seed, params, and founders as the scalar-control run it is compared with.
+
 ### Opt-in neural structural mutation (M2)
 
 All five shipped rates under **`SimParams.mutation.structural` are zero**. Missing

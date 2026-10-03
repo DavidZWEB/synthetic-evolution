@@ -37,6 +37,14 @@ mod species_world_case;
 #[path = "common/birth_case.rs"]
 mod birth_case;
 
+#[path = "common/structural_null_case.rs"]
+mod structural_null_case;
+
+#[test]
+fn structural_null_matches_its_reference() {
+    structural_null_case::check_structural_null_run();
+}
+
 #[test]
 fn birth_identities_match_their_reference_in_both_modes() {
     birth_case::check_birth_identity_runs();

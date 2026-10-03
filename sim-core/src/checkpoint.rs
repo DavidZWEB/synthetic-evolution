@@ -311,6 +311,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
     let brain_inheritance = match c.brain_inheritance {
         0 => BrainInheritance::Evolving,
         1 => BrainInheritance::RandomizedAtBirth,
+        2 => BrainInheritance::StructuralNull,
         _ => return Err(invalid("unknown brain inheritance")),
     };
     // Construction validates params and the core budget, and regenerates the

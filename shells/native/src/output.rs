@@ -8,7 +8,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::Result;
-use crate::cli::RunArgs;
+use crate::cli::{Control, RunArgs};
 
 #[cfg(windows)]
 mod windows;
@@ -17,6 +17,14 @@ pub(crate) type Output = BufWriter<Box<dyn Write>>;
 type FileKey = (u64, u64);
 
 pub(crate) fn validate(args: &RunArgs) -> Result<()> {
+    if args.control == Control::StructuralNull
+        && (args.history.is_some() || args.save_run.is_some())
+    {
+        return Err(conflict(
+            "--control structural-null writes metrics only; history archives and saved runs carry the scalar control",
+        )
+        .into());
+    }
     let metrics = args.metrics.as_deref().map(identity).transpose()?;
     let history = args.history.as_deref().map(identity).transpose()?;
     let params = args.params.as_deref().map(file_identity).transpose()?;

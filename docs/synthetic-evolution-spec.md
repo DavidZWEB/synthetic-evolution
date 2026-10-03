@@ -1181,6 +1181,38 @@ disrupted, the preserved quantities, metabolic and sensory confounds, cohort/see
 matching, measurements, and limits on interpretation. Resetting to founder topology
 or arbitrary rewiring is not assumed to control those confounds.
 
+**DECIDED (M0, implemented in M8): the structural null is donor topology,
+protocol `structural_null_v1`.** It is a third heredity mode run as the paired
+control world, selected natively with `--control structural-null`; the metrics
+header's `control` field names the protocol, and `diagnose` labels the cohort
+"structural null".
+
+- *What it disrupts:* parent-to-child inheritance of neural and sensory structure.
+  Each birth draws a donor uniformly from the living agents other than the parent,
+  in slot order, including agents born earlier that tick. The child starts from the
+  donor's neuron, sensor, effector, and connection genes with the parent's body and
+  meta genes, then receives the same organ and structural edits as every mode and
+  the scalar control's redraw of all neural scalars. With no other living agent the
+  parent is its own donor and no donor draw is made.
+- *What it preserves:* founders and seed/params match the other worlds exactly; the
+  population's distribution of genome sizes, sensor complexity, and therefore
+  metabolic costs and sensory opportunity is carried forward by whichever
+  topologies survive; body, placement near the parent, and energy accounting are
+  unchanged. It does not reset to founder topology or rewire arbitrarily.
+- *Confounds:* donors are themselves selection-filtered survivors, so structure that
+  helps survival can still spread by being copied; the null removes lineage
+  coupling between a body and its ancestors' brains, not selection on topologies.
+  Sensor parameters travel with the donor's sensors.
+- *Matching and measures:* the same seeds and params as the evolving world and the
+  scalar control, at least three seeds per configuration, reporting neurons,
+  connections, sensors, genome sizes, species persistence, population, energy, and
+  behavior metrics with their variance, separately from the scalar control.
+- *Claims it cannot support:* that any specific circuit is adaptive, or that
+  structure is useful when the evolving world merely matches the null. A difference
+  in favor of the evolving world is evidence that parent-inherited structure matters,
+  for a human to weigh. History archives and saved runs carry only the scalar
+  control; the null writes metrics.
+
 Report the structural-null and scalar-heredity comparisons distinctly across
 multiple seeds. Early viability experiments need not wait for the structural-null
 implementation, but useful-structure claims and Phase 2 acceptance do. Missing or

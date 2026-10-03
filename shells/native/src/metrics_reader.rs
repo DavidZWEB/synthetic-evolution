@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
 use sim_core::LayoutEra;
-use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
+use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 use crate::Result;
 use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, WorldMetrics};
@@ -63,12 +63,16 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         format!("unsupported metrics schema {}", next.schema_version),
                     )
                 })?;
-                let (expected_phase, expected_control) = match next.schema_version {
-                    3 => (1, "randomized_at_birth"),
-                    4 => (2, "randomized_at_birth_v2"),
-                    _ => (2, RANDOMIZED_AT_BIRTH_PROTOCOL),
+                let (expected_phase, controls): (_, &[&str]) = match next.schema_version {
+                    3 => (1, &["randomized_at_birth"]),
+                    4 => (2, &["randomized_at_birth_v2"]),
+                    // The structural null first shipped with this schema.
+                    SCHEMA_VERSION => {
+                        (2, &[RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL])
+                    }
+                    _ => (2, &[RANDOMIZED_AT_BIRTH_PROTOCOL]),
                 };
-                if next.phase != expected_phase || next.control != expected_control {
+                if next.phase != expected_phase || !controls.contains(&next.control.as_str()) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
@@ -703,6 +707,14 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_current_structural_null_control() {
+        let mut records = final_records();
+        records[0]["data"]["control"] = STRUCTURAL_NULL_PROTOCOL.into();
+        let null = parse_values(&records).unwrap();
+        assert_eq!(null.header.control, STRUCTURAL_NULL_PROTOCOL);
+    }
+
+    #[test]
     fn reads_current_and_explicit_legacy_protocols_without_inventing_observations() {
         let current = parse_values(&final_records()).unwrap();
         assert_eq!(current.header.control, RANDOMIZED_AT_BIRTH_PROTOCOL);
@@ -792,6 +804,10 @@ mod tests {
             (7, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
             (8, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
             (8, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
+            (8, 1, STRUCTURAL_NULL_PROTOCOL),
+            (8, 2, "structural_null"),
+            (7, 2, STRUCTURAL_NULL_PROTOCOL),
+            (5, 2, STRUCTURAL_NULL_PROTOCOL),
             (9, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
         ] {
             let mut records = final_records();

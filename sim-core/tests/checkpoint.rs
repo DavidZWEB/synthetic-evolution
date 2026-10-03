@@ -45,7 +45,7 @@ fn assert_rich(world: &World) {
 }
 
 #[test]
-fn restored_worlds_continue_exactly_in_both_heredity_modes() {
+fn restored_worlds_continue_exactly_in_every_heredity_mode() {
     for mode in MODES {
         let mut original = churned(mode);
         assert_rich(&original);

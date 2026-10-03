@@ -7,6 +7,7 @@
 use std::io;
 
 use serde::Serialize;
+use sim_core::control::STRUCTURAL_NULL_PROTOCOL;
 use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOperator};
 
 use crate::Result;
@@ -104,6 +105,8 @@ pub struct HistoryReport {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DiagnosisReport {
     pub samples: usize,
+    /// How reports name the paired control world: its heredity protocol's label.
+    pub control_label: &'static str,
     pub evolving: Vec<Finding>,
     pub random_control: Vec<Finding>,
     pub comparison: ComparisonReport,
@@ -116,15 +119,29 @@ pub struct DiagnosisReport {
 #[derive(Clone, Copy)]
 enum Cohort {
     Evolving,
-    Control,
+    /// The paired control world, named by its heredity protocol.
+    Control(&'static str),
 }
 
 impl Cohort {
+    fn control(header: &RunHeader) -> Self {
+        Self::Control(control_label(&header.control))
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Evolving => "evolving",
-            Self::Control => "scalar control",
+            Self::Control(label) => label,
         }
+    }
+}
+
+/// The reader admits only known protocols, so anything else is a scalar control.
+fn control_label(protocol: &str) -> &'static str {
+    if protocol == STRUCTURAL_NULL_PROTOCOL {
+        "structural null"
+    } else {
+        "scalar control"
     }
 }
 
@@ -144,7 +161,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     let comparison = compare_control(header, samples);
     let (evolving, evolving_idle_unavailable) = diagnose_cohort(header, samples, Cohort::Evolving);
     let (random_control, control_idle_unavailable) =
-        diagnose_cohort(header, samples, Cohort::Control);
+        diagnose_cohort(header, samples, Cohort::control(header));
     let mut unavailable = vec![
         "predator/prey diagnostics require Phase 3 trophic roles".to_owned(),
         "signal-correlation diagnostics require Phase 4 signaling".to_owned(),
@@ -155,7 +172,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     if let Some(reason) = control_idle_unavailable {
         unavailable.push(reason);
     }
-    for cohort in [Cohort::Evolving, Cohort::Control] {
+    for cohort in [Cohort::Evolving, Cohort::control(header)] {
         if samples.is_empty()
             || samples
                 .iter()
@@ -239,20 +256,21 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     }
     DiagnosisReport {
         samples: samples.len(),
+        control_label: control_label(&header.control),
         evolving,
         random_control,
         comparison,
         species: SpeciesReport {
             evolving: species_summary(header, samples.last(), Cohort::Evolving),
-            random_control: species_summary(header, samples.last(), Cohort::Control),
+            random_control: species_summary(header, samples.last(), Cohort::control(header)),
         },
         complexity: ComplexityReport {
             evolving: complexity_summary(samples.last(), Cohort::Evolving),
-            random_control: complexity_summary(samples.last(), Cohort::Control),
+            random_control: complexity_summary(samples.last(), Cohort::control(header)),
         },
         history: HistoryReport {
             evolving: history_status(header, samples.last(), Cohort::Evolving),
-            random_control: history_status(header, samples.last(), Cohort::Control),
+            random_control: history_status(header, samples.last(), Cohort::control(header)),
         },
         unavailable,
     }
@@ -790,17 +808,17 @@ fn compare_control(header: &RunHeader, samples: &[RunSample]) -> ComparisonRepor
     };
     let population = compare_metric(
         mean(|m| m.population as f64, Cohort::Evolving),
-        mean(|m| m.population as f64, Cohort::Control),
+        mean(|m| m.population as f64, Cohort::control(header)),
         1.0,
     );
     let mean_agent_energy = compare_metric(
         mean(|m| m.agent_energy.mean, Cohort::Evolving),
-        mean(|m| m.agent_energy.mean, Cohort::Control),
+        mean(|m| m.agent_energy.mean, Cohort::control(header)),
         header.params.reproduction.start_energy as f64 * ENERGY_NOISE_FRACTION,
     );
     let mean_speed = compare_metric(
         mean(|m| m.speed.mean, Cohort::Evolving),
-        mean(|m| m.speed.mean, Cohort::Control),
+        mean(|m| m.speed.mean, Cohort::control(header)),
         header.params.movement.max_speed as f64 * IDLE_SPEED_FRACTION,
     );
     let tail_means = ControlMetrics {
@@ -852,7 +870,7 @@ fn compare_metric(evolving: f64, random_control: f64, noise_floor: f64) -> Metri
 fn select(sample: &RunSample, cohort: Cohort) -> &WorldMetrics {
     match cohort {
         Cohort::Evolving => &sample.evolving,
-        Cohort::Control => &sample.random_control,
+        Cohort::Control(_) => &sample.random_control,
     }
 }
 
@@ -1828,6 +1846,30 @@ mod tests {
         assert!(report.unavailable.iter().any(|reason| {
             reason.contains("history-capture availability for scalar control is unknown")
         }));
+    }
+
+    #[test]
+    fn a_structural_null_control_is_named_as_one() {
+        let samples = vec![sample(0, 100, 4), sample(1_000, 100, 4)];
+        let mut null = header(1_000);
+        null.control = STRUCTURAL_NULL_PROTOCOL.to_owned();
+        let report = diagnose(&null, &samples);
+        assert_eq!(report.control_label, "structural null");
+        assert_eq!(
+            diagnose(&header(1_000), &samples).control_label,
+            "scalar control"
+        );
+        let mut output = Vec::new();
+        crate::diagnose_output::write_human(&mut output, &report).unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("  - structural null: off"), "{output}");
+        assert!(!output.contains("scalar control"), "{output}");
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .all(|reason| !reason.contains("scalar control"))
+        );
     }
 
     #[test]
