@@ -17,12 +17,14 @@ when representative resources are exhausted. Its 0.5 threshold is provisional, n
 a calibrated biological species boundary.
 M5 adds stable individual/parent IDs and opt-in native/browser species-history
 archives with explicit capture gaps. Browser archives are saved locally per run,
-with bounded storage and interoperable JSONL import/export; they do not resume a
-World. M6 adds a live species browser with display-only coloring, population
+with bounded storage, and travel inside saved runs; on their own they do not resume
+a World. M6 adds a live species browser with display-only coloring, population
 highlighting, and genome-size telemetry shared by browser and native metrics.
 Native and browser history can also archive each species' representative genome at
 origin (`--representatives`, or **include representative genomes** in the browser);
-representative comparison and the ancestry graph remain pending. The
+**Save run / Load run** (browser) and `--save-run` / `resume` (native) checkpoint a
+whole world with its history and continue it exactly. Representative comparison and
+the ancestry graph remain pending. The
 [Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control
@@ -57,7 +59,7 @@ cargo run -p native -- diagnose run.jsonl
 ```
 
 In the client, open **history**, enable recording for new/reseeded runs, and reseed.
-Export important histories: browser storage is local and may be cleared or evicted.
+Use **save run** to keep important runs: browser storage is local and may be cleared.
 Open **species** to browse live populations or switch display colors without changing
 organisms' genetic signatures.
 

@@ -681,8 +681,19 @@ Open **history**, enable **record the next new / reseeded run**, then reseed.
 Capture is off by default on page load; enabling it never attaches halfway through
 an existing World. Play/pause/step keep the same archive; each new/reseeded World,
 even with the same seed and parameters, gets a unique run ID. The panel lists local
-archives and supports export, JSONL import, explicit deletion, and stopping capture.
-Selecting/importing history does not construct a World or resume an old one.
+archives and supports explicit deletion and stopping capture.
+
+**Save run / Load run (M7).** **save run** downloads a `.sevrun` bundle: the world's
+checkpoint and its available history (spec section 7.10). While recording, the
+checkpoint is taken at the same boundary as the history snapshot; otherwise the
+world's stopped or incomplete archive is included as far as it reached, followed by
+an explicit `not_recorded` gap. **load run** validates the whole bundle first (a bad
+file leaves the current world and history untouched), keeps its history archives, and
+restores the world paused at its saved tick. Native paired bundles load their evolving
+cohort. Enable recording before loading to capture a resumed (schema 4) segment from
+the load tick. A tab restores saved worlds up to a 256 MiB core budget. The browser
+has no standalone history-file import/export; use `native history` for history-only
+analysis. Shell counters (spawn refusals, edits, species events) count from the load.
 
 **Representative genomes (M6, schema 3).** Also enable **include representative
 genomes** to archive each new species' genome at its origin. It is separate from
@@ -724,10 +735,10 @@ update, the prefix stays open/unfinalized rather than being labeled complete.
 
 Open saved runs are **unfinalized / possibly active**, not assumed crashed: another
 tab may still own one. Reload loads the archive list, not the World. Browser data
-may be cleared or evicted; export important records to files. Deleting an active
+may be cleared or evicted; save important runs to files. Deleting an active
 local capture stops it first. Deleting another tab's archive causes its stale writer
-to fail rather than recreate it. Importing the same file creates a separate local
-archive, preserving its original wire run ID and cohort identities.
+to fail rather than recreate it. Loading the same saved run again creates separate
+local archives, preserving their original wire run IDs and cohort identities.
 
 Browser exports use **schema 2**, readable by `cargo run -p native -- history PATH`.
 The header adds a nonempty opaque `run_id` (at most 128 characters), explicitly lists

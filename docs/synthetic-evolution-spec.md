@@ -1327,8 +1327,22 @@ tick (the first at 0), ends where the next starts or at the save tick, and is ei
 an included archive or explicitly unavailable (`not_recorded`, or `not_retained`
 when capture streamed somewhere the shell cannot read back). Loading validates every
 checkpoint against the manifest (heredity, seed, tick, hash), requires paired cohorts
-to share params, and requires each included archive to belong to the run and its
-cohorts and to end exactly at its segment boundary, so later events cannot leak in.
+to share params, and requires each included archive to belong to the run, cover the
+bundle's cohorts, and end exactly at its segment boundary, so later events cannot leak
+in. A paired archive may accompany one cohort that a browser loaded from a paired run.
+Segment starts are non-decreasing: an archive can end at the tick it began, holding
+only that tick's founder origins, and be followed by a gap from the same tick.
+
+**DECIDED browser Save run / Load run (M7):** Save run takes the checkpoint inside the
+same worker drain that closes a live recording's snapshot boundary, so both describe
+one tick; without a live recording it saves the world's stopped or incomplete archive
+as far as it reached, then an explicit gap. Load run validates the whole bundle
+(framing, every checkpoint through WASM with a 256 MiB core-budget ceiling, and every
+archive) before replacing anything, persists the restored archives, and restores the
+world paused; a paired native run loads its evolving cohort. Recording on a loaded
+world captures a browser-shaped schema 4 segment from the load tick. A save request
+never shares a pending retune boundary, whose checkpoint would carry new params. The
+browser's standalone history-file import/export controls are removed.
 
 A resumed run keeps the restored segments as saved and begins a new segment at its
 resume tick; saving again appends that segment, included when its archive could be

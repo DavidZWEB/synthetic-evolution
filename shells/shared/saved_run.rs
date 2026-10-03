@@ -1,10 +1,14 @@
 //! The portable saved-run bundle shared by the native and browser shells.
 //!
 //! Frames one or two cohorts' core checkpoints and an ordered list of history
-//! segments behind a strict JSON manifest (spec §7.10). It owns framing and manifest
-//! validation only, not I/O, checkpoint restore, or history-archive validation.
+//! segments behind a strict JSON manifest, and restores the cohorts it describes
+//! (spec §7.10). It owns no I/O and does not validate history archives, whose readers
+//! are shell-specific.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use sim_core::checkpoint::{CHECKPOINT_FORMAT, CheckpointLimits};
+use sim_core::control::BrainInheritance;
+use sim_core::world::World;
 
 /// Leading bytes that identify a saved run before any decoding.
 pub const MAGIC: [u8; 8] = *b"SEVRUN\0\0";
@@ -191,10 +195,10 @@ impl Manifest {
         let mut previous = 0;
         for (index, segment) in self.history.iter().enumerate() {
             let start = segment.starts_at();
-            if (index > 0 && start <= previous) || start > self.tick.0 {
-                return Err(
-                    "history segments must start in increasing order by the save tick".into(),
-                );
+            // Equal starts are allowed: an archive can end where it began, holding only
+            // that tick's seeding events, and be followed by a gap from the same tick.
+            if (index > 0 && start < previous) || start > self.tick.0 {
+                return Err("history segments must start in order by the save tick".into());
             }
             if matches!(segment, Segment::Included { bytes, .. } if bytes.0 == 0) {
                 return Err("an included history segment must be nonempty".into());
@@ -302,4 +306,54 @@ pub fn decode(bytes: &[u8], max_bytes: usize) -> Result<SavedRun<'_>, String> {
         checkpoints,
         history,
     })
+}
+
+fn heredity(cohort: Cohort) -> BrainInheritance {
+    match cohort {
+        Cohort::Evolving => BrainInheritance::Evolving,
+        Cohort::RandomControl => BrainInheritance::RandomizedAtBirth,
+    }
+}
+
+/// Restores every cohort and checks it against the manifest's heredity, seed, tick,
+/// and hash. Paired cohorts must share params: a control is only a control under the
+/// same conditions. `max_core_bytes` is the host's ceiling on a saved world's budget.
+pub fn restore_cohorts(
+    run: &SavedRun<'_>,
+    max_bytes: usize,
+    max_core_bytes: u64,
+) -> Result<Vec<(Cohort, World)>, String> {
+    let manifest = &run.manifest;
+    if manifest.checkpoint_format != CHECKPOINT_FORMAT {
+        return Err(format!(
+            "saved run uses checkpoint format {}, this build reads {CHECKPOINT_FORMAT}",
+            manifest.checkpoint_format
+        ));
+    }
+    let limits = CheckpointLimits {
+        max_bytes,
+        max_core_bytes,
+    };
+    let mut worlds = Vec::with_capacity(manifest.cohorts.len());
+    for (entry, checkpoint) in manifest.cohorts.iter().zip(&run.checkpoints) {
+        let world = World::from_checkpoint(checkpoint, limits)
+            .map_err(|error| format!("{:?} checkpoint: {error}", entry.cohort))?;
+        if world.brain_inheritance() != heredity(entry.cohort)
+            || world.seed() != manifest.provenance.seed.0
+            || world.tick_count() != manifest.tick.0
+            || format!("{:016x}", world.state_hash()) != entry.state_hash
+        {
+            return Err(format!(
+                "{:?} checkpoint does not match the manifest's heredity, seed, tick, or hash",
+                entry.cohort
+            ));
+        }
+        worlds.push((entry.cohort, world));
+    }
+    if let [(_, evolving), (_, control)] = worlds.as_slice()
+        && evolving.params() != control.params()
+    {
+        return Err("paired cohorts were saved with different params".into());
+    }
+    Ok(worlds)
 }

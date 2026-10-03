@@ -23,6 +23,7 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
+use sim_core::checkpoint::{CHECKPOINT_FORMAT, CheckpointLimits};
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
 use sim_core::ids::{AgentId, BirthId};
@@ -42,6 +43,10 @@ mod complexity;
 mod history;
 #[path = "../../shared/history_event_wire.rs"]
 mod history_event_wire;
+// Native assembles manifests with `Manifest::new`; the browser builds them in JS.
+#[allow(dead_code)]
+#[path = "../../shared/saved_run.rs"]
+mod saved_run;
 
 use cohort_capture::CohortCapture;
 
@@ -74,6 +79,76 @@ fn parse_params(params_json: Option<&str>) -> Result<SimParams, JsError> {
 pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     let params = parse_params(params_json.as_deref())?;
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
+}
+
+/// The core checkpoint format this build reads and writes.
+#[wasm_bindgen]
+pub fn checkpoint_format() -> u32 {
+    CHECKPOINT_FORMAT
+}
+
+#[derive(Serialize)]
+struct DecodedSavedRun {
+    manifest: saved_run::Manifest,
+    /// `[offset, length]` of each cohort checkpoint within the bundle bytes.
+    checkpoints: Vec<[usize; 2]>,
+    /// `[offset, length]` of each included archive, or `null` per unavailable segment.
+    history: Vec<Option<[usize; 2]>>,
+}
+
+/// Validates a saved run's framing, manifest, and every cohort checkpoint, then
+/// returns the manifest with section offsets. History archives are validated by
+/// the caller's archive reader. The restored worlds are dropped.
+#[wasm_bindgen]
+pub fn decode_saved_run(
+    bytes: &[u8],
+    max_bytes: usize,
+    max_core_bytes: u64,
+) -> Result<String, JsError> {
+    let run = saved_run::decode(bytes, max_bytes).map_err(|e| js_error("saved run", e))?;
+    saved_run::restore_cohorts(&run, bytes.len(), max_core_bytes)
+        .map_err(|e| js_error("saved run", e))?;
+    let base = bytes.as_ptr() as usize;
+    let span = |section: &[u8]| [section.as_ptr() as usize - base, section.len()];
+    let decoded = DecodedSavedRun {
+        checkpoints: run.checkpoints.iter().map(|s| span(s)).collect(),
+        history: run.history.iter().map(|s| s.map(span)).collect(),
+        manifest: run.manifest,
+    };
+    serde_json::to_string(&decoded).map_err(|e| js_error("saved run", e))
+}
+
+/// Frames a saved run from a manifest and its sections concatenated in order:
+/// each cohort checkpoint, then each included history archive.
+#[wasm_bindgen]
+pub fn encode_saved_run(manifest_json: &str, sections: &[u8]) -> Result<Vec<u8>, JsError> {
+    let manifest: saved_run::Manifest =
+        serde_json::from_str(manifest_json).map_err(|e| js_error("saved-run manifest", e))?;
+    let lengths: Vec<usize> = manifest
+        .cohorts
+        .iter()
+        .map(|c| c.bytes.0 as usize)
+        .chain(manifest.history.iter().filter_map(|s| match s {
+            saved_run::Segment::Included { bytes, .. } => Some(bytes.0 as usize),
+            saved_run::Segment::Unavailable { .. } => None,
+        }))
+        .collect();
+    if lengths.iter().sum::<usize>() != sections.len() {
+        return Err(js_error(
+            "saved run",
+            "sections do not match the manifest lengths",
+        ));
+    }
+    let mut rest = sections;
+    let parts: Vec<&[u8]> = lengths
+        .iter()
+        .map(|&len| {
+            let (part, tail) = rest.split_at(len);
+            rest = tail;
+            part
+        })
+        .collect();
+    saved_run::encode(&manifest, &parts).map_err(|e| js_error("saved run", e))
 }
 
 /// Builds the scalar-inheritance control (spec §7.8). Topology and sensors are inherited
@@ -219,8 +294,14 @@ impl Sim {
         let params = parse_params(params_json)?;
         let world = World::new_with_brain_inheritance(seed, params, brain_inheritance)
             .map_err(|e| js_error("world construction", e))?;
+        Ok(Self::from_world(world))
+    }
+
+    /// Shell counters are observations of this `Sim`, so a restored world counts
+    /// spawn refusals, edits, and species events from its load onward.
+    fn from_world(world: World) -> Self {
         let snapshot = Snapshot::for_world(&world);
-        Ok(Self {
+        Self {
             world,
             snapshot,
             spawn_failures: SpawnFailureCounts::default(),
@@ -228,7 +309,7 @@ impl Sim {
             species_events: SpeciesEventCounts::default(),
             history: None,
             history_enable_closed: false,
-        })
+        }
     }
 }
 
@@ -243,6 +324,42 @@ impl Sim {
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
         Self::with_brain_inheritance(seed, params_json.as_deref(), BrainInheritance::Evolving)
+    }
+
+    /// Restores an untrusted checkpoint, paused at its saved tick (spec §7.10).
+    ///
+    /// `max_core_bytes` is this host's ceiling on the saved world's core budget. The
+    /// founders are already placed, so callers must not seed this world again.
+    pub fn restore(checkpoint: &[u8], max_core_bytes: u64) -> Result<Sim, JsError> {
+        let limits = CheckpointLimits {
+            max_bytes: checkpoint.len(),
+            max_core_bytes,
+        };
+        let world =
+            World::from_checkpoint(checkpoint, limits).map_err(|e| js_error("checkpoint", e))?;
+        let mut sim = Self::from_world(world);
+        sim.refresh();
+        Ok(sim)
+    }
+
+    /// Encodes this world at its current between-ticks boundary, without advancing it.
+    /// Allocates at the shell boundary and may detach snapshot views (§7.3).
+    pub fn checkpoint(&self) -> Vec<u8> {
+        self.world.checkpoint()
+    }
+
+    /// The seed this world was constructed from, including after a restore.
+    pub fn seed(&self) -> u64 {
+        self.world.seed()
+    }
+
+    /// The browser mode identifier for this world's heredity.
+    pub fn heredity(&self) -> String {
+        match self.world.brain_inheritance() {
+            BrainInheritance::Evolving => "evolving",
+            BrainInheritance::RandomizedAtBirth => "randomized_at_birth",
+        }
+        .to_owned()
     }
 
     /// Seeds generation 0, reporting how many fit the pool and shared arenas.

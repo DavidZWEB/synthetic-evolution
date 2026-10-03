@@ -17,6 +17,7 @@
  */
 
 import init, { Sim, random_control, validate_params, version } from '../wasm/wasm.js';
+import { MAX_CORE_BYTES } from '../saved-run/saved-run.js';
 import { createHeader, REPRESENTATIVE_GENES } from '../history/archive.js';
 import { createHistoryDelivery } from '../history/delivery.js';
 import {
@@ -120,18 +121,24 @@ const scheduler = createTickScheduler({
 });
 
 const handlers = {
+  /**
+   * Builds a seeded world, or restores a validated checkpoint paused at its saved tick.
+   * A restored world is never reseeded; its capture is a segment resuming there.
+   */
   async create({
     seed, params, founders, brainInheritance, historyRunId, historyRepresentatives = false,
+    checkpoint = null,
   }) {
     const wasm = await init();
     memory = wasm.memory;
 
-    const normalizedSeed = parseSeed(seed);
-    const normalizedInheritance = parseBrainInheritance(brainInheritance);
-    const nextSim =
-      normalizedInheritance === RANDOMIZED_AT_BIRTH
-        ? random_control(normalizedSeed, params ?? null)
-        : new Sim(normalizedSeed, params ?? null);
+    const nextSim = checkpoint
+      ? Sim.restore(checkpoint, MAX_CORE_BYTES)
+      : parseBrainInheritance(brainInheritance) === RANDOMIZED_AT_BIRTH
+        ? random_control(parseSeed(seed), params ?? null)
+        : new Sim(parseSeed(seed), params ?? null);
+    const normalizedSeed = checkpoint ? nextSim.seed() : parseSeed(seed);
+    const normalizedInheritance = checkpoint ? nextSim.heredity() : parseBrainInheritance(brainInheritance);
     let hints;
     let normalizedFounders;
     let historyHeader = null;
@@ -151,13 +158,14 @@ const handlers = {
             simVersion: version(),
             sourceRevision: __SOURCE_REVISION__,
             representatives: historyRepresentatives,
+            resumedFromTick: checkpoint ? nextSim.tick().toString() : null,
           });
         } catch (error) {
           nextSim.disable_history();
           historyFailure = String(error);
         }
       }
-      nextSim.seed_founders(normalizedFounders);
+      if (!checkpoint) nextSim.seed_founders(normalizedFounders);
     } catch (error) {
       nextSim.free();
       throw error;
@@ -200,6 +208,7 @@ const handlers = {
         founders: normalizedFounders,
         params: sim.params_json(),
         brainInheritance: normalizedInheritance,
+        tick: sim.tick().toString(),
       },
     });
     sendPublication = (message, transfer) => postMessage(message, transfer);
@@ -265,11 +274,24 @@ const handlers = {
     historyDelivery?.acknowledge(batchId, error);
   },
 
-  historyBoundary({ captureEnd, requestId }) {
-    if (!['snapshot', 'stopped', 'reseeded'].includes(captureEnd)) {
+  historyBoundary({ captureEnd, requestId, checkpoint = false }) {
+    if (!['snapshot', 'stopped', 'reseeded'].includes(captureEnd) || (checkpoint && captureEnd !== 'snapshot')) {
       throw new Error('invalid history boundary');
     }
-    historyDelivery?.boundary(captureEnd, requestId);
+    historyDelivery?.boundary(captureEnd, requestId, undefined, checkpoint);
+  },
+
+  /** A checkpoint at the current boundary, for saving a world that is not recording. */
+  checkpoint({ requestId }) {
+    try {
+      const bytes = sim.checkpoint();
+      postMessage({
+        kind: 'checkpoint', requestId, checkpoint: bytes, tick: sim.tick().toString(),
+        stateHash: sim.state_hash().toString(16).padStart(16, '0'),
+      }, [bytes.buffer]);
+    } catch (error) {
+      postMessage({ kind: 'checkpoint', requestId, checkpoint: null, message: String(error) });
+    }
   },
 
   historyStop({ message }) {

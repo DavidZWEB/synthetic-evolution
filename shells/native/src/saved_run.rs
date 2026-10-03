@@ -8,8 +8,7 @@ use std::fs;
 use std::io::{self, Cursor, Write};
 use std::path::Path;
 
-use sim_core::checkpoint::{CHECKPOINT_FORMAT, CheckpointLimits};
-use sim_core::control::BrainInheritance;
+use sim_core::checkpoint::CHECKPOINT_FORMAT;
 use sim_core::world::World;
 
 use crate::Result;
@@ -36,13 +35,6 @@ pub(crate) fn writer() -> Writer {
     Writer {
         sim_version: env!("CARGO_PKG_VERSION").to_owned(),
         source_revision: env!("SYNTHETIC_EVOLUTION_REVISION").to_owned(),
-    }
-}
-
-fn heredity(cohort: Cohort) -> BrainInheritance {
-    match cohort {
-        Cohort::Evolving => BrainInheritance::Evolving,
-        Cohort::RandomControl => BrainInheritance::RandomizedAtBirth,
     }
 }
 
@@ -88,41 +80,8 @@ pub(crate) fn assemble(
 /// Decodes and validates a bundle completely before anything uses it.
 pub(crate) fn load(bytes: &[u8], max_core_bytes: u64) -> Result<Loaded> {
     let run = format::decode(bytes, bytes.len()).map_err(invalid)?;
+    let worlds = format::restore_cohorts(&run, bytes.len(), max_core_bytes).map_err(invalid)?;
     let manifest = run.manifest;
-    if manifest.checkpoint_format != CHECKPOINT_FORMAT {
-        return Err(invalid(format!(
-            "saved run uses checkpoint format {}, this build reads {CHECKPOINT_FORMAT}",
-            manifest.checkpoint_format
-        ))
-        .into());
-    }
-    let limits = CheckpointLimits {
-        max_bytes: bytes.len(),
-        max_core_bytes,
-    };
-    let mut worlds = Vec::with_capacity(manifest.cohorts.len());
-    for (entry, checkpoint) in manifest.cohorts.iter().zip(&run.checkpoints) {
-        let world = World::from_checkpoint(checkpoint, limits)
-            .map_err(|error| invalid(format!("{:?} checkpoint: {error}", entry.cohort)))?;
-        if world.brain_inheritance() != heredity(entry.cohort)
-            || world.seed() != manifest.provenance.seed.0
-            || world.tick_count() != manifest.tick.0
-            || format!("{:016x}", world.state_hash()) != entry.state_hash
-        {
-            return Err(invalid(format!(
-                "{:?} checkpoint does not match the manifest's heredity, seed, tick, or hash",
-                entry.cohort
-            ))
-            .into());
-        }
-        worlds.push((entry.cohort, world));
-    }
-    // A paired experiment's control is only a control under identical conditions.
-    if let [(_, evolving), (_, control)] = worlds.as_slice()
-        && evolving.params() != control.params()
-    {
-        return Err(invalid("paired cohorts were saved with different params").into());
-    }
 
     let mut history = Vec::with_capacity(manifest.history.len());
     for (index, (segment, archive)) in manifest.history.iter().zip(&run.history).enumerate() {
@@ -144,11 +103,12 @@ pub(crate) fn load(bytes: &[u8], max_core_bytes: u64) -> Result<Loaded> {
                 crate::history_wire::Cohort::RandomControl => Cohort::RandomControl,
             })
             .collect();
-        let expected: Vec<Cohort> = manifest.cohorts.iter().map(|c| c.cohort).collect();
+        // A paired archive may accompany one cohort that a browser loaded from it.
+        let covered = manifest.cohorts.iter().all(|c| cohorts.contains(&c.cohort));
         // Never later events: each segment ends exactly where the next one begins.
         if summary.provenance.seed.0 != manifest.provenance.seed.0
             || summary.ticks.0 != end
-            || cohorts != expected
+            || !covered
             // The first segment starts the run; later ones resume from their boundary.
             || header.resumed_from_tick.map(|tick| tick.0)
                 != (segment.starts_at() != 0).then_some(segment.starts_at())

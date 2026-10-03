@@ -7,7 +7,6 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { writeRunUrl } from '../src/sim/seed-url.js';
 import { encodeArchive, parseArchive } from '../src/history/archive.js';
-import { fixtureArchive } from '../src/history/fixtures.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const params = {
@@ -52,39 +51,96 @@ async function openCapture(page) {
   return panel;
 }
 
-async function download(page, button) {
+async function downloadBytes(page, button) {
   const downloading = page.waitForEvent('download');
   await button.click();
   const file = await downloading;
-  return readFile(await file.path(), 'utf8');
+  return readFile(await file.path());
 }
 
-test('history file import rejects malformed UTF-8 and a leading BOM without normalizing bytes', async () => {
-  const archive = fixtureArchive();
-  archive.header.data.provenance.source_revision = 'revision~';
-  archive.completion.data.provenance.source_revision = 'revision~';
-  const valid = Buffer.from(encodeArchive(archive));
-  const malformed = Buffer.from(valid);
-  for (let i = 0; i < malformed.length; i++) {
-    if (malformed[i] === 0x7e) malformed[i] = 0xff;
-  }
+/** Test-only reader of the saved-run container (spec §7.10); the app uses WASM. */
+function decodeBundle(buffer) {
+  assert.equal(buffer.subarray(0, 8).toString('latin1'), 'SEVRUN\0\0');
+  const length = buffer.readUInt32LE(12);
+  const manifest = JSON.parse(buffer.subarray(16, 16 + length).toString('utf8'));
+  let offset = 16 + length;
+  const take = (bytes) => buffer.subarray(offset, (offset += Number(bytes)));
+  const checkpoints = manifest.cohorts.map((cohort) => take(cohort.bytes));
+  const history = manifest.history.map((segment) =>
+    (segment.status === 'included' ? take(segment.bytes).toString('utf8') : null));
+  assert.equal(offset, buffer.length);
+  return { manifest, checkpoints, history };
+}
+
+/** Rebuilds a bundle after a test edits its manifest or archives. */
+function encodeBundle({ manifest, checkpoints, history }) {
+  const archives = history.filter((text) => text !== null).map((text) => Buffer.from(text));
+  let included = 0;
+  const next = {
+    ...manifest,
+    history: manifest.history.map((segment) => (segment.status === 'included'
+      ? { ...segment, bytes: String(archives[included++].length) } : segment)),
+  };
+  const json = Buffer.from(JSON.stringify(next));
+  const head = Buffer.alloc(16);
+  Buffer.from('SEVRUN\0\0', 'latin1').copy(head);
+  head.writeUInt32LE(1, 8);
+  head.writeUInt32LE(json.length, 12);
+  return Buffer.concat([head, json, ...checkpoints, ...archives]);
+}
+
+async function saveRun(page, panel) {
+  const bytes = await downloadBytes(page, panel.getByRole('button', { name: 'save run', exact: true }));
+  return { bytes, ...decodeBundle(bytes) };
+}
+
+async function loadRun(panel, buffer) {
+  // The input is disabled while history is busy; Playwright would set it anyway.
+  await panel.locator('input[type=file]:not([disabled])').waitFor({ state: 'attached' });
+  await panel.locator('input[type=file]').setInputFiles({
+    name: 'run.sevrun', mimeType: 'application/octet-stream', buffer,
+  });
+}
+
+function headerTick(page) {
+  return page.locator('header').first().locator('dt').evaluateAll((nodes) =>
+    nodes.find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent);
+}
+
+function waitForTick(page, tick) {
+  return page.waitForFunction((expected) => [...document.querySelectorAll('header dt')]
+    .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === expected, String(tick));
+}
+
+async function stepTo(page, tick) {
+  await page.getByRole('button', { name: 'step', exact: true }).click();
+  await waitForTick(page, tick);
+}
+
+test('load run refuses malformed bundles without replacing the world or its history', async () => {
   await withPage('development', async (page) => {
-    await page.getByRole('button', { name: 'history', exact: true }).click();
-    const panel = page.getByRole('region', { name: 'Species history' });
-    for (const bytes of [malformed, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), valid])]) {
-      await panel.locator('input[type=file]').setInputFiles({
-        name: 'invalid.jsonl', mimeType: 'application/x-ndjson', buffer: bytes,
+    const panel = await openCapture(page);
+    await stepTo(page, 1);
+    const saved = await saveRun(page, panel);
+    const archives = await panel.getByRole('listitem').count();
+    const badUtf8 = { ...saved, history: [...saved.history] };
+    const corrupt = Buffer.from(encodeBundle(badUtf8));
+    corrupt[corrupt.length - 2] = 0xff;
+    const wrongSeed = { ...saved, manifest: { ...saved.manifest, provenance: { ...saved.manifest.provenance, seed: '43' } } };
+    for (const [name, buffer] of [
+      ['random bytes', Buffer.from('not a saved run at all')],
+      ['truncated', saved.bytes.subarray(0, saved.bytes.length - 3)],
+      ['invalid UTF-8 history', corrupt],
+      ['checkpoint from another seed', encodeBundle(wrongSeed)],
+    ]) {
+      await loadRun(panel, buffer);
+      await page.waitForFunction(() => {
+        const text = document.querySelector('.history-panel [role=status]')?.textContent ?? '';
+        return text !== '' && !text.startsWith('Saved') && !text.startsWith('Loaded');
       });
-      await panel.getByRole('status').waitFor();
-      assert.equal(await panel.getByRole('listitem').count(), 0, 'invalid bytes became a saved archive');
-      assert.doesNotMatch(await panel.getByRole('status').innerText(), /History imported/);
+      assert.equal(await headerTick(page), '1', `${name} replaced the world`);
+      assert.equal(await panel.getByRole('listitem').count(), archives, `${name} changed history`);
     }
-    const replacementCharacter = Buffer.from(valid.toString('utf8').replaceAll('revision~', 'revision\uFFFD'));
-    await panel.locator('input[type=file]').setInputFiles({
-      name: 'valid.jsonl', mimeType: 'application/x-ndjson', buffer: replacementCharacter,
-    });
-    await panel.getByText('History imported. No simulation was started or resumed.').waitFor();
-    assert.equal(await panel.getByRole('listitem').count(), 1);
   });
 });
 
@@ -95,10 +151,8 @@ test('archive action accessible names identify distinct archives even for the sa
     await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
     for (const row of await panel.getByRole('listitem').all()) {
       const id = await row.locator('.identity').getAttribute('title');
-      const visibleExport = await row.locator('.actions button').first().innerText();
-      assert.equal(await row.getByRole('button', {
-        name: `${visibleExport} for archive ${id} (seed 42)`, exact: true,
-      }).count(), 1);
+      assert.equal(await row.getByRole('button', { name: /^export/ }).count(), 0,
+        'history files are not exported from the browser');
       assert.equal(await row.getByRole('button', {
         name: `delete archive ${id} (seed 42)`, exact: true,
       }).count(), 1);
@@ -153,7 +207,7 @@ for (const failureKind of ['worker', 'renderer']) {
   });
 }
 
-test('representative genomes are opt-in, archived at origin, and re-import with WASM validation',
+test('representative genomes are opt-in, archived at origin, and reload with WASM validation',
   { timeout: 60_000 }, async () => {
     await withPage('development', async (page) => {
       await page.getByRole('button', { name: 'history', exact: true }).click();
@@ -164,11 +218,9 @@ test('representative genomes are opt-in, archived at origin, and re-import with 
       await include.check();
       await page.getByRole('button', { name: 'reseed', exact: true }).click();
       await panel.getByText('recording in this tab', { exact: true }).waitFor();
-      await page.getByRole('button', { name: 'step', exact: true }).click();
-      await page.waitForFunction(() => [...document.querySelectorAll('header dt')]
-        .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === '1');
-      const text = await download(page, panel.getByRole('button', { name: 'export snapshot' }));
-      const snapshot = await parseArchive(text);
+      await stepTo(page, 1);
+      const saved = await saveRun(page, panel);
+      const snapshot = await parseArchive(saved.history[0]);
       assert.equal(snapshot.header.data.schema_version, 3);
       assert.equal(snapshot.header.data.representative_genes, 65_536);
       const origins = snapshot.rows.filter((row) => row.data.event?.kind === 'species_origin');
@@ -181,21 +233,15 @@ test('representative genomes are opt-in, archived at origin, and re-import with 
       assert.equal(counts.representatives, String(origins.length));
       assert.equal(counts.unavailable_representatives, '0');
 
-      await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
-      await panel.getByText('stopped', { exact: true }).last().waitFor();
-      await panel.locator('input[type=file]').setInputFiles({
-        name: 'representatives.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(text),
-      });
-      await panel.getByText('History imported. No simulation was started or resumed.').waitFor();
-
-      const tampered = await parseArchive(text);
+      const tampered = await parseArchive(saved.history[0]);
       const genes = tampered.rows.find((row) => row.data.representative?.genes).data.representative.genes;
       [genes[0], genes[1]] = [genes[1], genes[0]];
-      await panel.locator('input[type=file]').setInputFiles({
-        name: 'unsorted.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(encodeArchive(tampered)),
-      });
+      await loadRun(panel, encodeBundle({ ...saved, history: [encodeArchive(tampered)] }));
       await page.waitForFunction(() => /representative/.test(
         document.querySelector('.history-panel [role=status]')?.textContent ?? ''));
+
+      await loadRun(panel, saved.bytes);
+      await panel.getByText('Loaded saved run at tick 1, paused.').waitFor();
       for (const width of [390, 320]) {
         await page.setViewportSize({ width, height: 844 });
         assert.equal(await panel.evaluate((node) => node.scrollWidth > node.clientWidth), false);
@@ -204,53 +250,62 @@ test('representative genomes are opt-in, archived at origin, and re-import with 
   });
 
 for (const mode of ['development', 'transferable']) {
-  test(`saved histories are per-run, round-trip prefixes, and never resume Worlds (${mode})`,
-    { timeout: 60_000 }, async () => {
+  test(`saved runs restore the world paused with its history and record a resumed segment (${mode})`,
+    { timeout: 90_000 }, async () => {
       await withPage(mode, async (page) => {
         assert.equal(await page.evaluate(() => crossOriginIsolated), mode !== 'transferable');
         let panel = await openCapture(page);
-        await page.getByRole('button', { name: 'step', exact: true }).click();
-        await page.waitForFunction(() => [...document.querySelectorAll('header dt')]
-          .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === '1');
-        const text = await download(page, panel.getByRole('button', { name: 'export snapshot' }));
-        const snapshot = await parseArchive(text);
-        assert.equal(snapshot.header.data.provenance.seed, '42');
-        assert.match(snapshot.header.data.provenance.source_revision, /-development$/);
-        assert.deepEqual(snapshot.header.data.cohorts, ['evolving']);
+        await stepTo(page, 1);
+        const saved = await saveRun(page, panel);
+        assert.equal(saved.manifest.tick, '1');
+        assert.deepEqual(saved.manifest.cohorts.map((c) => c.cohort), ['evolving']);
+        assert.equal(saved.manifest.provenance.seed, '42');
+        assert.match(saved.manifest.provenance.source_revision, /-development$/);
+        const snapshot = await parseArchive(saved.history[0]);
         assert.equal(snapshot.completion.data.capture_end, 'snapshot');
         assert.equal(snapshot.completion.data.ticks, '1');
-        assert.match(snapshot.completion.data.cohorts[0].final_state_hash, /^[0-9a-f]{16}$/);
+        assert.equal(snapshot.completion.data.cohorts[0].final_state_hash, saved.manifest.cohorts[0].state_hash,
+          'checkpoint and history describe the same boundary');
 
         await page.getByRole('button', { name: 'reseed', exact: true }).click();
         await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
-        await panel.getByRole('list').getByText('reseeded', { exact: true }).waitFor();
-        const archiveIds = await panel.locator('.identity').allTextContents();
-        assert.equal(new Set(archiveIds).size, 2);
         await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
         await panel.getByText('stopped', { exact: true }).last().waitFor();
 
         await page.reload();
         await page.getByRole('button', { name: 'history', exact: true }).click();
         panel = page.getByRole('region', { name: 'Species history' });
-        assert.equal(await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).isChecked(), false);
         await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
-        await panel.locator('input[type=file]').setInputFiles({
-          name: 'snapshot.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(text),
-        });
-        await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 3);
-        await panel.getByText('History imported. No simulation was started or resumed.').waitFor();
-        const tick = await page.locator('header').first().locator('dt').evaluateAll((nodes) =>
-          nodes.find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent);
-        assert.equal(tick, '0');
+        await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
+        await loadRun(panel, saved.bytes);
+        await panel.getByText('Loaded saved run at tick 1, paused.').waitFor();
+        await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length >= 3);
+        await waitForTick(page, 1);
+        assert.equal(await page.getByRole('button', { name: 'play', exact: true }).count(), 1, 'restored paused');
+
+        const resaved = await saveRun(page, panel);
+        assert.equal(resaved.manifest.cohorts[0].state_hash, saved.manifest.cohorts[0].state_hash,
+          'the restored world is the saved world');
+        assert.deepEqual(resaved.manifest.provenance, saved.manifest.provenance);
+        assert.deepEqual(resaved.history, [saved.history[0], resaved.history[1]]);
+        assert.equal(resaved.manifest.history[1]?.starts_at, '1');
+
+        await stepTo(page, 2);
+        const continued = await saveRun(page, panel);
+        assert.equal(continued.manifest.tick, '2');
+        assert.equal(continued.history[0], saved.history[0], 'restored prefix kept as saved');
+        const segment = await parseArchive(continued.history[1]);
+        assert.equal(segment.header.data.schema_version, 4, 'a resumed segment');
+        assert.equal(segment.header.data.resumed_from_tick, '1');
+        assert.equal(segment.completion.data.ticks, '2');
+
         for (const width of [390, 320]) {
           await page.setViewportSize({ width, height: 844 });
           assert.equal(await page.evaluate(() =>
             document.documentElement.scrollWidth > innerWidth), false);
           assert.equal(await panel.evaluate((node) => node.scrollWidth > node.clientWidth), false);
         }
-
         await panel.getByRole('button', { name: /^delete archive / }).first().click();
-        await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
       });
     });
 
@@ -367,12 +422,10 @@ for (const mode of ['development', 'transferable']) {
     });
 }
 
-test('quota errors leave an exportable incomplete prefix while the World keeps stepping',
+test('quota errors keep the incomplete prefix in a saved run while the World keeps stepping',
   { timeout: 60_000 }, async () => {
     await withPage('development', async (page) => {
       const panel = await openCapture(page);
-      const snapshot = await download(page, panel.getByRole('button', { name: 'export snapshot' }));
-      const before = await parseArchive(snapshot);
       await page.evaluate(() => {
         const put = IDBObjectStore.prototype.put;
         globalThis.restoreHistoryWrites = () => { IDBObjectStore.prototype.put = put; };
@@ -382,29 +435,31 @@ test('quota errors leave an exportable incomplete prefix while the World keeps s
       });
       await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
       await page.getByText('history incomplete', { exact: true }).waitFor();
-      await page.getByRole('button', { name: 'step', exact: true }).click();
-      await page.waitForFunction(() => [...document.querySelectorAll('header dt')]
-        .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === '1');
+      await stepTo(page, 1);
       await page.evaluate(() => globalThis.restoreHistoryWrites());
-      const exported = await download(page, panel.getByRole('button', { name: /^export for archive / }));
-      const after = await parseArchive(exported);
-      assert.equal(after.completion.data.capture_end, 'unfinalized');
-      assert.equal(after.completion.data.cohorts[0].history_complete, false);
-      assert.equal(after.completion.data.ticks, before.completion.data.ticks);
-      assert.deepEqual(after.rows, before.rows);
+      const saved = await saveRun(page, panel);
+      assert.deepEqual(saved.manifest.history.map((s) => s.status), ['included', 'unavailable']);
+      assert.equal(saved.manifest.history[1].reason, 'not_recorded');
+      const prefix = await parseArchive(saved.history[0]);
+      assert.equal(prefix.completion.data.capture_end, 'unfinalized');
+      assert.equal(prefix.completion.data.cohorts[0].history_complete, false);
+      assert.equal(prefix.completion.data.ticks, saved.manifest.history[1].starts_at);
+      assert.ok(prefix.rows.length > 0, 'the committed founder origins are kept');
     });
   });
 
-test('reseed waits for an in-progress snapshot before finalizing the old capture',
+test('reseed waits for an in-progress save before finalizing the old capture',
   { timeout: 60_000 }, async () => {
     await withPage('development', async (page) => {
       const panel = await openCapture(page);
       const downloaded = page.waitForEvent('download');
-      await panel.getByRole('button', { name: 'export snapshot' }).click();
+      await panel.getByRole('button', { name: 'save run', exact: true }).click();
       await page.getByRole('button', { name: 'reseed', exact: true }).click();
       const file = await downloaded;
-      const snapshot = await parseArchive(await readFile(await file.path(), 'utf8'));
+      const saved = decodeBundle(await readFile(await file.path()));
+      const snapshot = await parseArchive(saved.history[0]);
       assert.equal(snapshot.completion.data.capture_end, 'snapshot');
+      assert.equal(snapshot.completion.data.cohorts[0].final_state_hash, saved.manifest.cohorts[0].state_hash);
       await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
       await panel.getByRole('list').getByText('reseeded', { exact: true }).waitFor();
       await panel.getByText('recording in this tab', { exact: true }).waitFor();
@@ -426,6 +481,24 @@ test('reseed waits for an in-progress snapshot before finalizing the old capture
       }),
     });
   });
+
+test('a native paired saved run loads its evolving cohort in the browser and continues', { timeout: 60_000 }, async () => {
+  const native = await readFile(new URL('../../shells/native/tests/fixtures/saved-run-native.sevrun', import.meta.url));
+  const original = decodeBundle(native);
+  await withPage('development', async (page) => {
+    await page.getByRole('button', { name: 'history', exact: true }).click();
+    const panel = page.getByRole('region', { name: 'Species history' });
+    await loadRun(panel, native);
+    await panel.getByText('Loaded saved run at tick 60, paused.').waitFor();
+    await waitForTick(page, 60);
+    const resaved = await saveRun(page, panel);
+    assert.deepEqual(resaved.manifest.cohorts.map((c) => c.cohort), ['evolving']);
+    assert.equal(resaved.manifest.cohorts[0].state_hash, original.manifest.cohorts[0].state_hash);
+    assert.deepEqual(resaved.manifest.provenance, original.manifest.provenance);
+    assert.equal(resaved.history[0], original.history[0], 'the paired archive is kept');
+    await stepTo(page, 61);
+  });
+});
 
 test('a real retune footer survives reseed while its IndexedDB append is delayed',
   { timeout: 60_000 }, async () => {
