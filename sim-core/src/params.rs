@@ -274,8 +274,8 @@ pub struct SensingParams {
     /// Default 0 since Phase 2 M8 (was 3): the shipped founder is the minimal
     /// chemo-led one. It was the most viable founder measured (2.2x the dense
     /// founder's final population over 3 seeds x 200k ticks) and a human approved
-    /// it after watching (`docs/phase-2-m8-evidence.md`). Vision remains reachable
-    /// through sensor addition.
+    /// it (`docs/phase-2-m8-evidence.md`). Vision remains reachable through sensor
+    /// addition.
     pub vision_rays: u32,
     /// Founder food-chemoreceptor count, not an evolved-organ capacity.
     pub chemo_sensors: u32,
@@ -315,7 +315,9 @@ pub struct BrainParams {
     /// and builds gaits and timing on them (spec §3.2).
     ///
     /// Default 0 since Phase 2 M8 (was 2), with the minimal founder; see
-    /// `hidden_neurons`. Oscillators can still arise through neuron addition.
+    /// `hidden_neurons`. No mutation operator creates oscillators (added neurons are
+    /// sigmoid), so lineages of the shipped founder never have one; the dense preset
+    /// keeps two.
     pub oscillators: u32,
     /// Founder incoming connections per hidden/output target. None means dense;
     /// a finite count selects distinct sources once per world, shared by all founders.
