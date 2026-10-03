@@ -1,1 +1,12 @@
-{}
+{
+  "sensing": {
+    "vision_rays": 3,
+    "chemo_sensors": 1,
+    "energy_sensors": 1
+  },
+  "brain": {
+    "hidden_neurons": 6,
+    "oscillators": 2,
+    "connections_per_target": null
+  }
+}

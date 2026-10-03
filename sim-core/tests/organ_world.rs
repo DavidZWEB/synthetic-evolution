@@ -10,7 +10,7 @@ use sim_core::spawn::SpawnError;
 use sim_core::{AgentId, SimParams, SpawnSpec, World};
 
 fn sparse_params() -> SimParams {
-    let mut p = SimParams::default();
+    let mut p = SimParams::default().with_dense_founder();
     p.world.max_agents = 8;
     p.plants.max_plants = 0;
     p.sensing.vision_rays = 0;
@@ -52,7 +52,7 @@ fn a_chemo_led_sparse_founder_has_the_declared_small_controller() {
 
 #[test]
 fn founder_composition_and_connectivity_do_not_move_plant_geography() {
-    let mut dense = SimParams::default();
+    let mut dense = SimParams::default().with_dense_founder();
     dense.world.max_agents = 8;
     dense.plants.max_plants = 64;
     let a = World::new(42, dense.clone()).unwrap();
@@ -240,7 +240,7 @@ fn scalar_control_inherits_new_sensor_parameters_and_target_bindings() {
 
 #[test]
 fn unsupported_sensor_parameters_are_refused_before_resource_claims() {
-    let mut p = SimParams::default();
+    let mut p = SimParams::default().with_dense_founder();
     p.world.max_agents = 4;
     p.plants.max_plants = 0;
     let mut world = World::new(42, p).unwrap();
@@ -290,7 +290,7 @@ fn unsupported_sensor_parameters_are_refused_before_resource_claims() {
 
 #[test]
 fn inherited_ranges_use_allocated_envelope_after_live_retuning() {
-    let mut p = SimParams::default();
+    let mut p = SimParams::default().with_dense_founder();
     p.world.max_agents = 4;
     p.plants.max_plants = 0;
     let mut world = World::new(42, p.clone()).unwrap();

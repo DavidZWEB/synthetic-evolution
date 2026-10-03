@@ -11,7 +11,7 @@ use sim_core::spawn::{ArenaKind, SpawnError, SpawnFailureCounts};
 use sim_core::{InnovationId, SimParams, SpawnSpec, World};
 
 fn params() -> SimParams {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;

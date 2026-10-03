@@ -374,9 +374,12 @@ consumes no topology draws, so shipped defaults and prior runs stay unchanged.
 Preserve all four effectors and body/meta compatibility fields. Counts and allocation
 budgets must describe the exact sparse template without charging for dense wiring.
 A no-eye, one-chemoreceptor, zero-hidden/oscillator founder with one incoming edge
-per target is an opt-in small-controller candidate, not a viability claim. M8's
-multi-seed experiments and human acceptance choose any new shipped founder default;
-M3 does not replace the accepted dense default by assumption.
+per target was introduced as an opt-in small-controller candidate.
+
+**DECIDED (M8): that minimal chemo-led founder is the shipped default.** It was the
+most viable founder measured across seeds (`docs/phase-2-m8-evidence.md`) and a human
+approved it. Phase 1's dense founder remains a reproducible preset for comparisons
+and for scenarios whose coverage depends on dense topology.
 
 ### 3.4 Crossover and speciation
 

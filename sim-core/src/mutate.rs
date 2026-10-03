@@ -118,7 +118,7 @@ mod tests {
 
     #[test]
     fn mutation_moves_weights() {
-        let params = SimParams::default();
+        let params = SimParams::default().with_dense_founder();
         let mut next_id = 0;
         let plan = crate::founder::FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             let id = crate::ids::InnovationId::new(next_id);

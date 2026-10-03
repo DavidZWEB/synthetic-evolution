@@ -45,7 +45,7 @@ fn breeders(seed: u64) -> World {
 }
 
 fn world(seed: u64) -> World {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 32;
     params.plants.max_plants = 32;
     World::new(seed, params).expect("defaults are valid")
@@ -145,7 +145,7 @@ fn the_chemo_field_is_three_dimensional_with_depth_one() {
     assert_eq!(world.chemo().dims().len(), 3, "a 2D grid would not extrude");
 
     // And the validator holds the shape, so the hedge cannot be undone by a params file.
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.chemo.cells[2] = 4;
     assert!(
         World::new(4, params).is_err(),
@@ -163,7 +163,7 @@ fn the_neighbour_query_is_a_three_axis_loop_pinned_to_one_z_cell() {
 
     // Agents at the same x/y but different z are neighbours, because there is only one
     // Z cell for them to be in. When the plane is lifted, this is what changes.
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 4;
     let mut world = World::new(5, params).expect("valid params");
     for _ in 0..2 {

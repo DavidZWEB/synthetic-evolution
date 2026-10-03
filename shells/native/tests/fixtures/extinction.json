@@ -1,6 +1,28 @@
 {
-  "world": { "max_agents": 8 },
-  "metabolism": { "base": 200.0 },
-  "plants": { "max_plants": 8 },
-  "chemo": { "cells": [4, 4, 1] }
+  "world": {
+    "max_agents": 8
+  },
+  "metabolism": {
+    "base": 200.0
+  },
+  "plants": {
+    "max_plants": 8
+  },
+  "chemo": {
+    "cells": [
+      4,
+      4,
+      1
+    ]
+  },
+  "sensing": {
+    "vision_rays": 3,
+    "chemo_sensors": 1,
+    "energy_sensors": 1
+  },
+  "brain": {
+    "hidden_neurons": 6,
+    "oscillators": 2,
+    "connections_per_target": null
+  }
 }

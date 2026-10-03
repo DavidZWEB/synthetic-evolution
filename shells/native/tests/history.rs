@@ -479,7 +479,8 @@ fn failed_validation_and_admission_do_not_clobber_outputs() {
     }
     fs::write(
         &params,
-        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142}}"#,
+        // Half the dense founder's 284 genes per slot (spec section 2.2a).
+        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142},"sensing":{"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},"brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null}}"#,
     )
     .unwrap();
     for metrics_enabled in [false, true] {

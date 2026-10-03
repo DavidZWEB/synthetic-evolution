@@ -386,11 +386,13 @@ shared URL `params` fragment:
 
 This has **seven neurons and four connections**: three chemo inputs and the four
 required effector outputs (thrust, turn, ingest, reproduce). It retains four body and
-three meta genes, for 23 total genes including the sensor and effectors. It is a
-minimal candidate to investigate, **not evidence of viability or a new shipped
-founder**. Dense defaults remain unchanged: `vision_rays: 3`, `chemo_sensors: 1`,
+three meta genes, for 23 total genes including the sensor and effectors. **Since
+Phase 2 M8 this is the shipped default founder**, chosen after multi-seed viability
+evidence and human approval (`docs/phase-2-m8-evidence.md`). Phase 1's dense founder
+remains available for comparisons: `vision_rays: 3`, `chemo_sensors: 1`,
 `energy_sensors: 1`, six hidden neurons, two oscillators, and
-`connections_per_target: null`.
+`connections_per_target: null` (in Rust, `SimParams::with_dense_founder`). Shared
+URLs and params files that omit these fields now get the minimal founder.
 
 `null` or an omitted connectivity field means the original full dense topology.
 An integer `k` chooses `min(k, sources)` distinct inputs per hidden/output target;

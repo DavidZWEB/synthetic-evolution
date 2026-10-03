@@ -1,6 +1,10 @@
 {
-  "world": { "max_agents": 32 },
-  "body": { "size": 1.5 },
+  "world": {
+    "max_agents": 32
+  },
+  "body": {
+    "size": 1.5
+  },
   "metabolism": {
     "base": 0.0,
     "k_size": 0.0,
@@ -29,5 +33,21 @@
     "max_energy": 60.0,
     "initial_fill": 1.0
   },
-  "chemo": { "cells": [32, 32, 1] }
+  "chemo": {
+    "cells": [
+      32,
+      32,
+      1
+    ]
+  },
+  "sensing": {
+    "vision_rays": 3,
+    "chemo_sensors": 1,
+    "energy_sensors": 1
+  },
+  "brain": {
+    "hidden_neurons": 6,
+    "oscillators": 2,
+    "connections_per_target": null
+  }
 }
