@@ -54,12 +54,31 @@ pub(crate) struct ArchiveWriter<W: Write> {
 
 impl<W: Write> ArchiveWriter<W> {
     pub fn new(
-        mut output: W,
+        output: W,
         run: &RunHeader,
         capacity: u32,
         representative_genes: Option<u32>,
     ) -> Result<Self> {
-        let header = Header::new(run, capacity, representative_genes)?;
+        Self::start(
+            output,
+            Header::new(run, capacity, representative_genes, None)?,
+        )
+    }
+
+    /// A schema four segment continuing a restored run from `resumed_from_tick`.
+    pub fn resumed(
+        output: W,
+        run: &RunHeader,
+        capacity: u32,
+        representative_genes: Option<u32>,
+        resumed_from_tick: u64,
+    ) -> Result<Self> {
+        let header = Header::new(run, capacity, representative_genes, Some(resumed_from_tick))?;
+        Self::start(output, header)
+    }
+
+    fn start(mut output: W, header: Header) -> Result<Self> {
+        let representative_genes = header.representative_genes;
         write_record(
             &mut output,
             &ArchiveRecord::Header(Box::new(header.clone())),
@@ -212,7 +231,7 @@ pub(crate) fn validate_export(
         )
         .into());
     }
-    let header = Header::new(run, capacity, representative_genes)?;
+    let header = Header::new(run, capacity, representative_genes, None)?;
     encode_record(&ArchiveRecord::Header(Box::new(header)))?;
     Ok(())
 }
@@ -1161,6 +1180,33 @@ mod tests {
         for cohort in &summary.cohorts {
             assert_eq!(cohort.counts.representatives, Some(Decimal(1)));
         }
+    }
+
+    #[test]
+    fn resumed_segments_may_be_quiet_and_the_shared_fixture_parses() {
+        let mut bytes = Vec::new();
+        let mut capture = Capture::new(4, None).unwrap();
+        let mut run = header();
+        run.ticks = 50;
+        ArchiveWriter::resumed(&mut bytes, &run, 4, None, 30)
+            .unwrap()
+            .finish(&mut capture, &hashes())
+            .unwrap();
+        let (header, summary) = crate::history_reader::parse_archive(Cursor::new(&bytes)).unwrap();
+        assert_eq!(header.schema_version, 4);
+        assert_eq!(header.resumed_from_tick, Some(Decimal(30)));
+        assert!(
+            summary
+                .cohorts
+                .iter()
+                .all(|c| c.counts.next_sequence == Decimal(0))
+        );
+
+        // Extinctions of species that originated before the resume are legitimate.
+        let fixture = include_bytes!("../tests/fixtures/history-v4-resumed.ndjson");
+        let (header, summary) = crate::history_reader::parse_archive(Cursor::new(fixture)).unwrap();
+        assert_eq!(header.resumed_from_tick, Some(Decimal(150)));
+        assert!(summary.cohorts.iter().all(|c| c.counts.extinctions.0 > 0));
     }
 
     #[test]

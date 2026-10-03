@@ -240,8 +240,10 @@ cargo run --release -p native -- resume run.sevrun --ticks 100000 --save-run lat
 `resume` restores every saved cohort and continues them together; it never reseeds
 a control. A resumed run ends exactly where an uninterrupted run of the same seed
 would. Its bundle keeps the original history and starts a new segment at the resume
-tick, currently marked `not_recorded`: capturing history or metrics into a resumed
-run is not supported yet. `--max-core-bytes` (default 8 GiB) caps the saved world's
+tick. Add `--history PATH` (with optional `--representatives` and `--drain-every`)
+to capture that segment as a **schema 4** archive; its events match what an
+uninterrupted run records from the resume tick onward. Without it the segment is
+`not_recorded`. Metrics are not produced for resumed runs yet. `--max-core-bytes` (default 8 GiB) caps the saved world's
 `storage.max_memory_bytes` this host will restore. The bundle format is in spec
 section 7.10; standalone history files remain readable with `native history`.
 
@@ -567,8 +569,8 @@ This is streaming output, not an atomic two-file transaction or protection again
 concurrent filesystem renames.
 
 Native writing uses history **schema 1** JSONL, or **schema 3** with
-`--representatives`. Readback also accepts browser **schema 2** and both shapes of
-schema 3.
+`--representatives`, and **schema 4** for a resumed segment. Readback also accepts
+browser **schema 2** and both shapes of schemas 3 and 4.
 Metrics use **schema 8**, phase 2,
 with **`randomized_at_birth_v3`** unchanged. With `--metrics`, each sample also records
 the history capture's cumulative counts (see *Telemetry protocol*). Each history line is

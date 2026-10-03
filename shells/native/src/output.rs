@@ -48,6 +48,33 @@ pub(crate) fn validate(args: &RunArgs) -> Result<()> {
     Ok(())
 }
 
+/// Preflight for `resume`: history must not overwrite the bundle being resumed or
+/// the bundle being written. Saving over the input is safe; it is read first.
+pub(crate) fn validate_resume(
+    bundle: &Path,
+    history: Option<&Path>,
+    save_run: Option<&Path>,
+) -> Result<()> {
+    if save_run == Some(Path::new("-")) {
+        return Err(conflict("--save-run needs a file, not stdout").into());
+    }
+    let Some(history) = history.map(identity).transpose()? else {
+        return Ok(());
+    };
+    let save = save_run.map(file_identity).transpose()?;
+    if history.aliases(&file_identity(bundle)?) || save.is_some_and(|save| history.aliases(&save)) {
+        return Err(
+            conflict("--history must not overwrite the saved run being read or written").into(),
+        );
+    }
+    Ok(())
+}
+
+/// Opens one stream output, truncating a regular file only after it opens.
+pub(crate) fn open_output(path: &Path, name: &str) -> Result<Output> {
+    open_target(path, name)?.writer()
+}
+
 pub(crate) fn open(args: &RunArgs) -> Result<(Option<Output>, Option<Output>)> {
     // Open both without truncating, so failure to open the second target does
     // not destroy the first target's previous contents.

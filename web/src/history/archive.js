@@ -21,17 +21,25 @@ const MAX_RECORDER_CAPACITY = Math.floor(2147483647 / 64);
 // A core Gene is at most 64 bytes, so staging shares the same portable ceiling.
 const MAX_REPRESENTATIVE_GENES = Math.floor(2147483647 / 64);
 const REPRESENTATIVE_SCHEMA = 3;
+/** A segment resumed mid-run from a checkpoint, with unknown prior lineage. */
+const RESUMED_SCHEMA = 4;
 /** Fixed browser staging: 65,536 genes, native's --representative-genes default. */
 export const REPRESENTATIVE_GENES = 65_536;
 
-/** Schema 3 extends either earlier shape: browser archives name a run, native ones do not. */
+/** Schemas 3-4 extend either earlier shape: browser archives name a run, native ones do not. */
 function browserShape(data) {
   return data.schema_version === 2 ||
-    (data.schema_version === REPRESENTATIVE_SCHEMA && Object.hasOwn(data, 'run_id'));
+    ([REPRESENTATIVE_SCHEMA, RESUMED_SCHEMA].includes(data.schema_version) && Object.hasOwn(data, 'run_id'));
 }
 
+/** Schema 3 always archives representatives; a schema 4 segment does when it declares staging. */
 function representatives(header) {
-  return header.data.schema_version === REPRESENTATIVE_SCHEMA;
+  return header.data.schema_version === REPRESENTATIVE_SCHEMA ||
+    (header.data.schema_version === RESUMED_SCHEMA && Object.hasOwn(header.data, 'representative_genes'));
+}
+
+function resumedFrom(header) {
+  return header.data.schema_version === RESUMED_SCHEMA ? decimal(header.data.resumed_from_tick) : null;
 }
 
 function record(row, kind) {
@@ -54,10 +62,15 @@ function provenance(data) {
 export function validateHeader(header) {
   record(header, 'header');
   const data = header.data;
-  requireThat([1, 2, REPRESENTATIVE_SCHEMA].includes(data?.schema_version), 'unsupported history schema');
+  requireThat([1, 2, REPRESENTATIVE_SCHEMA, RESUMED_SCHEMA].includes(data?.schema_version),
+    'unsupported history schema');
   const v2 = browserShape(data);
-  const v3 = data.schema_version === REPRESENTATIVE_SCHEMA;
-  object(data, [...HEADER_KEYS, ...(v2 ? ['run_id'] : []), ...(v3 ? ['representative_genes'] : [])], 'header');
+  const v4 = data.schema_version === RESUMED_SCHEMA;
+  const v3 = data.schema_version === REPRESENTATIVE_SCHEMA || (v4 && Object.hasOwn(data, 'representative_genes'));
+  object(data, [
+    ...HEADER_KEYS, ...(v2 ? ['run_id'] : []), ...(v3 ? ['representative_genes'] : []),
+    ...(v4 ? ['resumed_from_tick'] : []),
+  ], 'header');
   provenance(data.provenance);
   requireThat(equal(data.cohorts, COHORTS) || (v2 && Array.isArray(data.cohorts) &&
     data.cohorts.length === 1 && COHORTS.includes(data.cohorts[0])), 'invalid cohort membership/order');
@@ -81,6 +94,10 @@ export function validateHeader(header) {
       data.representative_genes <= MAX_REPRESENTATIVE_GENES,
     'representative staging cannot hold one maximum-size genome or exceeds the portable ceiling');
   }
+  if (v4) {
+    const start = decimal(data.resumed_from_tick, 'resume tick');
+    requireThat(data.ticks === null || start <= decimal(data.ticks), 'resume tick exceeds planned ticks');
+  }
   return header;
 }
 
@@ -91,7 +108,7 @@ function readPrefix(header, rows, tick) {
   const boundary = tick === undefined ? planned : decimal(tick, 'committed tick');
   requireThat(planned === null || boundary === null || boundary <= planned, 'boundary exceeds planned ticks');
   const states = Object.fromEntries(header.data.cohorts.map((cohort) =>
-    [cohort, newState(representatives(header))]));
+    [cohort, newState(representatives(header), resumedFrom(header))]));
   for (const row of rows) {
     object(row, ['kind', 'data'], 'record');
     encodeLine(row);
@@ -138,7 +155,8 @@ function validateCompletion(header, rows, completion) {
     object(cohort.counts, keys, 'counts');
     for (const key of keys) decimal(cohort.counts[key], key);
     requireThat(equal(cohort.counts, counts[cohort.cohort]), 'completion totals do not match records');
-    requireThat(incomplete || header.data.params.species.capacity === 0 ||
+    // Seeding always records origins; a resumed segment may be quiet.
+    requireThat(incomplete || resumedFrom(header) !== null || header.data.params.species.capacity === 0 ||
       cohort.counts.next_sequence !== '0', 'completed classified cohort has no history');
     requireThat(cohort.history_complete === (!incomplete && cohort.counts.dropped_events === '0'),
       'invalid history completeness');
@@ -206,13 +224,14 @@ export async function parseArchive(text, validateParams, validateRepresentative)
 
 export function createHeader({
   runId, seed, founders, params, brainInheritance = 'evolving', simVersion, sourceRevision,
-  representatives: withRepresentatives = false,
+  representatives: withRepresentatives = false, resumedFromTick = null,
 }) {
   requireThat(['evolving', 'randomized_at_birth'].includes(brainInheritance), 'unsupported brain inheritance');
   const header = {
     kind: 'header',
     data: {
-      schema_version: withRepresentatives ? REPRESENTATIVE_SCHEMA : 2, run_id: runId,
+      schema_version: resumedFromTick !== null ? RESUMED_SCHEMA : withRepresentatives ? REPRESENTATIVE_SCHEMA : 2,
+      run_id: runId,
       provenance: {
         sim_version: simVersion, source_revision: sourceRevision, phase: 2,
         seed, control: 'randomized_at_birth_v3',
@@ -220,6 +239,7 @@ export function createHeader({
       cohorts: [brainInheritance === 'randomized_at_birth' ? 'random_control' : 'evolving'],
       ticks: null, founders, drain_every: null, capacity_per_cohort: 4096,
       ...(withRepresentatives ? { representative_genes: REPRESENTATIVE_GENES } : {}),
+      ...(resumedFromTick !== null ? { resumed_from_tick: resumedFromTick } : {}),
       params: structuredClone(params),
     },
   };

@@ -2,7 +2,7 @@
 //!
 //! The container format is shared with the browser; this module owns file I/O,
 //! checkpoint restore with host limits, history-segment validation, and continuing
-//! restored worlds. It does not write history for resumed segments yet.
+//! restored worlds with an optional resumed history segment.
 
 use std::fs;
 use std::io::{self, Cursor, Write};
@@ -14,6 +14,8 @@ use sim_core::world::World;
 
 use crate::Result;
 use crate::cli::{ResumeArgs, SavedRunArgs};
+use crate::history::{self, ArchiveWriter, Capture};
+use crate::metrics::{RunHeader, StateHashes};
 
 #[path = "../../shared/saved_run.rs"]
 mod format;
@@ -132,7 +134,7 @@ pub(crate) fn load(bytes: &[u8], max_core_bytes: u64) -> Result<Loaded> {
             history.push(None);
             continue;
         };
-        let summary = crate::history_reader::parse(Cursor::new(archive))
+        let (header, summary) = crate::history_reader::parse_archive(Cursor::new(archive))
             .map_err(|error| invalid(format!("history segment {index}: {error}")))?;
         let cohorts: Vec<Cohort> = summary
             .cohorts
@@ -147,7 +149,9 @@ pub(crate) fn load(bytes: &[u8], max_core_bytes: u64) -> Result<Loaded> {
         if summary.provenance.seed.0 != manifest.provenance.seed.0
             || summary.ticks.0 != end
             || cohorts != expected
-            || segment.starts_at() != 0
+            // The first segment starts the run; later ones resume from their boundary.
+            || header.resumed_from_tick.map(|tick| tick.0)
+                != (segment.starts_at() != 0).then_some(segment.starts_at())
         {
             return Err(invalid(format!(
                 "history segment {index} does not belong to this run, its cohorts, or its boundary"
@@ -230,14 +234,79 @@ pub fn inspect(args: SavedRunArgs) -> Result<()> {
 }
 
 /// `native resume`: continue every saved cohort together, never reseeding a control.
+///
+/// With `--history`, the continuation is captured as its own schema four segment
+/// beginning at the resume tick, never appended to the restored archive.
 pub fn resume(args: ResumeArgs) -> Result<()> {
+    crate::output::validate_resume(
+        &args.bundle,
+        args.history.as_deref(),
+        args.save_run.as_deref(),
+    )?;
     let loaded = read(&args.bundle, args.max_core_bytes)?;
     let start = loaded.manifest.tick.0;
     let mut worlds = loaded.worlds;
-    for _ in 0..args.ticks {
-        for (_, world) in &mut worlds {
-            world.step();
+    let representative_genes = args.representatives.then_some(args.representative_genes);
+    let mut archive = None;
+    if let Some(path) = &args.history {
+        if worlds.len() != 2 {
+            return Err(invalid("native history capture needs a paired saved run").into());
         }
+        let provenance = &loaded.manifest.provenance;
+        let run = RunHeader {
+            schema_version: crate::metrics::SCHEMA_VERSION,
+            sim_version: env!("CARGO_PKG_VERSION").to_owned(),
+            source_revision: env!("SYNTHETIC_EVOLUTION_REVISION").to_owned(),
+            phase: u32::from(provenance.phase),
+            seed: provenance.seed.0.to_string(),
+            ticks: start + args.ticks,
+            founders: provenance.founders,
+            sample_every: args.drain_every,
+            params: worlds[0].1.params().clone(),
+            control: provenance.control.clone(),
+        };
+        history::validate_export(&run, args.history_capacity, representative_genes)?;
+        let capture = Capture::new(args.history_capacity, representative_genes)?;
+        let output = crate::output::open_output(path, "history")?;
+        let writer = ArchiveWriter::resumed(
+            output,
+            &run,
+            args.history_capacity,
+            representative_genes,
+            start,
+        )?;
+        archive = Some((writer, capture));
+    }
+    for _ in 0..args.ticks {
+        match &mut archive {
+            Some((writer, capture)) => {
+                for ((_, world), cohort) in worlds.iter_mut().zip(&mut capture.cohorts) {
+                    world.step_with_history_observer(
+                        |_| {},
+                        |_| {},
+                        |_| {},
+                        |event, representative| cohort.record(event, representative),
+                    );
+                }
+                capture.check()?;
+                let tick = worlds[0].1.tick_count();
+                if tick % args.drain_every == 0 || tick == start + args.ticks {
+                    writer.drain(capture)?;
+                }
+            }
+            None => {
+                for (_, world) in &mut worlds {
+                    world.step();
+                }
+            }
+        }
+    }
+    if let Some((writer, mut capture)) = archive {
+        let hashes = StateHashes {
+            evolving: format!("{:016x}", worlds[0].1.state_hash()),
+            random_control: format!("{:016x}", worlds[1].1.state_hash()),
+        };
+        writer.finish(&mut capture, &hashes)?;
     }
     for (cohort, world) in &worlds {
         eprintln!(
@@ -256,18 +325,38 @@ pub fn resume(args: ResumeArgs) -> Result<()> {
             .zip(loaded.history)
             .collect();
         if args.ticks > 0 {
-            history.push((
-                Segment::Unavailable {
-                    starts_at: Decimal(start),
-                    reason: Unavailable::NotRecorded,
-                },
-                None,
-            ));
+            history.push(continuation(args.history.as_deref(), start)?);
         }
         let refs: Vec<(Cohort, &World)> = worlds.iter().map(|(c, w)| (*c, w)).collect();
         write(path, &assemble(loaded.manifest.provenance, &refs, history)?)?;
     }
     Ok(())
+}
+
+/// A history segment for a new bundle: the archive if it can be re-read, or why not.
+pub(crate) fn continuation(
+    history: Option<&Path>,
+    start: u64,
+) -> Result<(Segment, Option<Vec<u8>>)> {
+    let starts_at = Decimal(start);
+    let unavailable = |reason| Segment::Unavailable { starts_at, reason };
+    Ok(match history {
+        None => (unavailable(Unavailable::NotRecorded), None),
+        // Only a regular file can be re-read faithfully; stdout or a pipe cannot.
+        Some(path) if path == Path::new("-") || !fs::metadata(path).is_ok_and(|m| m.is_file()) => {
+            (unavailable(Unavailable::NotRetained), None)
+        }
+        Some(path) => {
+            let archive = fs::read(path)?;
+            (
+                Segment::Included {
+                    starts_at,
+                    bytes: Decimal(archive.len() as u64),
+                },
+                Some(archive),
+            )
+        }
+    })
 }
 
 #[cfg(test)]
@@ -281,6 +370,7 @@ mod tests {
                 source_revision: "test".into(),
                 phase: 2,
                 seed: Decimal(7),
+                founders: 8,
                 control: "randomized_at_birth_v3".into(),
                 run_id: None,
             },

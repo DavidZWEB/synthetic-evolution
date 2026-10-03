@@ -13,7 +13,7 @@ use crate::Result;
 use crate::cli::RunArgs;
 use crate::history::{self, ArchiveWriter, Capture, CohortCapture};
 use crate::metrics::{MetricsRecord, RunHeader, SCHEMA_VERSION, sample_pair};
-use crate::saved_run::{self, Cohort, Decimal, Provenance, Segment, Unavailable};
+use crate::saved_run::{self, Cohort, Decimal, Provenance};
 
 pub fn run(args: RunArgs) -> Result<()> {
     if args.sample_every == 0 {
@@ -200,44 +200,13 @@ fn save_run(
     evolving: &World,
     random_control: &World,
 ) -> Result<()> {
-    let start = Decimal(0);
-    let history = match args.history.as_deref() {
-        None => (
-            Segment::Unavailable {
-                starts_at: start,
-                reason: Unavailable::NotRecorded,
-            },
-            None,
-        ),
-        // Only a regular file can be re-read faithfully; a pipe or device cannot.
-        Some(history)
-            if history == std::path::Path::new("-")
-                || !std::fs::metadata(history).is_ok_and(|m| m.is_file()) =>
-        {
-            (
-                Segment::Unavailable {
-                    starts_at: start,
-                    reason: Unavailable::NotRetained,
-                },
-                None,
-            )
-        }
-        Some(history) => {
-            let archive = std::fs::read(history)?;
-            (
-                Segment::Included {
-                    starts_at: start,
-                    bytes: Decimal(archive.len() as u64),
-                },
-                Some(archive),
-            )
-        }
-    };
+    let history = saved_run::continuation(args.history.as_deref(), 0)?;
     let provenance = Provenance {
         sim_version: header.sim_version.clone(),
         source_revision: header.source_revision.clone(),
         phase: header.phase as u8,
         seed: Decimal(args.seed),
+        founders: args.founders,
         control: header.control.clone(),
         run_id: None,
     };

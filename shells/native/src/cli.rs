@@ -95,6 +95,21 @@ pub struct ResumeArgs {
     /// Largest saved core budget (`storage.max_memory_bytes`) this host will restore.
     #[arg(long, default_value_t = DEFAULT_MAX_CORE_BYTES)]
     pub max_core_bytes: u64,
+    /// Capture this continuation's species history (schema 4 segment), or `-` for stdout.
+    #[arg(long)]
+    pub history: Option<PathBuf>,
+    /// Preallocated history records per world; used only with --history.
+    #[arg(long, default_value_t = 4096, requires = "history", value_parser = clap::value_parser!(u32).range(1..))]
+    pub history_capacity: u32,
+    /// Also archive each new species' representative genome at origin.
+    #[arg(long, requires = "history")]
+    pub representatives: bool,
+    /// Preallocated genes per world for representatives awaiting a drain.
+    #[arg(long, default_value_t = 65_536, requires = "representatives", value_parser = clap::value_parser!(u32).range(1..))]
+    pub representative_genes: u32,
+    /// Ticks between history drains; used only with --history.
+    #[arg(long, default_value_t = 1_000, requires = "history", value_parser = clap::value_parser!(u64).range(1..))]
+    pub drain_every: u64,
 }
 
 #[derive(Clone, Debug, Args)]

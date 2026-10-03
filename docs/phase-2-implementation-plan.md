@@ -31,7 +31,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | live species browser/coloring, schema 8 telemetry, and native/browser representative archives implemented; comparison and graph pending |
-| M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | core checkpoint, saved-run bundle, and native save/resume implemented; resumed-segment history and browser Save/Load pending |
+| M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | core checkpoint, saved-run bundle, native save/resume, and resumed-segment history implemented; browser Save/Load pending |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
@@ -777,6 +777,12 @@ original run has advanced: later events must not leak into the restored prefix o
 its new continuation segment. Browser save/load must expose only saved-run bundles,
 with no standalone history-file import/export controls. History-only CLI analysis
 must remain available without starting or resuming a World.
+
+**Resumed-history slice delivered (history schema 4):** native `resume --history`
+captures the continuation as its own segment with unknown prior lineage, matching an
+uninterrupted run's events from the resume tick. Both readers accept schema 4, quiet
+resumed segments are valid, and bundles check each segment's resume tick. Saved-run
+provenance now records the founder count.
 
 **Native saved-run slice delivered:** the shared saved-run container (spec section
 7.10) with history segments, native `--save-run`, `resume`, and `saved-run`.
