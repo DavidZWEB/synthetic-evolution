@@ -20,7 +20,8 @@ pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v3";
 /// Telemetry identity of the donor-topology structural null (spec §7.8).
 pub const STRUCTURAL_NULL_PROTOCOL: &str = "structural_null_v1";
 
-/// How offspring inherit their brains: scalars, topology, or neither from the parent.
+/// What offspring inherit from the parent's brain: scalars and topology, topology only, or
+/// neither.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BrainInheritance {
