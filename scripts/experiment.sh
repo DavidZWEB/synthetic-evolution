@@ -3,7 +3,7 @@
 #
 #   scripts/experiment.sh OUT_DIR TICKS FOUNDERS SAMPLE_EVERY "SEED..." PARAMS.json...
 #
-# Runs every params file x seed under both controls (scalar and structural null), JOBS
+# Runs every params file x seed under both controls (scalar and structural null v2), JOBS
 # at a time (default 4), recording each run's wall-clock seconds beside its metrics.
 # Then writes one unranked summary per params file, as text and JSON.
 set -euo pipefail

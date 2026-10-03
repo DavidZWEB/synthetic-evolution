@@ -413,6 +413,7 @@ impl Sim {
             BrainInheritance::Evolving => "evolving",
             BrainInheritance::RandomizedAtBirth => "randomized_at_birth",
             BrainInheritance::StructuralNull => "structural_null",
+            BrainInheritance::StructuralNullV2 => "structural_null_v2",
         }
         .to_owned()
     }

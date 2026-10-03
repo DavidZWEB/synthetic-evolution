@@ -16,10 +16,11 @@ pub const LIMITS: CheckpointLimits = CheckpointLimits {
     max_bytes: 64 << 20,
     max_core_bytes: 96 << 20,
 };
-pub const MODES: [BrainInheritance; 3] = [
+pub const MODES: [BrainInheritance; 4] = [
     BrainInheritance::Evolving,
     BrainInheritance::RandomizedAtBirth,
     BrainInheritance::StructuralNull,
+    BrainInheritance::StructuralNullV2,
 ];
 /// Mid-churn: full pool, reused slots, fragmented arenas, species turnover.
 pub const SAVE_TICK: u32 = 200;
@@ -27,16 +28,18 @@ pub const SAVE_TICK: u32 = 200;
 pub const CONTINUE_TICKS: u32 = 350;
 
 /// FNV-1a of the checkpoint bytes, per mode: both targets must encode identically.
-pub const CHECKPOINT_FINGERPRINT: [u64; 3] = [
+pub const CHECKPOINT_FINGERPRINT: [u64; 4] = [
     0x86f8_fa84_0be7_33ad,
     0x6b01_125b_a900_7435,
     0x0ed5_aa5c_f9cc_84f1,
+    0x151c_8a1c_84e6_d356,
 ];
 /// `state_hash` after restoring and continuing `CONTINUE_TICKS`, per mode.
-pub const CONTINUED_HASH: [u64; 3] = [
+pub const CONTINUED_HASH: [u64; 4] = [
     0x737a_a4fb_0b35_3fd9,
     0x56a9_8c23_6bdd_c1c3,
     0xda2f_1e4d_c8d4_b343,
+    0xea3c_9914_0910_555a,
 ];
 
 pub fn params() -> SimParams {

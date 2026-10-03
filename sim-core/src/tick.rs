@@ -436,15 +436,19 @@ impl World {
             let mut scratch = core::mem::take(&mut self.genome_scratch);
             let genome = self.agents.genome[p];
             scratch.clear();
-            if self.brain_inheritance == BrainInheritance::StructuralNull {
+            if self.brain_inheritance.takes_donor_topology() {
                 // The donor replaces only the inherited topology; the body stays the
                 // parent's, so ecology and kin placement are unchanged (spec §7.8).
                 let donor = control::pick_donor(&self.pool, parent, &mut self.rng);
+                let parent_genes = self.genes.get(genome);
                 control::donor_topology(
-                    self.genes.get(genome),
+                    parent_genes,
                     self.genes.get(self.agents.genome[donor.index()]),
                     &mut scratch,
                 );
+                if self.brain_inheritance == BrainInheritance::StructuralNullV2 {
+                    control::parent_scalars(parent_genes, &mut scratch);
+                }
             } else {
                 scratch.extend_from_slice(self.genes.get(genome));
             }
