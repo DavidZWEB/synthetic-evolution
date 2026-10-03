@@ -2,7 +2,6 @@
 
 use std::io::{self, Write};
 
-use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
 use sim_core::spawn::SpawnFailureCounts;
@@ -41,14 +40,14 @@ pub fn run(args: RunArgs) -> Result<()> {
         founders: args.founders,
         sample_every: args.sample_every,
         params: params.clone(),
-        control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+        control: args.control.protocol().to_owned(),
     };
     if args.history.is_some() {
         history::validate_export(&header, args.history_capacity, args.representative_genes())?;
     }
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
-        World::new_with_brain_inheritance(args.seed, params, BrainInheritance::RandomizedAtBirth)?;
+        World::new_with_brain_inheritance(args.seed, params, args.control.heredity())?;
     let mut spawn_failures = args
         .metrics
         .as_ref()

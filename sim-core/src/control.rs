@@ -1,20 +1,27 @@
 //! Experiment modes that change heredity without changing the world's parameters.
 //!
-//! The random-brain control is a separate world with the same seed and [`SimParams`].
-//! Its offspring receive freshly randomized neural scalars instead of inheriting a
-//! mutated parent brain. Both modes use the same structural rules, so this control
-//! isolates scalar inheritance, not all evolution (spec §7.8, §10).
+//! Each control is a separate world with the same seed and [`SimParams`]. The scalar
+//! control redraws neural scalars instead of inheriting a mutated parent brain; the
+//! structural null also replaces the inherited topology with a living donor's. All
+//! modes use the same mutation rules (spec §7.8, §10). Choosing which world runs which
+//! mode is the shells' concern.
 
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
 use crate::mutate::{self, MutationState, organs, structural};
 use crate::params::SimParams;
+use crate::pool::SlotPool;
+use crate::{AgentId, Rng};
 use structural::StructuralMutationEvent;
 
 /// Telemetry distinguishes topology-aware controls from Phase 1's fixed-topology run.
 pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v3";
 
-/// How neural scalars are assigned to offspring.
+/// Telemetry identity of the donor-topology structural null (spec §7.8).
+pub const STRUCTURAL_NULL_PROTOCOL: &str = "structural_null_v1";
+
+/// What offspring inherit from the parent's brain: scalars and topology, topology only, or
+/// neither.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BrainInheritance {
@@ -23,6 +30,9 @@ pub enum BrainInheritance {
     Evolving = 0,
     /// Apply structural edits, then redraw weights, biases, taus, and oscillator periods.
     RandomizedAtBirth = 1,
+    /// Start from a living donor's topology with the parent's body, then proceed as
+    /// [`Self::RandomizedAtBirth`]. Breaks parent-to-child structural inheritance.
+    StructuralNull = 2,
 }
 
 impl BrainInheritance {
@@ -39,10 +49,37 @@ impl BrainInheritance {
         }
         organs::apply(genes, params, state, &mut on_event);
         structural::apply(genes, params, state, on_event);
-        if self == Self::RandomizedAtBirth {
+        if self != Self::Evolving {
             plan.randomize_brain(state.rng, params, genes, state.neuron_scratch);
         }
     }
+}
+
+/// The structural null's topology donor: a uniformly drawn living agent other than
+/// the parent, in slot order so the draw is deterministic. Agents born earlier in the
+/// same tick are eligible. With no other living agent the parent is its own donor, and
+/// no random number is drawn.
+pub(crate) fn pick_donor(pool: &SlotPool, parent: AgentId, rng: &mut Rng) -> AgentId {
+    let candidates = pool.live_count() - u32::from(pool.is_alive(parent));
+    if candidates == 0 {
+        return parent;
+    }
+    let chosen = rng.below(candidates) as usize;
+    pool.iter_live()
+        .filter(|&agent| agent != parent)
+        .nth(chosen)
+        .unwrap_or(parent)
+}
+
+/// A structural-null child's starting genome: the donor's neurons, sensors, effectors,
+/// and connections with the parent's body and meta genes. Every genome carries one gene
+/// per body and meta trait, so the result has the donor's length and stays sorted.
+pub(crate) fn donor_topology(parent: &[Gene], donor: &[Gene], out: &mut Vec<Gene>) {
+    let is_body = |gene: &&Gene| matches!(gene, Gene::Body(_) | Gene::Meta(_));
+    out.clear();
+    out.extend(donor.iter().filter(|gene| !is_body(gene)));
+    out.extend(parent.iter().filter(is_body));
+    debug_assert_eq!(out.len(), donor.len());
 }
 
 #[cfg(test)]
@@ -133,7 +170,7 @@ mod tests {
                 BrainInheritance::Evolving => {
                     mutate::mutate(&mut expected, &mut a, &params.mutation)
                 }
-                BrainInheritance::RandomizedAtBirth => {
+                BrainInheritance::RandomizedAtBirth | BrainInheritance::StructuralNull => {
                     plan.randomize_brain(&mut a, &params, &mut expected, &mut expected_scratch)
                 }
             }

@@ -44,6 +44,14 @@ mod species_world_case;
 #[path = "../../../sim-core/tests/common/birth_case.rs"]
 mod birth_case;
 
+#[path = "../../../sim-core/tests/common/structural_null_case.rs"]
+mod structural_null_case;
+
+#[wasm_bindgen_test]
+fn structural_null_agrees_with_native() {
+    structural_null_case::check_structural_null_run();
+}
+
 #[wasm_bindgen_test]
 fn birth_identities_agree_with_native_in_both_modes() {
     birth_case::check_birth_identity_runs();
@@ -76,7 +84,7 @@ fn structural_mutation_agrees_with_native_in_both_modes() {
 }
 
 #[wasm_bindgen_test]
-fn checkpoints_transfer_between_native_and_wasm_in_both_modes() {
+fn checkpoints_transfer_between_native_and_wasm_in_every_mode() {
     checkpoint_case::check_cross_target_checkpoints();
 }
 

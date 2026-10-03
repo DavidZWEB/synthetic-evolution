@@ -412,6 +412,7 @@ impl Sim {
         match self.world.brain_inheritance() {
             BrainInheritance::Evolving => "evolving",
             BrainInheritance::RandomizedAtBirth => "randomized_at_birth",
+            BrainInheritance::StructuralNull => "structural_null",
         }
         .to_owned()
     }

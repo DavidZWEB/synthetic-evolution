@@ -8,9 +8,10 @@ acceptance and tuning evidence remain in
 **Status: M1-M7 are implemented.** M6 delivered the live species browser and
 coloring, schema 8 complexity/history telemetry, representative-genome archives
 (history schema 3), the species-origin graph, and representative comparison. M7
-delivered exact save/resume as saved-run bundles in both shells. M8 experiments
-come next. Distance/deletion-default calibration, the actual
-structural-null protocol, and lineage choices remain pending. The agreed scope
+delivered exact save/resume as saved-run bundles in both shells. M8 is in progress:
+the approved donor-topology structural null (`structural_null_v1`) is implemented;
+the multi-seed experiments and their evidence report come next.
+Distance/deletion-default calibration remains pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
 and a structural-null comparison before acceptance. Unapproved implementation
 choices in M0 remain proposals, not additions to the normative spec.
@@ -24,7 +25,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 
 | Milestone | Deliverable | Depends on | State |
 |---|---|---|---|
-| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D5 and D6 identities/capture/archives/retention approved; calibration/later gates open |
+| M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D6 and the donor-topology structural null approved; calibration gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
 | M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
 | M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
@@ -32,7 +33,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | implemented: live species browser/coloring, schema 8 telemetry, representative archives, species-origin graph, and representative comparison |
 | M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | implemented: core checkpoints, saved-run bundles, native save/resume with resumed-segment history, and browser Save run / Load run |
-| M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
+| M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | in progress: `structural_null_v1` control implemented; experiments pending |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
 Each milestone can span several PRs. Keep allocation, mutation, classification,
@@ -90,7 +91,8 @@ reason to promise Phase 7 scale here.
 **Including sensor addition/removal, basic manual checkpoints, and a structural-null
 comparison before acceptance in Phase 2** is settled by this planning discussion.
 The approved checkpoint and evidence requirements are in spec sections 7.10 and 7.8;
-the actual structural-null protocol still needs M0 approval. Recommendations in this
+the structural-null protocol was approved as donor topology (spec section 7.8,
+`structural_null_v1`). Recommendations in this
 section deliberately expose the choices that
 would otherwise become accidental selection pressures or misleading measurements.
 Approve them before the dependent milestone, and record the resulting contracts in
@@ -221,8 +223,10 @@ the seed/cohort matching, the measured outcomes, and the claims it cannot suppor
 An arbitrary rewiring or founder reset is not automatically a valid null.
 
 M8 implements and reports that experiment alongside the scalar-heredity comparison,
-with distinct protocol identities and results. No implementation algorithm is
-approved by this requirement alone. Early founder-viability runs may proceed
+with distinct protocol identities and results. **Approved protocol:** donor
+topology, `structural_null_v1`, recorded in spec section 7.8: each child takes a
+random living non-parent's neural and sensory structure with its parent's body, then
+the scalar control's redraw. Early founder-viability runs may proceed
 without it, but they cannot establish useful structural adaptation or complete M8's
 evidence. A missing or inconclusive comparison is not a pass based on human
 impressions alone; human judgment remains necessary once the evidence is available.
