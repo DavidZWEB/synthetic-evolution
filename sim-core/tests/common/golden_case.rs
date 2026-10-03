@@ -26,15 +26,18 @@
 //! chemo-led one (spec §3.1, `SimParams` founder fields). Both references moved for
 //! that reason alone; every mechanism scenario pins the dense founder explicitly and
 //! keeps its references, so this is the only golden change in that commit.
+//!
+//! The minimal founder then regained two oscillators (Phase 2 M8, human decision), a
+//! deliberate dynamics change that again moved only these shipped references.
 
 use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x9f13_46d3_b8ee_48fb;
+pub const SHIPPED_GOLDEN: u64 = 0xb672_8291_cd46_3868;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0x3924_d8e8_af1a_a99e;
+pub const BREEDING_GOLDEN: u64 = 0xab26_2efb_43bf_3b6e;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;
@@ -49,9 +52,9 @@ pub fn shipped() -> SimParams {
 
 /// A short-run configuration that makes reproduction prominent in the golden hash.
 ///
-/// The tuned defaults do reproduce, but seed 42's first birth is tick 301 (482 with
-/// Phase 1's dense founder), just after the shipped golden run ends at tick 300. These
-/// overrides move the first birth to tick 101 and leave 51 descendants at tick 500,
+/// The tuned defaults do reproduce, but seed 42's first birth is tick 367 (482 with
+/// Phase 1's dense founder), after the shipped golden run ends at tick 300. These
+/// overrides move the first birth to tick 101 and leave 62 descendants at tick 500,
 /// robustly pinning `resolve_births`.
 pub fn breeding() -> SimParams {
     let mut params = shipped();

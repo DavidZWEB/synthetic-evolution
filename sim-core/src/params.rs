@@ -306,18 +306,21 @@ impl SensingParams {
 pub struct BrainParams {
     /// Hidden neurons in the founding template.
     ///
-    /// Default 0 since Phase 2 M8 (was 6): the minimal chemo-led founder (7 neurons,
-    /// 4 connections, 23 genes) replaced the dense one after multi-seed viability
+    /// Default 0 since Phase 2 M8 (was 6): the minimal chemo-led founder (9 neurons
+    /// with its 2 oscillators, 4 connections, 25 genes) replaced the dense one after multi-seed viability
     /// evidence and human approval (`docs/phase-2-m8-evidence.md`). Structural
     /// mutation, not the founder, is now the source of hidden structure.
     pub hidden_neurons: u32,
     /// Always-present oscillator neurons. Cheap scaffold — evolution finds them fast
     /// and builds gaits and timing on them (spec §3.2).
     ///
-    /// Default 0 since Phase 2 M8 (was 2), with the minimal founder; see
-    /// `hidden_neurons`. No mutation operator creates oscillators (added neurons are
-    /// sigmoid), so lineages of the shipped founder never have one; the dense preset
-    /// keeps two.
+    /// Back to 2 after briefly shipping 0 with the minimal founder (Phase 2 M8): no
+    /// operator then created oscillators, so its lineages could never have a clock.
+    /// A human chose this scaffold over a reactive-only founder. With sparse wiring
+    /// they are candidate sources, so a world's template may drive an output from a
+    /// clock rather than the chemoreceptor from the start.
+    /// Checked before shipping: with the M8 growth rates, seeds 42/117/314 over 200k
+    /// ticks ended at 1,514-1,590 agents (1,267-1,497 without oscillators).
     pub oscillators: u32,
     /// Founder incoming connections per hidden/output target. None means dense;
     /// a finite count selects distinct sources once per world, shared by all founders.
@@ -1126,7 +1129,7 @@ impl Default for BrainParams {
     fn default() -> Self {
         Self {
             hidden_neurons: 0,
-            oscillators: 0,
+            oscillators: 2,
             connections_per_target: Some(1),
             tau_min: 0.05,
             tau_max: 2.0,
