@@ -31,7 +31,7 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | live species browser/coloring, schema 8 telemetry, and native/browser representative archives implemented; comparison and graph pending |
-| M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | not started |
+| M7 Manual checkpoints | Portable saved-run bundles (checkpoint + available history) with exact continuation | M5-M6 | core checkpoint encode/restore implemented; native and browser saved-run bundles pending |
 | M8 Founder experiments | Multi-seed viability and structural-evidence comparisons | M3 to start; M4-M6 and M0 structural-null protocol for full evidence | not started |
 | M9 Acceptance | Mechanical evidence and human judgment | M7 and completed M8 evidence | not started |
 
@@ -777,6 +777,14 @@ original run has advanced: later events must not leak into the restored prefix o
 its new continuation segment. Browser save/load must expose only saved-run bundles,
 with no standalone history-file import/export controls. History-only CLI analysis
 must remain available without starting or resuming a World.
+
+**Core checkpoint slice delivered:** `World::checkpoint`/`World::from_checkpoint`
+implement spec section 7.10's encoding with validation and a final state-hash check.
+A churning scenario (structural births/deaths, slot reuse, fragmented arenas, species
+turnover, recurrent state, energy reserves, queued commands, and population collapse)
+continues hash-identically for 350 ticks after restore in both heredity modes, and a
+shared case pins the encoded bytes and continued state on native and WASM. Saved-run
+bundles, CLI, and browser Save run / Load run follow.
 
 Periodic autosaves, retention scheduling, cross-version migration, timeline
 scrubbing/indexing, compression, and storage optimization remain deferred. This

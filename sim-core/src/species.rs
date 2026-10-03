@@ -282,6 +282,62 @@ impl Classifier {
         self.entries.iter().map(|entry| (entry.id, entry.members))
     }
 
+    /// The next historical ID this classifier would issue.
+    pub fn next_id(&self) -> u32 {
+        self.next_id
+    }
+
+    /// Each active representative's storage block, in ascending ID order.
+    pub(crate) fn representative_blocks(&self) -> impl Iterator<Item = Block> + '_ {
+        self.entries.iter().map(|entry| entry.block)
+    }
+
+    /// Restores saved active species into a classifier with none (spec §3.4).
+    ///
+    /// Each entry is `(id, members, block, representative)`. Untrusted input: IDs must
+    /// ascend below `next_id`, members be nonzero, blocks be full reservations that
+    /// fit, and representatives be coherent genomes within `max_genes`. Refusal leaves
+    /// the classifier unchanged.
+    pub(crate) fn restore(
+        &mut self,
+        next_id: u32,
+        entries: &[(SpeciesId, u32, Block, &[Gene])],
+    ) -> Result<(), &'static str> {
+        debug_assert!(
+            self.entries.is_empty(),
+            "restore requires a fresh classifier"
+        );
+        if entries.len() > self.capacity as usize {
+            return Err("more active species than classifier capacity");
+        }
+        let mut previous = None;
+        for &(id, members, block, genes) in entries {
+            if previous.is_some_and(|last| id <= last) || id.raw() >= next_id {
+                return Err("species IDs must ascend below the next ID");
+            }
+            previous = Some(id);
+            if members == 0 || block.len() != self.max_genes {
+                return Err("species entry has no members or a partial reservation");
+            }
+            if genes.len() > self.max_genes as usize || genome::validate(genes).is_err() {
+                return Err("species representative is not a coherent genome");
+            }
+        }
+        let blocks: Vec<Block> = entries.iter().map(|&(_, _, block, _)| block).collect();
+        self.representatives.restore_placement(&blocks)?;
+        for &(id, members, block, genes) in entries {
+            self.representatives.get_mut(block)[..genes.len()].copy_from_slice(genes);
+            self.entries.push(Entry {
+                id,
+                block,
+                genome_len: genes.len() as u32,
+                members,
+            });
+        }
+        self.next_id = next_id;
+        Ok(())
+    }
+
     fn index(&self, id: SpeciesId) -> Option<usize> {
         self.entries
             .binary_search_by_key(&id, |entry| entry.id)

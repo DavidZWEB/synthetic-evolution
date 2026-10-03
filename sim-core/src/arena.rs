@@ -184,6 +184,47 @@ impl<T: Clone + Default> Arena<T> {
     pub fn raw(&self) -> &[T] {
         &self.data
     }
+
+    /// Whether a deserialized arena of `blocks` slots is exactly owned by `live`.
+    ///
+    /// Restored arenas are untrusted: every slot must be either free once or held by
+    /// exactly one live handle, so no later allocation can hand out a block in use.
+    pub(crate) fn is_coherent(&self, blocks: u32, stride: u32, live: &[Block]) -> bool {
+        if stride == 0
+            || self.stride != stride
+            || self.data.len() as u64 != u64::from(blocks) * u64::from(stride)
+        {
+            return false;
+        }
+        let mut owned = vec![false; blocks as usize];
+        let mut claim = |offset: u32| {
+            if !offset.is_multiple_of(stride)
+                || offset / stride >= blocks
+                || owned[(offset / stride) as usize]
+            {
+                return false;
+            }
+            owned[(offset / stride) as usize] = true;
+            true
+        };
+        if !self.free.iter().all(|&offset| claim(offset)) {
+            return false;
+        }
+        let mut nonempty = 0;
+        for block in live {
+            if block.is_empty() {
+                if *block != Block::EMPTY {
+                    return false;
+                }
+                continue;
+            }
+            if block.len > stride || !claim(block.offset) {
+                return false;
+            }
+            nonempty += 1;
+        }
+        self.live_blocks == nonempty && owned.iter().all(|&slot| slot)
+    }
 }
 
 #[cfg(test)]

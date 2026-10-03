@@ -236,6 +236,60 @@ impl<T: Copy + Default> VariableArena<T> {
     pub fn free_spans(&self) -> &[Block] {
         &self.free
     }
+
+    /// Re-establishes a saved placement in an arena with no live blocks.
+    ///
+    /// Coalesced free spans are exactly the gaps between live blocks, so the live set
+    /// alone determines future first-fit placement (spec section 2.2a). Blocks are
+    /// untrusted: out-of-range, overlapping, non-canonical empty, or too many blocks
+    /// are refused and leave the arena unchanged. Contents are written afterwards.
+    pub(crate) fn restore_placement(&mut self, blocks: &[Block]) -> Result<(), &'static str> {
+        debug_assert_eq!(self.live_blocks, 0, "restore requires an empty arena");
+        let capacity = self.capacity();
+        let mut live: Vec<Block> = Vec::with_capacity(blocks.len());
+        for &block in blocks {
+            if block.len == 0 {
+                if block != Block::EMPTY {
+                    return Err("empty arena blocks must be canonical");
+                }
+                continue;
+            }
+            if block.offset > capacity || block.len > capacity - block.offset {
+                return Err("arena block is out of range");
+            }
+            live.push(block);
+        }
+        if live.len() > self.max_blocks as usize {
+            return Err("arena has more live blocks than its limit");
+        }
+        live.sort_unstable_by_key(|block| block.offset);
+        let mut free = Vec::with_capacity(self.free.capacity());
+        let mut cursor = 0;
+        for block in &live {
+            if block.offset < cursor {
+                return Err("arena blocks overlap");
+            }
+            if block.offset > cursor {
+                free.push(Block {
+                    offset: cursor,
+                    len: block.offset - cursor,
+                });
+            }
+            cursor = block.offset + block.len;
+        }
+        if cursor < capacity {
+            free.push(Block {
+                offset: cursor,
+                len: capacity - cursor,
+            });
+        }
+        let used: u32 = live.iter().map(|block| block.len).sum();
+        self.free.clear();
+        self.free.extend_from_slice(&free);
+        self.live_blocks = live.len() as u32;
+        self.free_elements = capacity - used;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -378,7 +432,60 @@ mod tests {
         free
     }
 
+    #[test]
+    fn restored_placement_refuses_invalid_saved_blocks_without_changing_the_arena() {
+        let mut arena = VariableArena::<u32>::try_with_capacity(10, 2).unwrap();
+        for blocks in [
+            &[Block { offset: 8, len: 3 }][..],
+            &[Block { offset: 0, len: 4 }, Block { offset: 3, len: 2 }],
+            &[
+                Block { offset: 0, len: 1 },
+                Block { offset: 2, len: 1 },
+                Block { offset: 4, len: 1 },
+            ],
+            &[Block { offset: 5, len: 0 }],
+        ] {
+            assert!(
+                arena.restore_placement(blocks).is_err(),
+                "accepted {blocks:?}"
+            );
+            assert_eq!(arena.free_spans(), &[Block { offset: 0, len: 10 }]);
+            assert_eq!((arena.live_blocks(), arena.free_elements()), (0, 10));
+        }
+    }
+
     proptest! {
+        /// Restoring only the surviving live blocks reproduces the allocator's own
+        /// free spans and therefore every later first-fit decision.
+        #[test]
+        fn restored_placement_matches_the_allocation_history_it_came_from(
+            capacity in 0u32..80,
+            max_blocks in 0u32..16,
+            operations in prop::collection::vec((any::<bool>(), 0u32..100), 0..300),
+            next in prop::collection::vec(0u32..40, 0..8),
+        ) {
+            let mut arena = VariableArena::<u32>::try_with_capacity(capacity, max_blocks).unwrap();
+            let mut live: Vec<Block> = Vec::new();
+            for (allocate, value) in operations {
+                if allocate {
+                    if let Ok(block) = arena.alloc(value % 32) {
+                        live.push(block);
+                    }
+                } else if !live.is_empty() {
+                    let block = live.swap_remove(value as usize % live.len());
+                    arena.free(block);
+                }
+            }
+            let mut restored = VariableArena::<u32>::try_with_capacity(capacity, max_blocks).unwrap();
+            restored.restore_placement(&live).unwrap();
+            prop_assert_eq!(restored.free_spans(), arena.free_spans());
+            prop_assert_eq!(restored.live_blocks(), arena.live_blocks());
+            prop_assert_eq!(restored.free_elements(), arena.free_elements());
+            for len in next {
+                prop_assert_eq!(restored.alloc(len), arena.alloc(len));
+            }
+        }
+
         #[test]
         fn matches_an_elementwise_reference_after_every_operation(
             capacity in 0u32..80,

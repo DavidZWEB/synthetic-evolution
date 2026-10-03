@@ -36,7 +36,7 @@ use crate::storage::StorageLayout;
 mod lifecycle;
 
 /// One part per agent, at the agent's own origin, for all of V1 (spec §9.1).
-const PARTS_PER_AGENT: u32 = 1;
+pub(crate) const PARTS_PER_AGENT: u32 = 1;
 
 /// Invalid configuration or a host reservation failure while constructing a world.
 #[derive(Debug)]
@@ -93,6 +93,10 @@ impl From<species::BuildError> for WorldBuildError {
 pub struct World {
     pub(crate) params: SimParams,
     pub(crate) brain_inheritance: BrainInheritance,
+    /// Construction provenance, not evolving state: plant sites and the founding
+    /// topology are drawn from it once, and a checkpoint regenerates them from it
+    /// rather than storing them (spec §7.10).
+    pub(crate) seed: u64,
     pub(crate) rng: Rng,
     pub(crate) tick: u64,
     /// Monotonic source of [`InnovationId`]s. A field rather than a `static` so two
@@ -192,6 +196,7 @@ impl World {
         // drawn at the same position — two processes that look independent and are not.
         Ok(Self {
             brain_inheritance,
+            seed,
             rng,
             tick: 0,
             next_innovation,
@@ -240,6 +245,11 @@ impl World {
 
     pub fn species(&self) -> &Classifier {
         &self.classifier
+    }
+
+    /// The seed this world was constructed from.
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn species_count(&self) -> u32 {

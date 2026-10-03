@@ -150,6 +150,28 @@ impl Plants {
         &self.energy_reserve
     }
 
+    /// Restores saved stocks onto sites regenerated from the run's seed.
+    ///
+    /// Untrusted input: one finite, non-negative tank and one finite reserve per site.
+    /// A refused restore leaves the stock unchanged.
+    pub(crate) fn restore_stock(
+        &mut self,
+        energy: &[f32],
+        reserve: &[f64],
+    ) -> Result<(), &'static str> {
+        if energy.len() != self.len() || reserve.len() != self.len() {
+            return Err("plant stock does not match the plant count");
+        }
+        if !energy.iter().all(|&e| e.is_finite() && e >= 0.0)
+            || !reserve.iter().all(|r| r.is_finite())
+        {
+            return Err("plant stock must be finite and non-negative");
+        }
+        self.energy.copy_from_slice(energy);
+        self.energy_reserve.copy_from_slice(reserve);
+        Ok(())
+    }
+
     #[inline]
     pub(crate) fn energy_at(&self, index: usize) -> f64 {
         energy::total(self.energy[index], self.energy_reserve[index])
