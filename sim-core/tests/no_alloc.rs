@@ -86,7 +86,7 @@ fn the_counter_actually_counts() {
 #[test]
 fn history_lifecycle_capture_and_drain_never_allocate() {
     use sim_core::history::{Capture, Record, Recorder, RepresentativeBuffer};
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 2;
     params.plants.max_plants = 0;
     let mut world = World::new(42, params).unwrap();
@@ -148,7 +148,7 @@ fn history_lifecycle_capture_and_drain_never_allocate() {
 #[test]
 fn persistent_identity_churn_and_failed_admissions_never_allocate() {
     use sim_core::ids::BirthId;
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 1;
     params.plants.max_plants = 0;
     let mut world = World::new(42, params).unwrap();
@@ -166,7 +166,7 @@ fn persistent_identity_churn_and_failed_admissions_never_allocate() {
 
 #[test]
 fn genetic_distance_never_allocates_or_changes_a_world() {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     let mut world = World::new(42, params).unwrap();
@@ -188,7 +188,7 @@ fn genetic_distance_never_allocates_or_changes_a_world() {
 #[test]
 fn species_assignment_refusal_and_retirement_never_allocate() {
     use sim_core::species::{Classifier, Departure, Unclassified};
-    let params = SimParams::default();
+    let params = SimParams::default().with_dense_founder();
     let mut world_params = params.clone();
     world_params.world.max_agents = 4;
     world_params.plants.max_plants = 8;
@@ -279,7 +279,7 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
     use sim_core::spawn::SpawnFailureCounts;
     use sim_core::{InnovationId, SpawnSpec};
 
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
@@ -342,7 +342,7 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
 #[test]
 fn neural_structural_births_and_observers_never_allocate() {
     use sim_core::mutate::structural::StructuralMutationCounts;
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
@@ -400,7 +400,7 @@ fn structural_null_donor_births_never_allocate() {
 }
 
 fn donor_births_never_allocate(mode: BrainInheritance) {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
@@ -432,7 +432,7 @@ fn donor_births_never_allocate(mode: BrainInheritance) {
 fn sensor_edits_and_combined_mutation_observers_never_allocate() {
     use sim_core::mutate::StructuralMutationCounts;
     use sim_core::species::SpeciesEventCounts;
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 8;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
@@ -481,7 +481,7 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
 
 #[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.brain.hidden_neurons = 200;
     let observed = count_allocations(|| {
         let result =
@@ -495,7 +495,7 @@ fn invalid_founder_params_do_not_allocate_a_plan() {
 
 #[test]
 fn spawn_and_despawn_never_allocate() {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 10_000;
     params.storage.max_memory_bytes = 192 * 1_048_576;
     let mut world = World::new(42, params).expect("valid params");
@@ -536,7 +536,7 @@ fn spawn_and_despawn_never_allocate() {
 fn rebuilding_and_querying_the_spatial_hash_never_allocates() {
     // This runs every tick for every agent — step 1 of the tick, then once per sensor
     // during perception. It is the hottest path in the simulation (spec §2.2c).
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 5_000;
     let mut world = World::new(9, params).expect("valid params");
     for i in 0..5_000 {
@@ -576,7 +576,7 @@ fn a_whole_tick_of_systems_never_allocates() {
     // the field update. Perception alone is expected to be 60–80% of tick cost once
     // vision is real (spec §2.2c) — it runs a spatial-hash query per eye per agent per
     // tick — so an allocation anywhere in here is the most expensive one in the project.
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 2_000;
     let mut world = World::new(13, params).expect("valid params");
     for i in 0..2_000 {
@@ -616,7 +616,7 @@ fn a_whole_tick_of_systems_never_allocates() {
 
 #[test]
 fn random_control_births_never_allocate() {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.reproduction.maturity_ticks = 0;
@@ -656,7 +656,7 @@ fn stepping_every_brain_never_allocates() {
     // Step 3 of the tick, run for every agent every tick (spec §2.4). The scratch
     // buffer the Euler step writes into is owned by the world and sized once; if it
     // ever becomes a per-agent `Vec` this is what says so.
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 2_000;
     let mut world = World::new(11, params).expect("valid params");
     for i in 0..2_000 {
@@ -681,7 +681,7 @@ fn stepping_every_brain_never_allocates() {
 #[test]
 fn a_full_pool_refuses_without_allocating() {
     // The interesting case: at the population ceiling, every birth is a rejection.
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 64;
     let mut world = World::new(1, params).expect("valid params");
     for i in 0..64 {
@@ -700,7 +700,7 @@ fn first_and_growing_command_batches_do_not_allocate_inside_a_tick() {
     use sim_core::command::{Command, Kind};
     use sim_core::species::SpeciesEventCounts;
 
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 32;
     params.plants.max_plants = 8;
     params.chemo.cells = [8, 8, 1];
@@ -740,7 +740,7 @@ fn draining_the_command_queue_never_allocates() {
     // cannot see that: its queue is empty, so the drain returns before touching either.
     use sim_core::command::{Command, Kind};
 
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 256;
     let mut world = World::new(21, params).expect("valid params");
 
@@ -782,7 +782,7 @@ fn writing_the_render_snapshot_never_allocates() {
     // growing WASM memory detaches every existing view, silently (spec §7.3).
     use sim_core::snapshot::Snapshot;
 
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 2_000;
     let mut world = World::new(23, params).expect("valid params");
     for i in 0..2_000 {

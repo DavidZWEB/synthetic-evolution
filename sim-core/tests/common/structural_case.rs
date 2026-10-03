@@ -13,7 +13,7 @@ pub const EVOLVING_GOLDEN: u64 = 0x2660_3990_31f1_6fa5;
 pub const CONTROL_GOLDEN: u64 = 0x2aeb_1b57_a4f9_75dd;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;

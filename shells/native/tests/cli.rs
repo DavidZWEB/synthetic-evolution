@@ -233,7 +233,8 @@ fn collected_runs_report_arena_pressure_separately_from_structural_edits() {
     let params = r#"{
         "world":{"size":100.0,"max_agents":2},
         "storage":{"genes_per_slot":142},
-        "sensing":{"vision_range":20.0,"chemo_radius":20.0},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},
+        "brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null},
         "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
         "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
         "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},
@@ -421,7 +422,8 @@ fn founder_storage_undersupply_is_an_error_with_or_without_metrics() {
     let params = temporary("undersupplied-params.json");
     fs::write(
         &params,
-        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142}}"#,
+        // Half the dense founder's 284 genes per slot (spec section 2.2a).
+        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142},"sensing":{"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},"brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null}}"#,
     )
     .unwrap();
     for metrics in [false, true] {

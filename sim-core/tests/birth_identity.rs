@@ -8,7 +8,7 @@ use sim_core::spawn::SpawnError;
 use sim_core::{SimParams, SpawnSpec, World};
 
 fn params(capacity: u32) -> SimParams {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = capacity;
     params.plants.max_plants = 0;
     params.species.capacity = 2;

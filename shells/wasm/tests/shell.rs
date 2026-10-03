@@ -479,7 +479,8 @@ fn arena_refusals_observe_seeding_and_natural_births_without_hiding_undersupply(
     let params = r#"{
         "world":{"size":100.0,"max_agents":2},
         "storage":{"genes_per_slot":142},
-        "sensing":{"vision_range":20.0,"chemo_radius":20.0},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},
+        "brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null},
         "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
         "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
         "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},

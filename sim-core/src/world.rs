@@ -897,7 +897,18 @@ mod tests {
         let mut w = small_world();
         let id = w.spawn_founder(Vec3::ZERO).unwrap();
         assert_eq!(w.brain(id).len(), w.founder_plan().neuron_count());
-        assert_eq!(w.wiring(id).len(), 240, "the founder is fully connected");
+        let planned = w
+            .founder_plan()
+            .genes()
+            .iter()
+            .filter(|gene| matches!(gene, Gene::Connection(_)))
+            .count();
+        assert!(planned > 0);
+        assert_eq!(
+            w.wiring(id).len(),
+            planned,
+            "every founder connection compiled"
+        );
         for synapse in w.wiring(id) {
             assert!(
                 synapse.from.index() < w.brain(id).len() && synapse.to.index() < w.brain(id).len(),
@@ -926,10 +937,11 @@ mod tests {
         let mut w = small_world();
         let id = w.spawn_founder(Vec3::ZERO).unwrap();
         let sensors = w.sensors.get(w.agents().sensors[id.index()]);
+        let sensing = &w.params().sensing;
         assert_eq!(
             sensors.len(),
-            w.params().sensing.vision_rays as usize + 2,
-            "the founding set is n eyes, a nose, and an interoceptor"
+            (sensing.vision_rays + sensing.chemo_sensors + sensing.energy_sensors) as usize,
+            "every founder sensor compiled"
         );
         for sensor in sensors {
             for target in &sensor.targets[..sensor.modality.channels()] {

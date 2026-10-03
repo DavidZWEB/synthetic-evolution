@@ -16,7 +16,7 @@ const FOUNDERS: u32 = 32;
 const TICKS: u64 = 500;
 
 fn run(mode: BrainInheritance) -> World {
-    let mut params = SimParams::default();
+    let mut params = SimParams::default().with_dense_founder();
     params.world.max_agents = 512;
     params.body.size = 1.5;
     params.metabolism.k_sensor = 0.003_125;

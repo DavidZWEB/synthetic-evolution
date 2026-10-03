@@ -1067,6 +1067,22 @@ impl Default for MovementParams {
     }
 }
 
+impl SimParams {
+    /// These params with Phase 1's dense founder (3 vision rays, chemo and energy
+    /// sensors, 6 hidden neurons, 2 oscillators, full connectivity), the shipped
+    /// default before Phase 2 M8. Kept for comparisons and for scenarios whose
+    /// coverage depends on dense topology; the shipped founder is minimal.
+    pub fn with_dense_founder(mut self) -> Self {
+        self.sensing.vision_rays = 3;
+        self.sensing.chemo_sensors = 1;
+        self.sensing.energy_sensors = 1;
+        self.brain.hidden_neurons = 6;
+        self.brain.oscillators = 2;
+        self.brain.connections_per_target = None;
+        self
+    }
+}
+
 impl Default for SensingParams {
     fn default() -> Self {
         Self {

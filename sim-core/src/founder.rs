@@ -484,7 +484,8 @@ mod tests {
             }),
         ];
         for (name, invalidate) in cases {
-            let mut params = SimParams::default();
+            // Dense, so the arena and connection-limit cases are actually exceeded.
+            let mut params = SimParams::default().with_dense_founder();
             invalidate(&mut params);
             let mut requested = 0;
             let mut rng = Rng::from_seed(42);
@@ -642,7 +643,7 @@ mod tests {
 
     #[test]
     fn full_connectivity_is_dense_with_identical_ids_scalars_and_rng() {
-        let params = SimParams::default();
+        let params = SimParams::default().with_dense_founder();
         let sources =
             FounderPlan::checked_counts(&params).unwrap().neurons - EFFECTORS.len() as u32;
         for seed in [0, 1, 42] {
@@ -670,7 +671,7 @@ mod tests {
 
     #[test]
     fn default_dense_connections_keep_source_major_innovation_order() {
-        let params = SimParams::default();
+        let params = SimParams::default().with_dense_founder();
         let plan = plan(&params);
         assert_eq!(plan.len(), 284);
         assert_eq!(plan.neuron_count(), 28);
@@ -1080,7 +1081,7 @@ mod tests {
         // The bound in `MutationParams::weight_limit` is where evolution may take a
         // weight; it is not where one should start. With 24 inputs per neuron the full
         // bound sums to order ±20 and every sigmoid saturates on tick one.
-        let params = SimParams::default();
+        let params = SimParams::default().with_dense_founder();
         let genes = instantiate(&plan(&params), &params, 5);
         let fan_in = 24.0;
         let expected = params.brain.weight_init_scale / crate::math::sqrt(fan_in);
@@ -1132,7 +1133,7 @@ mod tests {
 
     #[test]
     fn brain_width_tracks_the_parameters() {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().with_dense_founder();
         params.brain.hidden_neurons = 3;
         params.brain.oscillators = 2;
         params.sensing.vision_rays = 2;

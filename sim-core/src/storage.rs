@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn named_era_budgets_are_pinned_independently_of_inventory_deltas() {
-        let params = SimParams::default();
+        let params = SimParams::default().with_dense_founder();
         // Equal growth in every era leaves delta checks unchanged. Pin each named
         // inventory, not CURRENT, so future additions cannot silently rewrite history.
         for (era, expected_bytes) in [
@@ -475,7 +475,7 @@ mod tests {
 
     #[test]
     fn sparse_templates_charge_only_their_actual_connections() {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().with_dense_founder();
         let dense = StorageLayout::new(&params).unwrap().construction_bytes;
         let dense_connections = FounderPlan::checked_counts(&params).unwrap().synapses;
         for fan_in in [0, 1, 2, 24, u32::MAX] {
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn sparse_limits_do_not_require_space_for_a_dense_counterpart() {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().with_dense_founder();
         params.brain.hidden_neurons = 64;
         assert_eq!(
             params.validate().unwrap_err(),
@@ -688,7 +688,7 @@ mod tests {
             ),
         ];
         for (change, message) in cases {
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().with_dense_founder();
             change(&mut params);
             assert_eq!(params.validate().unwrap_err(), ParamError(message));
         }
@@ -720,7 +720,7 @@ mod tests {
             ),
         ];
         for (change, message) in cases {
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().with_dense_founder();
             params.world.max_agents = 1;
             change(&mut params);
             assert_eq!(params.validate().unwrap_err(), ParamError(message));

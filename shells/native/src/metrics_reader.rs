@@ -530,6 +530,7 @@ mod tests {
         .unwrap()
     }
 
+    /// Dense-founder headers: every legacy schema these tests exercise ran it.
     fn final_records() -> [serde_json::Value; 2] {
         [
             serde_json::to_value(MetricsRecord::Header(Box::new(RunHeader {
@@ -541,7 +542,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default(),
+                params: SimParams::default().with_dense_founder(),
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
             })))
             .unwrap(),
@@ -792,7 +793,7 @@ mod tests {
         }
         let legacy = parse_values(&records).unwrap();
         assert_eq!(legacy.header.control, "randomized_at_birth_v2");
-        let mut expected_params = SimParams::default();
+        let mut expected_params = SimParams::default().with_dense_founder();
         expected_params.species.capacity = 0;
         assert_eq!(legacy.header.params, expected_params);
         for cohort in [
@@ -854,7 +855,7 @@ mod tests {
     #[test]
     fn all_historical_schemas_keep_their_tight_preclassification_budget() {
         for schema in [3, 4, 5] {
-            let mut params = SimParams::default();
+            let mut params = SimParams::default().with_dense_founder();
             params.world.max_agents = 2;
             params.plants.max_plants = 8;
             params.species.capacity = 0;
@@ -925,7 +926,7 @@ mod tests {
         let mut records = final_records();
         records[0]["data"]["schema_version"] = 6.into();
         strip_schema_eight_observations(&mut records);
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().with_dense_founder();
         params.world.max_agents = 2;
         params.plants.max_plants = 8;
         params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
@@ -1147,6 +1148,35 @@ mod tests {
     }
 
     #[test]
+    fn pre_m3_schemas_restore_the_dense_founder_they_ran() {
+        for schema in [3, 4] {
+            let mut records = final_records();
+            set_legacy_header(&mut records, schema);
+            for (section, field) in [
+                ("sensing", "chemo_sensors"),
+                ("sensing", "energy_sensors"),
+                ("brain", "connections_per_target"),
+            ] {
+                records[0]["data"]["params"][section]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field);
+            }
+            let legacy = parse_values(&records).expect("omitted M3 fields are restored");
+            let params = &legacy.header.params;
+            assert_eq!(
+                (
+                    params.sensing.chemo_sensors,
+                    params.sensing.energy_sensors,
+                    params.brain.connections_per_target
+                ),
+                (1, 1, None),
+                "schema {schema} took today's founder defaults"
+            );
+        }
+    }
+
+    #[test]
     fn legacy_protocols_reject_m3_behavior_but_current_accepts_it() {
         for (path, value) in [
             (
@@ -1218,7 +1248,7 @@ mod tests {
             ticks: 10,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default(),
+            params: SimParams::default().with_dense_founder(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let records = [
@@ -1252,7 +1282,7 @@ mod tests {
             ticks: 0,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default(),
+            params: SimParams::default().with_dense_founder(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let final_sample = RunSample {
@@ -1283,7 +1313,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_header_params() {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().with_dense_founder();
         params.world.dt = 0.0;
         let records = [
             MetricsRecord::Header(Box::new(RunHeader {
@@ -1336,7 +1366,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default(),
+                params: SimParams::default().with_dense_founder(),
                 control: "randomized_at_birth".to_owned(),
             }));
             let jsonl = serde_json::to_string(&header).unwrap();
