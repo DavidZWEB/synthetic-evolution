@@ -8,7 +8,11 @@
   import { createSpeciesController } from './species/controller.js';
   import { createHistorySession } from './history/controller.js';
   import { parseArchive } from './history/archive.js';
-  import { DEFAULT_LIMITS, openHistoryStore } from './history/store.js';
+  import { openHistoryStore } from './history/store.js';
+  import {
+    MAX_CORE_BYTES, MAX_SAVED_RUN_BYTES, cohortFor, manifestFor, sectionsFor, sectionsOf,
+    segmentsFor, validateSegments,
+  } from './saved-run/saved-run.js';
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
   import { createInspectorController } from './inspect/controller.js';
@@ -77,6 +81,12 @@
   let activeHistoryId = $state(null);
   let historySession = null;
   let historyStore = null;
+  /**
+   * Where the current world came from: a fresh seed, or a loaded saved run whose
+   * provenance and restored history segments are carried into its next save.
+   */
+  let runOrigin = { provenance: null, restored: [], startTick: 0n, runId: null };
+  let checkpointSerial = 0;
   let disposed = false;
   let showSpecies = $state(false);
   let speciesSample = $state(null);
@@ -110,22 +120,19 @@
     }
   }
 
-  function downloadHistory(text, id) {
-    const url = URL.createObjectURL(new Blob([text], { type: 'application/x-ndjson' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `species-history-${id}.jsonl`;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  async function wasmModule() {
+    const wasm = await import('./wasm/wasm.js');
+    await wasm.default();
+    return wasm;
   }
 
-  function exportHistory(id) {
-    return historyAction(async () => {
-      const text = historySession?.active && historySession.id === id
-        ? await historySession.boundary('snapshot')
-        : await (await getHistoryStore()).exportArchive(id);
-      downloadHistory(text, id);
-    });
+  function download(bytes, name) {
+    const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function deleteHistory(id) {
@@ -137,22 +144,120 @@
     });
   }
 
-  function importHistory(file) {
+  /** Bounded like history boundaries, so a replaced or failed worker cannot wedge saving. */
+  function requestCheckpoint(timeoutMs = 15_000) {
+    const requestId = ++checkpointSerial;
+    const owner = sim;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error('The world did not answer the save request; try again'));
+      }, timeoutMs);
+      const off = owner.on('checkpoint', (message) => {
+        if (message.requestId !== requestId) return;
+        off();
+        clearTimeout(timer);
+        if (message.checkpoint) resolve(message);
+        else reject(new Error(message.message ?? 'checkpoint failed'));
+      });
+      owner.requestCheckpoint(requestId);
+    });
+  }
+
+  /**
+   * Save run: the world's checkpoint and its available history at one boundary
+   * (spec §7.10). A live recording supplies both from the same drain; otherwise the
+   * world's stopped or incomplete archive is included as far as it reached.
+   */
+  function saveRun() {
     return historyAction(async () => {
-      if (file.size > DEFAULT_LIMITS.perRunBytes) {
-        throw new Error('History file exceeds the 10 MiB per-run limit');
+      if (!sim || !activeRun) throw new Error('No world to save');
+      const wasm = await wasmModule();
+      let saved;
+      let archive = null;
+      if (historySession?.active) {
+        saved = await historySession.boundary('snapshot', { checkpoint: true });
+        archive = { text: saved.archive, end: saved.tick };
+      } else {
+        saved = await requestCheckpoint();
+        if (activeHistoryId) {
+          const text = await (await getHistoryStore()).exportArchive(activeHistoryId);
+          archive = { text, end: (await parseArchive(text)).completion.data.ticks };
+        }
       }
-      const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
-        .decode(await file.arrayBuffer());
-      const { default: init, validate_params, validate_representative } = await import('./wasm/wasm.js');
-      await init();
-      const archive = await parseArchive(
+      const segments = segmentsFor({
+        restored: runOrigin.restored, startTick: runOrigin.startTick, tick: saved.tick, archive,
+      });
+      const writer = { sim_version: wasm.version(), source_revision: __SOURCE_REVISION__ };
+      const manifest = manifestFor({
+        provenance: runOrigin.provenance ?? {
+          ...writer, phase: 2, seed: activeRun.seed, founders: activeRun.founders,
+          control: 'randomized_at_birth_v3', run_id: runOrigin.runId,
+        },
+        writer,
+        checkpointFormat: wasm.checkpoint_format(),
+        tick: saved.tick,
+        cohort: cohortFor(activeRun.brainInheritance),
+        stateHash: saved.stateHash,
+        checkpoint: saved.checkpoint,
+        segments,
+      });
+      const bytes = wasm.encode_saved_run(JSON.stringify(manifest), sectionsFor(saved.checkpoint, segments));
+      download(bytes, `synthetic-evolution-seed-${activeRun.seed}-tick-${saved.tick}.sevrun`);
+      historyMessage = `Saved run at tick ${saved.tick}.`;
+    });
+  }
+
+  /**
+   * Load run: validates the whole bundle before replacing anything, keeps its history,
+   * and restores the world paused. A paired native run loads its evolving cohort.
+   */
+  function loadRun(file) {
+    return historyAction(async () => {
+      if (file.size > MAX_SAVED_RUN_BYTES) throw new Error('Saved run exceeds the 256 MiB limit');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const wasm = await wasmModule();
+      const decoded = JSON.parse(wasm.decode_saved_run(bytes, MAX_SAVED_RUN_BYTES, MAX_CORE_BYTES));
+      const manifest = decoded.manifest;
+      const { checkpoints, texts } = sectionsOf(bytes, decoded);
+      const segments = await validateSegments(manifest, texts, (text) => parseArchive(
         text,
-        (params) => JSON.parse(validate_params(JSON.stringify(params))),
-        (genes, params) => validate_representative(JSON.stringify(genes), JSON.stringify(params)),
-      );
-      await (await getHistoryStore()).importArchive(archive);
-      historyMessage = 'History imported. No simulation was started or resumed.';
+        (params) => JSON.parse(wasm.validate_params(JSON.stringify(params))),
+        (genes, params) => wasm.validate_representative(JSON.stringify(genes), JSON.stringify(params)),
+      ));
+      const store = await getHistoryStore();
+      const imported = [];
+      try {
+        for (const { archive } of segments) {
+          if (archive) imported.push(await store.importArchive(archive));
+        }
+      } catch (error) {
+        for (const id of imported) await store.delete(id);
+        throw error;
+      }
+      const index = Math.max(0, manifest.cohorts.findIndex(({ cohort }) => cohort === 'evolving'));
+      const cohort = manifest.cohorts[index].cohort;
+      const started = await activateRun({
+        seed: manifest.provenance.seed,
+        founders: manifest.provenance.founders,
+        params: null,
+        brainInheritance: cohort === 'evolving' ? EVOLVING : 'randomized_at_birth',
+        source: 'load',
+        load: {
+          checkpoint: checkpoints[index].slice(),
+          origin: {
+            provenance: manifest.provenance,
+            restored: segments.map(({ segment, text }) => ({ segment, text })),
+            startTick: BigInt(manifest.tick),
+            runId: manifest.provenance.run_id ?? crypto.randomUUID(),
+          },
+        },
+      });
+      if (!started) {
+        for (const id of imported) await store.delete(id);
+        throw new Error('Another run change was in progress; load the saved run again');
+      }
+      historyMessage = `Loaded saved run at tick ${manifest.tick}, paused.`;
     });
   }
 
@@ -225,8 +330,9 @@
     requestRun({ seed, founders, params: runParams, brainInheritance }, 'reseed');
   }
 
+  /** Returns false, changing nothing, when another run change is already in progress. */
   async function activateRun(next) {
-    if (transitioning) return;
+    if (transitioning) return false;
     transitioning = true;
     const oldSession = historySession;
     try {
@@ -239,7 +345,7 @@
     }
     oldSession?.detach();
     historySession = null;
-    if (disposed) return;
+    if (disposed) return false;
     sim?.destroy();
     sim = null;
     validating = false;
@@ -262,8 +368,9 @@
     metricSamples = [];
     inspector.select(null);
     species.reset();
-    start();
+    start(next.load ?? null);
     transitioning = false;
+    return true;
   }
 
   function requestRun(next, source) {
@@ -298,15 +405,19 @@
     }
   }
 
-  function start() {
+  function start(load = null) {
     failure = null;
     transport = null;
     const startingSource = runSource;
     const previousShareUrl = shareUrl;
     const historyRunId = captureNext ? crypto.randomUUID() : null;
+    runOrigin = load?.origin ?? {
+      provenance: null, restored: [], startTick: 0n, runId: historyRunId ?? crypto.randomUUID(),
+    };
     const nextSim = createSim({
       seed, founders, params: runParams, brainInheritance, historyRunId,
       historyRepresentatives: Boolean(historyRunId) && captureRepresentatives,
+      checkpoint: load?.checkpoint ?? null,
     });
     sim = nextSim;
     activeHistoryId = null;
@@ -571,8 +682,8 @@
         busy={historyBusy || transitioning}
         onclose={() => (showHistory = false)}
         onrefresh={() => historyAction(refreshHistory)}
-        onimport={importHistory}
-        onexport={exportHistory}
+        onsave={saveRun}
+        onload={loadRun}
         ondelete={deleteHistory}
         onstop={() => historyAction(() => historySession?.boundary('stopped'))}
       />

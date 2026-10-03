@@ -2,7 +2,7 @@
   let {
     captureNext, oncapture, captureRepresentatives, onrepresentatives,
     runs, activeId, captureStatus, message, busy,
-    onclose, onrefresh, onimport, onexport, ondelete, onstop,
+    onclose, onrefresh, onsave, onload, ondelete, onstop,
   } = $props();
 </script>
 
@@ -31,34 +31,39 @@
     <button onclick={onstop} disabled={busy}>stop recording</button>
   {/if}
   {#if message}<p class="notice" role="status">{message}</p>{/if}
-  <p class="help">
-    Saved locally per run, not per seed. Reload restores these archives, not the simulation.
-    Open archives may still be active in another tab; exported open archives are incomplete.
-  </p>
-  <p class="help">
-    Limits: 10 MiB / run, 50 MiB total, 20 runs (serialized data).
-    No automatic deletion. Browser storage can be cleared or evicted: export important runs.
-  </p>
   <div class="actions">
+    <button onclick={onsave} disabled={busy}>save run</button>
     <label class="import">
-      import JSONL
-      <input type="file" accept=".jsonl,application/x-ndjson,application/json"
+      load run
+      <input type="file" accept=".sevrun,application/octet-stream"
         disabled={busy}
         onchange={(event) => {
           const file = event.currentTarget.files?.[0];
-          if (file) onimport(file);
+          if (file) onload(file);
           event.currentTarget.value = '';
         }} />
     </label>
-    <button onclick={onrefresh} disabled={busy}>refresh saved runs</button>
+  </div>
+  <p class="help">
+    Save run downloads the world exactly as it is now, with whatever history it has. Load run
+    restores one, paused, and keeps its history. History-only files are a command-line tool.
+  </p>
+  <p class="help">
+    History is kept locally per run, not per seed. Reload restores these archives, not the
+    simulation. Open archives may still be active in another tab.
+  </p>
+  <p class="help">
+    Limits: 10 MiB / run, 50 MiB total, 20 runs (serialized data). No automatic deletion.
+    Browser storage can be cleared or evicted: save important runs.
+  </p>
+  <div class="actions">
+    <button onclick={onrefresh} disabled={busy}>refresh history</button>
   </div>
   {#if runs.length === 0}
     <p>No saved histories.</p>
   {/if}
   <ul>
     {#each runs as run (run.id)}
-      {@const exportLabel = run.id === activeId && captureStatus === 'recording'
-        ? 'export snapshot' : 'export'}
       <li>
         <strong>seed {run.seed}</strong>
         <span>{run.cohorts.join(' + ')}</span>
@@ -67,10 +72,6 @@
           ? 'recording in this tab' : 'unfinalized / possibly active')}</span>
         <span>{run.eventCount} events · {run.gapCount} gaps · {(run.bytes / 1024).toFixed(1)} KiB</span>
         <div class="actions">
-          <button disabled={busy} onclick={() => onexport(run.id)}
-            aria-label={`${exportLabel} for archive ${run.id} (seed ${run.seed})`}>
-            {exportLabel}
-          </button>
           <button disabled={busy} onclick={() => ondelete(run.id)}
             aria-label={`delete archive ${run.id} (seed ${run.seed})`}>delete</button>
         </div>

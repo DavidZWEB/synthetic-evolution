@@ -143,7 +143,10 @@ export function createHistorySession({
         // The snapshot string is materialized before releasing the worker: a later
         // batch must not leak into an export carrying an earlier boundary/hash.
         sim.acknowledgeHistory(batch.batchId);
-        settle(batch.requestId, null, exported);
+        const request = requests.get(batch.requestId);
+        settle(batch.requestId, null, request?.checkpoint
+          ? { archive: exported, checkpoint: batch.checkpoint, tick: batch.tick, stateHash: batch.stateHash }
+          : exported);
         await onSaved();
       });
       if (batch.captureEnd && batch.captureEnd !== 'snapshot') closingWork = work;
@@ -160,6 +163,10 @@ export function createHistorySession({
           void closingWork.then(async () => {
             const request = requests.get(requestId);
             if (!request) return;
+            if (request.checkpoint) {
+              settle(requestId, new Error('History closed before the save boundary; save again'));
+              return;
+            }
             const exported = request.captureEnd === 'snapshot'
               ? await (await getStore()).exportArchive(id) : null;
             settle(requestId, null, exported);
@@ -180,7 +187,8 @@ export function createHistorySession({
       await boundaryWork;
       if (closingWork && (state === 'starting' || state === 'recording')) await waitForClosing();
     },
-    boundary(captureEnd) {
+    /** With `checkpoint`, a snapshot resolves `{ archive, checkpoint, tick, stateHash }`. */
+    boundary(captureEnd, { checkpoint = false } = {}) {
       if (state !== 'starting' && state !== 'recording') {
         return Promise.reject(new Error('History capture is not active'));
       }
@@ -188,9 +196,9 @@ export function createHistorySession({
       const requestId = ++requestSerial;
       const work = new Promise((resolve, reject) => {
         const timer = setTimeout(timeoutCapture, timeoutMs);
-        requests.set(requestId, { resolve, reject, timer, captureEnd });
+        requests.set(requestId, { resolve, reject, timer, captureEnd, checkpoint });
         ready.then(() => {
-          if (requests.has(requestId)) sim.historyBoundary(captureEnd, requestId);
+          if (requests.has(requestId)) sim.historyBoundary(captureEnd, requestId, checkpoint);
         });
       });
       boundaryWork = work;

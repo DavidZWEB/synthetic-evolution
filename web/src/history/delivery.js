@@ -56,6 +56,9 @@ export function createHistoryDelivery({ sim, cohort, send }) {
         active = false;
         sim.disable_history();
       }
+      // Taken after the drain and before any further step, so a saved run's
+      // checkpoint and history describe the same boundary (spec §7.10).
+      const checkpoint = boundary?.checkpoint ? sim.checkpoint() : undefined;
       const message = {
         kind: 'historyBatch',
         batchId: ++serial,
@@ -69,6 +72,7 @@ export function createHistoryDelivery({ sim, cohort, send }) {
         captureEnd,
         stateHash,
         requestId: boundary?.requestId,
+        ...(checkpoint ? { checkpoint } : {}),
       };
       pending = null;
       inFlight = message;
@@ -93,10 +97,12 @@ export function createHistoryDelivery({ sim, cohort, send }) {
       inFlight = null;
       pump();
     },
-    boundary(captureEnd, requestId, apply) {
+    boundary(captureEnd, requestId, apply, checkpoint = false) {
       // One requested barrier can share a queued retune's prefix. If the retune
-      // fails validation, that request still needs its own boundary.
-      if (active && pending?.apply && pending.requestId == null && !apply && requestId != null) {
+      // fails validation, that request still needs its own boundary. A save cannot:
+      // the retune applies before the drain, so its checkpoint would carry new params.
+      if (active && pending?.apply && pending.requestId == null && !apply && requestId != null &&
+        !checkpoint) {
         pending.requestId = requestId;
         pending.fallbackEnd = captureEnd;
         return true;
@@ -110,7 +116,7 @@ export function createHistoryDelivery({ sim, cohort, send }) {
         });
         return false;
       }
-      pending = { captureEnd, requestId, apply };
+      pending = { captureEnd, requestId, apply, checkpoint };
       pump();
       return true;
     },

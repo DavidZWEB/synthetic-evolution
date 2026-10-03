@@ -11,7 +11,7 @@ import { EVOLVING } from './brain-inheritance.js';
 
 export function createSim({
   seed, founders, params = null, brainInheritance = EVOLVING, historyRunId = null,
-  historyRepresentatives = false,
+  historyRepresentatives = false, checkpoint = null,
 }) {
   const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
 
@@ -21,6 +21,7 @@ export function createSim({
     ready: [],
     inspection: [],
     species: [],
+    checkpoint: [],
     metrics: [],
     error: [],
     params: [],
@@ -74,6 +75,7 @@ export function createSim({
 
   worker.postMessage({
     kind: 'create', seed, params, founders, brainInheritance, historyRunId, historyRepresentatives,
+    checkpoint,
   });
 
   const send = (kind, payload = {}) => {
@@ -103,7 +105,9 @@ export function createSim({
     requestHash: () => send('hash'),
     requestSpecies: (requestId) => send('species', { requestId }),
     acknowledgeHistory: (batchId, error) => send('historyAck', { batchId, error }),
-    historyBoundary: (captureEnd, requestId) => send('historyBoundary', { captureEnd, requestId }),
+    historyBoundary: (captureEnd, requestId, checkpoint = false) =>
+      send('historyBoundary', { captureEnd, requestId, checkpoint }),
+    requestCheckpoint: (requestId) => send('checkpoint', { requestId }),
     stopHistory: (message) => send('historyStop', { message }),
     validateRun: (seed, founders, params, brainInheritance, requestId) =>
       send('validateRun', { seed, founders, params, brainInheritance, requestId }),

@@ -408,3 +408,22 @@ fn resumed_segments_reject_events_outside_them_and_unsafe_outputs() {
         .contains("must not overwrite")
     );
 }
+
+/// The browser suite loads this native bundle; if the checkpoint or container format
+/// changes, regenerate it with `--save-run` (see docs/development.md, Saved runs).
+#[test]
+fn the_shared_native_fixture_remains_a_valid_resumable_saved_run() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/saved-run-native.sevrun");
+    let scratch = Scratch::new();
+    let manifest = manifest(&fixture);
+    assert_eq!(manifest["tick"], "60");
+    assert_eq!(manifest["history"][0]["status"], "included");
+    success(
+        native()
+            .arg("resume")
+            .arg(&fixture)
+            .args(["--ticks", "10", "--save-run"])
+            .arg(scratch.path("continued.sevrun")),
+    );
+}
