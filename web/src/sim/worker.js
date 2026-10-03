@@ -17,7 +17,7 @@
  */
 
 import init, { Sim, random_control, validate_params, version } from '../wasm/wasm.js';
-import { createHeader } from '../history/archive.js';
+import { createHeader, REPRESENTATIVE_GENES } from '../history/archive.js';
 import { createHistoryDelivery } from '../history/delivery.js';
 import {
   EVOLVING,
@@ -120,7 +120,9 @@ const scheduler = createTickScheduler({
 });
 
 const handlers = {
-  async create({ seed, params, founders, brainInheritance, historyRunId }) {
+  async create({
+    seed, params, founders, brainInheritance, historyRunId, historyRepresentatives = false,
+  }) {
     const wasm = await init();
     memory = wasm.memory;
 
@@ -139,7 +141,7 @@ const handlers = {
       normalizedFounders = founderCount(founders, hints.agent_capacity);
       if (historyRunId) {
         try {
-          nextSim.enable_history(4096);
+          nextSim.enable_history(4096, historyRepresentatives ? REPRESENTATIVE_GENES : undefined);
           historyHeader = createHeader({
             runId: historyRunId,
             seed: normalizedSeed.toString(),
@@ -148,6 +150,7 @@ const handlers = {
             brainInheritance: normalizedInheritance,
             simVersion: version(),
             sourceRevision: __SOURCE_REVISION__,
+            representatives: historyRepresentatives,
           });
         } catch (error) {
           nextSim.disable_history();

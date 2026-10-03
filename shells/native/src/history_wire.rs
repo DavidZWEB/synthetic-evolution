@@ -6,7 +6,6 @@
 //! admissions, not complete genealogy.
 
 use serde::{Deserialize, Deserializer, Serialize};
-use sim_core::genome::Gene;
 use sim_core::params::SimParams;
 
 use crate::metrics::RunHeader;
@@ -14,7 +13,9 @@ use crate::metrics::RunHeader;
 #[path = "../../shared/history_event_wire.rs"]
 mod history_event_wire;
 use history_event_wire::required_option;
-pub(crate) use history_event_wire::{Decimal, EventRecord, ParentRecord};
+pub(crate) use history_event_wire::{
+    Decimal, EventRecord, ParentRecord, RepresentativeRecord, UnavailableRepresentative,
+};
 
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 pub(crate) const BROWSER_SCHEMA_VERSION: u32 = 2;
@@ -106,25 +107,6 @@ impl Header {
             params: run.params.clone(),
         })
     }
-}
-
-/// A species' representative genome at origin, or why it was not archived.
-///
-/// Unavailable is final: nothing later may reconstruct it from descendants (spec §3.4).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
-pub(crate) enum RepresentativeRecord {
-    Recorded { genes: Vec<Gene> },
-    Unavailable { reason: UnavailableRepresentative },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum UnavailableRepresentative {
-    /// The bounded staging buffer was full when the species originated.
-    CapturePressure,
-    /// The origin record with its genome would exceed the archive line limit.
-    LineLimit,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

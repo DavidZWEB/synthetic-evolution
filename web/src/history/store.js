@@ -155,7 +155,7 @@ export async function openHistoryStore({ limits: overrides = {} } = {}) {
     async create(header) {
       header = structuredClone(header);
       validateHeader(header);
-      requireThat(header.data.schema_version === 2, 'live capture requires schema v2');
+      requireThat(Object.hasOwn(header.data, 'run_id'), 'live capture requires the browser archive shape');
       return insert({ header, rows: [], completion: null }, false);
     },
 

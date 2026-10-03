@@ -25,7 +25,6 @@ use wasm_bindgen::prelude::*;
 
 use sim_core::command::Command;
 use sim_core::control::BrainInheritance;
-use sim_core::history::Recorder;
 use sim_core::ids::{AgentId, BirthId};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
@@ -35,12 +34,16 @@ use sim_core::species::SpeciesEventCounts;
 use sim_core::world::World;
 
 // The native metrics reader also uses this module's validation helpers.
+#[path = "../../shared/cohort_capture.rs"]
+mod cohort_capture;
 #[allow(dead_code)]
 #[path = "../../shared/complexity.rs"]
 mod complexity;
 mod history;
 #[path = "../../shared/history_event_wire.rs"]
 mod history_event_wire;
+
+use cohort_capture::CohortCapture;
 
 /// Crate version, so the worker can assert it matches the JS bundle it shipped with.
 #[wasm_bindgen]
@@ -184,7 +187,7 @@ pub struct Sim {
     spawn_failures: SpawnFailureCounts,
     structural_mutations: StructuralMutationCounts,
     species_events: SpeciesEventCounts,
-    history: Option<Recorder>,
+    history: Option<CohortCapture>,
     history_enable_closed: bool,
 }
 
@@ -254,11 +257,11 @@ impl Sim {
         let counts = &mut self.spawn_failures;
         let species = &mut self.species_events;
         let placed = match &mut self.history {
-            Some(recorder) => self.world.seed_founders_with_history_observer(
+            Some(capture) => self.world.seed_founders_with_history_observer(
                 count,
                 |error| counts.record(error),
                 |event| species.record(event),
-                |event, _| history::record(recorder, event),
+                |event, representative| capture.record(event, representative),
             ),
             None => self.world.seed_founders_with_observers(
                 count,
@@ -277,13 +280,13 @@ impl Sim {
         let mutations = &mut self.structural_mutations;
         let species = &mut self.species_events;
         match &mut self.history {
-            Some(recorder) => {
+            Some(capture) => {
                 for _ in 0..ticks {
                     self.world.step_with_history_observer(
                         |error| counts.record(error),
                         |event| mutations.record(event),
                         |event| species.record(event),
-                        |event, _| history::record(recorder, event),
+                        |event, representative| capture.record(event, representative),
                     );
                 }
             }

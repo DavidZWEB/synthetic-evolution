@@ -45,7 +45,7 @@ async function withPage(mode, run, { beforeLoad } = {}) {
 async function openCapture(page) {
   await page.getByRole('button', { name: 'history', exact: true }).click();
   const panel = page.getByRole('region', { name: 'Species history' });
-  await panel.getByRole('checkbox').check();
+  await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
   await page.getByRole('button', { name: 'reseed', exact: true }).click();
   await page.getByRole('button', { name: 'history (recording)', exact: true }).waitFor();
   await panel.getByText('recording in this tab', { exact: true }).waitFor();
@@ -119,7 +119,7 @@ for (const failureKind of ['worker', 'renderer']) {
       } else {
         await page.getByRole('button', { name: 'history', exact: true }).click();
         panel = page.getByRole('region', { name: 'Species history' });
-        await panel.getByRole('checkbox').check();
+        await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
         await page.evaluate(() => { globalThis.failHistoryRenderer = true; });
         await page.getByRole('button', { name: 'reseed', exact: true }).click();
       }
@@ -153,6 +153,56 @@ for (const failureKind of ['worker', 'renderer']) {
   });
 }
 
+test('representative genomes are opt-in, archived at origin, and re-import with WASM validation',
+  { timeout: 60_000 }, async () => {
+    await withPage('development', async (page) => {
+      await page.getByRole('button', { name: 'history', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Species history' });
+      const include = panel.getByRole('checkbox', { name: 'include representative genomes' });
+      assert.equal(await include.isDisabled(), true, 'genomes require recording');
+      await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
+      await include.check();
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await panel.getByText('recording in this tab', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() => [...document.querySelectorAll('header dt')]
+        .find((node) => node.textContent === 'tick')?.nextElementSibling?.textContent === '1');
+      const text = await download(page, panel.getByRole('button', { name: 'export snapshot' }));
+      const snapshot = await parseArchive(text);
+      assert.equal(snapshot.header.data.schema_version, 3);
+      assert.equal(snapshot.header.data.representative_genes, 65_536);
+      const origins = snapshot.rows.filter((row) => row.data.event?.kind === 'species_origin');
+      assert.ok(origins.length > 0, 'founders originated species');
+      for (const row of origins) {
+        assert.equal(row.data.representative.status, 'recorded');
+        assert.ok(row.data.representative.genes.length > 0);
+      }
+      const counts = snapshot.completion.data.cohorts[0].counts;
+      assert.equal(counts.representatives, String(origins.length));
+      assert.equal(counts.unavailable_representatives, '0');
+
+      await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
+      await panel.getByText('stopped', { exact: true }).last().waitFor();
+      await panel.locator('input[type=file]').setInputFiles({
+        name: 'representatives.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(text),
+      });
+      await panel.getByText('History imported. No simulation was started or resumed.').waitFor();
+
+      const tampered = await parseArchive(text);
+      const genes = tampered.rows.find((row) => row.data.representative?.genes).data.representative.genes;
+      [genes[0], genes[1]] = [genes[1], genes[0]];
+      await panel.locator('input[type=file]').setInputFiles({
+        name: 'unsorted.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(encodeArchive(tampered)),
+      });
+      await page.waitForFunction(() => /representative/.test(
+        document.querySelector('.history-panel [role=status]')?.textContent ?? ''));
+      for (const width of [390, 320]) {
+        await page.setViewportSize({ width, height: 844 });
+        assert.equal(await panel.evaluate((node) => node.scrollWidth > node.clientWidth), false);
+      }
+    });
+  });
+
 for (const mode of ['development', 'transferable']) {
   test(`saved histories are per-run, round-trip prefixes, and never resume Worlds (${mode})`,
     { timeout: 60_000 }, async () => {
@@ -182,7 +232,7 @@ for (const mode of ['development', 'transferable']) {
         await page.reload();
         await page.getByRole('button', { name: 'history', exact: true }).click();
         panel = page.getByRole('region', { name: 'Species history' });
-        assert.equal(await panel.getByRole('checkbox').isChecked(), false);
+        assert.equal(await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).isChecked(), false);
         await page.waitForFunction(() => document.querySelectorAll('.history-panel li').length === 2);
         await panel.locator('input[type=file]').setInputFiles({
           name: 'snapshot.jsonl', mimeType: 'application/x-ndjson', buffer: Buffer.from(text),

@@ -2,6 +2,20 @@
  * Acknowledged worker history delivery, independent of snapshot publication.
  * Only one drained batch can be outside the bounded WASM recorder at a time.
  */
+import { byteLength, MAX_LINE_BYTES } from './json-lines.js';
+
+/** A genome that would push its origin past the line limit is archived as unavailable. */
+function withinLineLimit(row) {
+  if (row.data.representative?.status === 'recorded' &&
+    byteLength(`${JSON.stringify(row)}\n`) > MAX_LINE_BYTES) {
+    return {
+      ...row,
+      data: { ...row.data, representative: { status: 'unavailable', reason: 'line_limit' } },
+    };
+  }
+  return row;
+}
+
 export function createHistoryDelivery({ sim, cohort, send }) {
   let active = true;
   let inFlight = null;
@@ -45,7 +59,7 @@ export function createHistoryDelivery({ sim, cohort, send }) {
       const message = {
         kind: 'historyBatch',
         batchId: ++serial,
-        rows: batch.records.map((row) => ({
+        rows: batch.records.map((row) => withinLineLimit({
           kind: row.kind,
           data: { cohort, ...row.data },
         })),

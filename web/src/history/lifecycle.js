@@ -2,17 +2,44 @@
 import { birthId, decimal, object, requireThat, speciesId, U64_MAX } from './shape.js';
 
 export const COUNT_KEYS = ['next_sequence', 'events', 'dropped_events', 'gaps', 'origins', 'extinctions'];
+const REPRESENTATIVE_COUNT_KEYS = ['representatives', 'unavailable_representatives'];
+const UNAVAILABLE_REASONS = ['capture_pressure', 'line_limit'];
 
-export function newState() {
+/** Footer count keys; schema 3 adds recorded and unavailable representatives. */
+export function countKeys(representatives) {
+  return representatives ? [...COUNT_KEYS, ...REPRESENTATIVE_COUNT_KEYS] : COUNT_KEYS;
+}
+
+export function newState(representatives = false) {
   return {
-    counts: Object.fromEntries(COUNT_KEYS.map((key) => [key, 0n])),
+    counts: Object.fromEntries(countKeys(representatives).map((key) => [key, 0n])),
+    representatives,
     lastTick: null, greatestSpecies: null, lastFounder: null,
     birthIdsExhausted: false, active: new Map(), hasGap: false,
   };
 }
 
 export function wireCounts(state) {
-  return Object.fromEntries(COUNT_KEYS.map((key) => [key, String(state.counts[key])]));
+  return Object.fromEntries(Object.keys(state.counts).map((key) => [key, String(state.counts[key])]));
+}
+
+/**
+ * Structure only: live genomes come from the core classifier, and imports check
+ * coherence with the WASM validator. Unavailable is final, never reconstructed (§3.4).
+ */
+function representative(state, value, params) {
+  object(value, value?.status === 'recorded' ? ['status', 'genes'] : ['status', 'reason'], 'representative');
+  if (value.status === 'recorded') {
+    requireThat(Array.isArray(value.genes) && value.genes.length <= params.storage.max_genes,
+      'representative genome is not an array within storage.max_genes');
+    requireThat(value.genes.every((gene) => gene !== null && typeof gene === 'object' && !Array.isArray(gene)),
+      'representative genes must be objects');
+    state.counts.representatives++;
+  } else {
+    requireThat(value.status === 'unavailable' && UNAVAILABLE_REASONS.includes(value.reason),
+      'unknown representative status or unavailable reason');
+    state.counts.unavailable_representatives++;
+  }
 }
 
 function parent(value, species, founder) {
@@ -85,7 +112,10 @@ export function acceptRow(state, row, params, boundary, founders) {
     return;
   }
   requireThat(row.kind === 'event', 'expected an event or gap');
-  object(data, ['cohort', 'sequence', 'tick', 'event'], 'event data');
+  // Schema 3 requires a representative on every origin and forbids it elsewhere.
+  const carriesRepresentative = state.representatives && data?.event?.kind === 'species_origin';
+  object(data, carriesRepresentative ? ['cohort', 'sequence', 'tick', 'event', 'representative']
+    : ['cohort', 'sequence', 'tick', 'event'], 'event data');
   const sequence = decimal(data.sequence);
   const tick = decimal(data.tick, 'event tick');
   requireThat(sequence === state.counts.next_sequence && sequence !== U64_MAX,
@@ -95,6 +125,7 @@ export function acceptRow(state, row, params, boundary, founders) {
   requireThat(data.event && typeof data.event === 'object', 'event must be an object');
   if (data.event.kind === 'species_origin') {
     origin(state, data.event, params, boundary, founders);
+    if (carriesRepresentative) representative(state, data.representative, params);
   } else {
     object(data.event, ['kind', 'species_id'], 'extinction');
     requireThat(data.event.kind === 'species_extinct', 'unknown species event kind');
