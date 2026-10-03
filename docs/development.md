@@ -296,13 +296,14 @@ holds M8's declared configurations.
 
 ### Opt-in neural structural mutation (M2)
 
-All six shipped rates under **`SimParams.mutation.structural` are zero**, including
-M8's `add_oscillator_rate` (an oscillator plus one outgoing connection; 0.01 is an
-opt-in example). Missing
-fields, including old saved params and shared URLs, retain zero rates; the default
-scalar-only dynamics and random-draw sequences remain unchanged. To opt in, pass a
-partial params document such as this with `--params params.json` (the WASM constructor
-and `Sim.set_params` accept the same JSON):
+**Since M8 the structural rates ship enabled** (spec section 3.3's table): add
+connection 0.05, add neuron 0.02, toggle 0.02, add oscillator 0.01, remove connection
+0.02, remove neuron 0.01. Shared URLs and params files that omit them now get these
+rates; metrics and history files that omit a rate are read as the zero they ran.
+Set every rate to zero (or call `SimParams::without_structural_mutation` in Rust) for
+fixed-topology runs. A partial params document like this overrides individual rates
+with `--params params.json` (the WASM constructor and `Sim.set_params` accept the same
+JSON):
 
 ```json
 {
@@ -340,8 +341,8 @@ structure based only on gene counts.
 
 ### Opt-in sensors and founder composition (M3)
 
-Both shipped rates under **`SimParams.mutation.organs` are zero**. Missing fields in
-older params documents or URLs retain those defaults. For example:
+Both rates under **`SimParams.mutation.organs` ship at 0.001 since M8**. For example,
+to change them:
 
 ```json
 {

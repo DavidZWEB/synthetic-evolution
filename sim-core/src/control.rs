@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn scalar_redraw_preserves_new_organ_parameters_and_bindings_exactly() {
-        let mut params = SimParams::default();
+        let mut params = SimParams::default().without_structural_mutation();
         params.mutation.organs.add_sensor_rate = 1.0;
         params.mutation.organs.chemo_weight = 0.0;
         params.mutation.organs.energy_weight = 0.0;
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn disabled_structure_preserves_each_legacy_scalar_path_and_rng() {
-        let params = SimParams::default();
+        let params = SimParams::default().without_structural_mutation();
         let mut next = 0;
         let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
             let id = InnovationId::new(next);

@@ -30,8 +30,8 @@ genes or more cluster labels alone are not evidence that useful complexity evolv
 |---|---|---|---|
 | M0 Design decisions | Approve contracts, including the structural-null protocol, and update the spec | Human review | D1-D6 and the donor-topology structural null approved; calibration gates open |
 | M1 Variable-length storage | Bounded arenas and transactional birth storage | Approved D1 | done: pooled world storage, diagnostics, and allocator-state hashing |
-| M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; all new shipped rates remain zero |
-| M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates remain zero and dense default preserved |
+| M2 Neural structural mutation | Connection/neuron operators and topology-safe control | M1; approved M2 contract | done; rates ship enabled since M8 |
+| M3 Sensors and founders | Sensor operators and configurable founder composition | M2; approved M3 contract | implemented; organ rates ship at 0.001 and the minimal founder ships since M8 |
 | M4 Distance and species | Deterministic clustering with stable species identities | M3; M0 distance/species decisions | implemented; ecological calibration remains M8 work |
 | M5 Phylogeny | Stable ancestry and bounded, exportable history | M4; M0 history decision | identities and native/browser archives implemented; graph presentation remains M6 |
 | M6 Observation and sharing | Species telemetry, browser views, and protocol integration | M4-M5 | implemented: live species browser/coloring, schema 8 telemetry, representative archives, species-origin graph, and representative comparison |
@@ -194,9 +194,9 @@ ID-sorted slice.
 
 Each enabled operator receives one chance and at most one candidate edit, in the
 order remove connection, remove neuron, toggle, add connection, split. Toggle samples
-a retained connection and flips only its enabled flag. All five shipped rates are
-zero; 0.05/0.02/0.02 for addition/splitting/toggling are opt-in examples, not a default
-change. Physical deletion defaults still require D4 evidence before activation.
+a retained connection and flips only its enabled flag. Rates shipped at zero through
+M7; M8 shipped them enabled (with oscillator addition) after a multi-seed viability
+check, and a human enabled deletion before D4's calibration (spec section 3.3).
 Rates and initializers belong in `SimParams`. Preserve existing cost accounting,
 including charging disabled connections.
 

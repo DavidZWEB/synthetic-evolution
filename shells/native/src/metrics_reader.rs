@@ -261,6 +261,41 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
         {
+            // Every mutation rate shipped at zero until Phase 2 M8 enabled them, and
+            // oscillator addition did not exist before then. A file omitting a rate
+            // ran without that mutation; today's nonzero defaults must not rewrite it.
+            for (section, fields) in [
+                (
+                    "structural",
+                    &[
+                        "remove_connection_rate",
+                        "remove_neuron_rate",
+                        "toggle_connection_rate",
+                        "add_connection_rate",
+                        "add_neuron_rate",
+                        "add_oscillator_rate",
+                    ][..],
+                ),
+                ("organs", &["remove_sensor_rate", "add_sensor_rate"][..]),
+            ] {
+                if let Some(object) = params
+                    .entry("mutation")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+                    .and_then(|mutation| {
+                        mutation
+                            .entry(section)
+                            .or_insert_with(|| serde_json::json!({}))
+                            .as_object_mut()
+                    })
+                {
+                    for field in fields {
+                        object
+                            .entry(*field)
+                            .or_insert_with(|| serde_json::json!(0.0));
+                    }
+                }
+            }
             if matches!(schema, Some(3..=5)) {
                 if params.contains_key("species") {
                     return Err(io::Error::new(
@@ -544,7 +579,9 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default().with_dense_founder(),
+                params: SimParams::default()
+                    .with_dense_founder()
+                    .without_structural_mutation(),
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
             })))
             .unwrap(),
@@ -769,7 +806,11 @@ mod tests {
         assert_eq!(legacy.header.control, "randomized_at_birth");
         assert_eq!(
             legacy.header.params.mutation.structural,
-            SimParams::default().mutation.structural,
+            SimParams::default()
+                .without_structural_mutation()
+                .mutation
+                .structural,
+            "omitted rates are the zeros those runs used"
         );
         assert_eq!(legacy.samples[0].evolving.structural_mutations, None);
         assert_eq!(legacy.samples[0].random_control.structural_mutations, None);
@@ -803,7 +844,9 @@ mod tests {
         }
         let legacy = parse_values(&records).unwrap();
         assert_eq!(legacy.header.control, "randomized_at_birth_v2");
-        let mut expected_params = SimParams::default().with_dense_founder();
+        let mut expected_params = SimParams::default()
+            .with_dense_founder()
+            .without_structural_mutation();
         expected_params.species.capacity = 0;
         assert_eq!(legacy.header.params, expected_params);
         for cohort in [
@@ -865,7 +908,9 @@ mod tests {
     #[test]
     fn all_historical_schemas_keep_their_tight_preclassification_budget() {
         for schema in [3, 4, 5] {
-            let mut params = SimParams::default().with_dense_founder();
+            let mut params = SimParams::default()
+                .with_dense_founder()
+                .without_structural_mutation();
             params.world.max_agents = 2;
             params.plants.max_plants = 8;
             params.species.capacity = 0;
@@ -936,7 +981,9 @@ mod tests {
         let mut records = final_records();
         records[0]["data"]["schema_version"] = 6.into();
         strip_schema_eight_observations(&mut records);
-        let mut params = SimParams::default().with_dense_founder();
+        let mut params = SimParams::default()
+            .with_dense_founder()
+            .without_structural_mutation();
         params.world.max_agents = 2;
         params.plants.max_plants = 8;
         params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
@@ -1305,7 +1352,9 @@ mod tests {
             ticks: 10,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default().with_dense_founder(),
+            params: SimParams::default()
+                .with_dense_founder()
+                .without_structural_mutation(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let records = [
@@ -1339,7 +1388,9 @@ mod tests {
             ticks: 0,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default().with_dense_founder(),
+            params: SimParams::default()
+                .with_dense_founder()
+                .without_structural_mutation(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let final_sample = RunSample {
@@ -1370,7 +1421,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_header_params() {
-        let mut params = SimParams::default().with_dense_founder();
+        let mut params = SimParams::default()
+            .with_dense_founder()
+            .without_structural_mutation();
         params.world.dt = 0.0;
         let records = [
             MetricsRecord::Header(Box::new(RunHeader {
@@ -1423,7 +1476,9 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default().with_dense_founder(),
+                params: SimParams::default()
+                    .with_dense_founder()
+                    .without_structural_mutation(),
                 control: "randomized_at_birth".to_owned(),
             }));
             let jsonl = serde_json::to_string(&header).unwrap();

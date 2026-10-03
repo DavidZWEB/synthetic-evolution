@@ -43,7 +43,9 @@ pub const CONTINUED_HASH: [u64; 4] = [
 ];
 
 pub fn params() -> SimParams {
-    let mut p = SimParams::default().with_dense_founder();
+    let mut p = SimParams::default()
+        .with_dense_founder()
+        .without_structural_mutation();
     p.world.size = 100.0;
     p.world.max_agents = 32;
     p.world.founder_spread = 0.2;

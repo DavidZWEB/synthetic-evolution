@@ -12,7 +12,9 @@ use sim_core::spawn::{SpawnError, SpawnFailureCounts};
 use sim_core::{AgentId, InnovationId, SimParams, SpawnSpec, World};
 
 fn params() -> SimParams {
-    let mut p = SimParams::default().with_dense_founder();
+    let mut p = SimParams::default()
+        .with_dense_founder()
+        .without_structural_mutation();
     p.world.max_agents = 8;
     p.plants.max_plants = 8;
     p.reproduction.maturity_ticks = 0;

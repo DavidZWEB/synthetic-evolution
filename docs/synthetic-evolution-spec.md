@@ -279,20 +279,28 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 | Weight perturbation | 0.025 per connection | Gaussian, σ evolvable; ~6 of Phase 1's 240 connections per birth |
 | Weight reset | 0.0015625 per connection | Uniform resample; ~0.375 per Phase 1 birth |
 | Neuron scalar perturbation | 0.00625 per neuron | Bias, tau, and oscillator period; ~0.175 of Phase 1's 28 neurons per birth |
-| Add connection | 0 in M2 | Opt-in candidate rate 0.05; existing neurons, including recurrence/self-edges |
-| Add neuron | 0 in M2 | Opt-in candidate rate 0.02; split an enabled connection |
-| Disable/enable connection | 0 in M2 | Opt-in candidate rate 0.02; retain identity and weight |
-| Remove connection | 0 | Physical deletion; nonzero shipped rates require joint distance review (§3.4) |
-| Remove neuron | 0 | Remove an eligible neuron and incident edges; same deletion gate |
-| Add sensor | 0 in M3 | Opt-in candidate rate 0.02; configured modality mixture and fresh target neurons |
-| Remove sensor | 0 in M3 | Opt-in candidate rate 0.02; retain target neurons and wiring |
+| Add connection | 0.05 since M8 | Existing neurons, including recurrence/self-edges |
+| Add neuron | 0.02 since M8 | Split an enabled connection |
+| Add oscillator | 0.01 since M8 | One oscillator plus one outgoing connection |
+| Disable/enable connection | 0.02 since M8 | Retain identity and weight |
+| Remove connection | 0.02 since M8 | Physical deletion, enabled before distance calibration (§3.4) |
+| Remove neuron | 0.01 since M8 | Remove an eligible neuron and incident edges; same caveat |
+| Add sensor | 0.001 since M8 | Configured modality mixture and fresh target neurons |
+| Remove sensor | 0.001 since M8 | Retain target neurons and wiring |
 | Add effector | 0.01 | |
 | Mutate body trait | 0.1 | |
 | **Gene duplication** | 0.005 | Duplicate a subgraph with fresh IDs |
 | Mutate meta-genes | 0.05 | Mutation rates evolve |
 
 **DECIDED for M2:** ship all neural structural rates at zero initially, preserving
-the accepted scalar-only default runs. Rates live under `mutation.structural` and
+the accepted scalar-only default runs. **Superseded in M8:** a human enabled every
+structural and sensor rate in the table above after the full set was viable on
+seeds 42/117/314 over 200k ticks (1,315-1,645 agents; mean genome 26-34 genes from
+the 25-gene founder). Deletion was enabled before D4's distance/threshold
+calibration, accepting that remove-and-re-add marker turnover can split species
+labels without real divergence; read species counts with that in mind.
+`SimParams::without_structural_mutation` restores fixed topology for runs that
+need it, and metrics or archives that omit a rate decode it as the zero they ran. Rates live under `mutation.structural` and
 are runtime-tunable. The later operators in the table retain proposed starting
 rates, not a claim that they are enabled in the current phase.
 

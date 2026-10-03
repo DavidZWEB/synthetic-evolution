@@ -14,7 +14,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 fn birth_params() -> SimParams {
     let mut params: SimParams =
         serde_json::from_str(include_str!("../../native/tests/fixtures/structural.json")).unwrap();
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params
 }
 

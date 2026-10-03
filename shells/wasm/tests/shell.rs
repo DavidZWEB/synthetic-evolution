@@ -159,7 +159,7 @@ fn structural_diagnostics_cover_actual_edits_and_are_isolated_per_world_and_recr
 #[wasm_bindgen_test]
 fn splitting_is_inherited_but_scalar_control_redraws_the_resulting_brain() {
     let mut params = structural_params();
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params.mutation.structural.add_neuron_rate = 1.0;
     params.mutation.structural.split_neuron_bias = 0.375;
     let json = serde_json::to_string(&params).unwrap();
@@ -254,7 +254,7 @@ fn splitting_is_inherited_but_scalar_control_redraws_the_resulting_brain() {
 #[wasm_bindgen_test]
 fn a_refused_candidate_edit_can_birth_and_an_applied_edit_can_fail_to_birth() {
     let mut params = structural_params();
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params.mutation.structural.add_neuron_rate = 1.0;
     let mut probe = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     assert_eq!(probe.seed_founders(1), 1);
@@ -291,7 +291,7 @@ fn a_refused_candidate_edit_can_birth_and_an_applied_edit_can_fail_to_birth() {
 #[wasm_bindgen_test]
 fn disabling_structural_edits_preserves_finite_redraw_on_retained_topology() {
     let mut params = structural_params();
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params.mutation.structural.add_neuron_rate = 1.0;
     let mut sim = random_control(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     assert_eq!(sim.seed_founders(1), 1);
@@ -327,7 +327,7 @@ fn disabling_structural_edits_preserves_finite_redraw_on_retained_topology() {
 #[wasm_bindgen_test]
 fn structural_configuration_validates_at_all_boundaries_and_retunes_without_resetting_counts() {
     let mut params = structural_params();
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     let canonical = serde_json::to_value(&params).unwrap();
     let mut sim = Sim::new(7, Some(canonical.to_string())).unwrap();
     assert_eq!(sim.seed_founders(1), 1);
@@ -673,7 +673,7 @@ fn structural_births_keep_extreme_scalar_biases_finite() {
     let mut params = structural_params();
     params.mutation.neuron_perturb_rate = 1.0;
     params.mutation.bias_perturb_sigma = f32::MAX;
-    params.mutation.structural = Default::default();
+    params = params.without_structural_mutation();
     params.mutation.structural.toggle_connection_rate = 1.0;
     let mut sim = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     assert_eq!(sim.seed_founders(1), 1);

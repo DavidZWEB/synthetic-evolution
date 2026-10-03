@@ -236,7 +236,7 @@ fn full_representative_capacity_matches_known_species_but_does_not_refuse_incomp
                     .unwrap();
             params.species.capacity = capacity;
             params.species.threshold = 1e-12;
-            params.mutation.structural = Default::default();
+            params = params.without_structural_mutation();
             params.mutation.structural.add_neuron_rate = 1.0;
             if compatible {
                 params.distance.disjoint_coefficient = 0.0;

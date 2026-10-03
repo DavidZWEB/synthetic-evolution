@@ -65,10 +65,11 @@ pub(crate) fn parse_archive(mut input: impl BufRead) -> Result<(Header, Completi
             }
             let record: ArchiveRecord = serde_json::from_slice(&line)?;
             match record {
-                ArchiveRecord::Header(next) => {
+                ArchiveRecord::Header(mut next) => {
                     if header.is_some() {
                         return Err(invalid("duplicate history header").into());
                     }
+                    restore_later_params(&mut next.params, &line)?;
                     validate_header(&next, &line)?;
                     for state in &mut states {
                         if next.representative_genes.is_some() {
@@ -221,8 +222,21 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
 }
 
 /// Params fields added after archives were first written. An archive written before
-/// one existed ran without it, which its zero default describes exactly.
+/// one existed ran without it, so its value is zero, not today's default.
 const LATER_PARAMS: &[&str] = &["add_oscillator_rate"];
+
+/// Serde fills an omitted later field from today's default; reset it to the zero the
+/// archived run actually used.
+fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result<()> {
+    let wire: serde_json::Value = serde_json::from_slice(line)?;
+    if wire
+        .pointer("/data/params/mutation/structural/add_oscillator_rate")
+        .is_none()
+    {
+        params.mutation.structural.add_oscillator_rate = 0.0;
+    }
+    Ok(())
+}
 
 fn require_fields(actual: &serde_json::Value, complete: &serde_json::Value) -> Result<()> {
     if let Some(fields) = complete.as_object() {
@@ -520,4 +534,39 @@ fn validate_completion(
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archives_without_a_later_param_read_it_as_the_zero_they_ran() {
+        for (fixture, present) in [
+            (
+                &include_bytes!("../tests/fixtures/history-v2-root.ndjson")[..],
+                false,
+            ),
+            (
+                &include_bytes!("../tests/fixtures/history-v1.ndjson")[..],
+                true,
+            ),
+        ] {
+            let line = fixture
+                .split_inclusive(|&byte| byte == b'\n')
+                .next()
+                .unwrap();
+            let ArchiveRecord::Header(mut header) = serde_json::from_slice(line).unwrap() else {
+                panic!("first record is the header");
+            };
+            if !present {
+                assert_ne!(
+                    header.params.mutation.structural.add_oscillator_rate, 0.0,
+                    "serde filled today's nonzero default"
+                );
+            }
+            restore_later_params(&mut header.params, line).unwrap();
+            assert_eq!(header.params.mutation.structural.add_oscillator_rate, 0.0);
+        }
+    }
 }
