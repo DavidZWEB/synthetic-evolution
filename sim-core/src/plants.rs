@@ -267,9 +267,14 @@ impl Plants {
         {
             return Err("plant state does not match the plant count");
         }
+        // Inclusive: wrapping a reseed just below zero can round up to exactly the
+        // world size, which the grid folds back to zero.
         let size = self.fertility.world_size();
         if !saved.position.iter().all(|p| {
-            p.is_finite() && p.z == 0.0 && (0.0..size).contains(&p.x) && (0.0..size).contains(&p.y)
+            p.is_finite()
+                && p.z == 0.0
+                && (0.0..=size).contains(&p.x)
+                && (0.0..=size).contains(&p.y)
         }) {
             return Err("plant sites must lie on the world's plane");
         }
@@ -598,6 +603,44 @@ mod tests {
                 found |= index == 0;
             });
         assert!(found, "the grid still placed the plant at its old site");
+    }
+
+    #[test]
+    fn restore_accepts_a_site_wrapped_onto_the_far_edge() {
+        // wrap_scalar(-1e-6, 1000.0) rounds to exactly 1000.0 in f32.
+        let edge = crate::spatial::wrap_scalar(-1e-6, 1000.0);
+        assert_eq!(
+            edge, 1000.0,
+            "the rounding case this guards no longer occurs"
+        );
+        let (mut plants, _) = world();
+        let mut position = plants.position().to_vec();
+        position[0] = Vec3::new(edge, 3.0, 0.0);
+        let (energy, reserve) = (plants.energy().to_vec(), plants.energy_reserve().to_vec());
+        let starved = plants.starved().to_vec();
+        fn saved<'a>(
+            position: &'a [Vec3],
+            energy: &'a [f32],
+            reserve: &'a [f64],
+            starved: &'a [u32],
+        ) -> SavedPlants<'a> {
+            SavedPlants {
+                position,
+                energy,
+                reserve,
+                starved,
+                reseeded: 0,
+            }
+        }
+        plants
+            .restore_state(saved(&position, &energy, &reserve, &starved))
+            .unwrap();
+        position[0].x = 1000.5;
+        assert!(
+            plants
+                .restore_state(saved(&position, &energy, &reserve, &starved))
+                .is_err()
+        );
     }
 
     #[test]
