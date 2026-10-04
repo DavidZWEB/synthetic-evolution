@@ -7,8 +7,12 @@ objective. Fitness is survival and reproduction.
 Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 
 **Status:** Phase 1 complete through M12, including human acceptance of food-seeking
-across three seeds against randomized-at-birth controls. Phase 2, genetic architecture,
-now has pooled variable-length world storage, explicit memory budgets, and
+across three seeds against randomized-at-birth controls. Phase 2, genetic
+architecture, is complete: it was accepted on 2026-10-04 by the coding agent, which
+the project owner asked to make that call
+([acceptance record](docs/phase-2-implementation-plan.md#m10---acceptance)). Phase 3, predation, is under way;
+dead agents already leave corpses that decompose and can be eaten. Phase 2 brought
+pooled variable-length world storage, explicit memory budgets, and
 runtime-tunable neural and sensor structural mutation, and configurable sparse
 founders. Since M8 structural and sensor mutation ship enabled, so brains grow,
 rewire, and prune in the default world, and the shipped founder is the
@@ -27,7 +31,7 @@ origin (`--representatives`, or **include representative genomes** in the browse
 **Save run / Load run** (browser) and `--save-run` / `resume` (native) checkpoint a
 whole world with its history and continue it exactly. Each archive's **lineage** view
 draws the species-origin tree and compares two species' representative genomes. The
-[Phase 2 implementation plan](docs/phase-2-implementation-plan.md) is authoritative
+[Phase 3 implementation plan](docs/phase-3-implementation-plan.md) is authoritative
 for current milestone status and remaining design decisions. The complete loop runs
 in WASM with live instrumentation; the native shell produces paired evolving/control
 telemetry and diagnoses known failure modes. The remaining 5k-agent
@@ -88,7 +92,8 @@ scripts/setup.sh one command to make a fresh machine work
 |---|---|
 | Understand the design | [docs/synthetic-evolution-spec.md](docs/synthetic-evolution-spec.md) §1–§2 |
 | Set up, add a dependency, or bump a toolchain | [docs/development.md](docs/development.md) |
-| Follow Phase 2 implementation and remaining design decisions | [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md) |
+| Follow Phase 3 implementation and remaining design decisions | [docs/phase-3-implementation-plan.md](docs/phase-3-implementation-plan.md) |
+| Read Phase 2 milestones, acceptance, and evidence | [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md), [docs/phase-2-m8-evidence.md](docs/phase-2-m8-evidence.md) |
 | Read Phase 1 milestones and acceptance evidence | [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md) |
 | Change code in `sim-core` | [AGENTS.md](AGENTS.md) — the five invariants, first |
 
