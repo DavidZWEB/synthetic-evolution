@@ -289,10 +289,12 @@ scalar-control and structural-null runs (refusing duplicates and evolving worlds
 that disagree between runs of one seed); and prints every metric's mean, sample
 standard deviation, and range across seeds for each cohort side by side. Use
 `--json` for per-seed values. The summary is deliberately unranked: no score, no
-winner, and metric definitions are printed with it. It also derives two foraging
-measures over each run's second half: `intake_per_agent_tick` (energy eaten per
-living agent per tick) and `intake_per_distance` (energy eaten per unit of movement).
-Agents gain energy only by eating, so intake between samples is the change in
+winner, and metric definitions are printed with it. It also derives one foraging
+measure over each run's second half, `supply_captured`: energy eaten as a fraction of
+the plants' nominal input. Intake per agent would be uninformative, because a settled
+run eats everything that enters and per-agent intake is then just input divided by
+population; what foraging changes is how much enters, since a full plant refuses its
+share. Agents gain energy only by eating, so intake between samples is the change in
 agent-held energy plus what was dissipated; it matches the plants' side of the books
 exactly when no founders are added mid-run. Each params file is a partial
 `SimParams` document (`{}` for shipped defaults). M8's published summaries live
