@@ -244,6 +244,17 @@ pub struct MetabolismParams {
     /// this ratio is the one to watch with `stable_but_idle` when Phase 2 makes brain
     /// structure evolvable (spec §10).
     pub k_move: f32,
+    /// Upkeep per unit of `muscle² − 1`: zero at the reference body, cheaper for weaker
+    /// muscle and dearer for stronger, paid even at rest (spec §3.5).
+    ///
+    /// **0.008, spec §5.5's starting value**: doubling muscle adds about 40% to a
+    /// founder's idle upkeep, on top of the larger force `k_move` charges for.
+    pub k_muscle: f32,
+    /// Upkeep per unit of `mouth² − 1`, as for muscle (spec §3.5).
+    ///
+    /// **0.008 (spec §5.5)**: doubling the mouth quadruples intake per tick but adds
+    /// about 40% to idle upkeep, so a big mouth pays only where food is there to take.
+    pub k_mouth: f32,
 }
 
 /// Locomotion limits.
@@ -532,7 +543,8 @@ impl OrganMutationParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FeedingParams {
-    /// Energy per tick an agent draws from the plant it is touching, at full drive.
+    /// Energy per tick an agent with the reference mouth draws from the food it is
+    /// touching. A gape `g` takes `rate · g²` (spec §3.5).
     ///
     /// Per tick, matching [`MetabolismParams`], so the two can be compared directly:
     /// this has to beat upkeep by enough that foraging pays, or eating is a way to
@@ -871,6 +883,12 @@ impl SimParams {
                 "the founding topology is fixed for the life of a world",
             ),
             (
+                // Mass and gape are measured against it, so moving it would change them
+                // for every living body at once (spec §3.5).
+                next.body.size != self.body.size,
+                "body.size is the reference body, fixed for the life of a world",
+            ),
+            (
                 next.plants.initial_fill != self.plants.initial_fill,
                 "plants.initial_fill is read once, when the larder is stocked",
             ),
@@ -918,8 +936,10 @@ impl SimParams {
         if !(self.world.dt > 0.0) || !self.world.dt.is_finite() {
             return Err(ParamError("world.dt must be finite and positive"));
         }
-        if !(self.body.size >= 0.0) || !self.body.size.is_finite() {
-            return Err(ParamError("body.size must be finite and non-negative"));
+        if !(self.body.size > 0.0) || !self.body.size.is_finite() {
+            return Err(ParamError(
+                "body.size must be finite and positive, since mass is measured against it",
+            ));
         }
         if self.world.max_agents == 0 {
             return Err(ParamError("world.max_agents must be non-zero"));
@@ -1246,6 +1266,8 @@ impl SimParams {
             self.metabolism.k_brain,
             self.metabolism.k_sensor,
             self.metabolism.k_move,
+            self.metabolism.k_muscle,
+            self.metabolism.k_mouth,
         ]
         .iter()
         .any(|&cost| !(cost >= 0.0) || !cost.is_finite())
@@ -1283,6 +1305,8 @@ impl Default for MetabolismParams {
             k_brain: 0.00005,
             k_sensor: 0.000625,
             k_move: 0.5,
+            k_muscle: 0.008,
+            k_mouth: 0.008,
         }
     }
 }
@@ -1579,8 +1603,23 @@ mod tests {
             next.chemo.decay = vec![0.5; next.chemo.decay.len()];
             next.world.dt = 1.0 / 30.0;
             next.world.founder_spread = 0.2;
-            next.body.size = 1.0;
+            next.metabolism.k_muscle = 0.02;
+            next.metabolism.k_mouth = 0.0;
             assert!(current.check_retune(&next, GRID_CELL).is_ok());
+        }
+
+        #[test]
+        fn the_reference_body_is_fixed() {
+            // Mass and gape are measured against body.size, so a retune would change
+            // them for every living body at once (spec §3.5).
+            let (current, mut next) = pair();
+            next.body.size = 1.0;
+            assert_eq!(
+                current.check_retune(&next, GRID_CELL),
+                Err(ParamError(
+                    "body.size is the reference body, fixed for the life of a world"
+                ))
+            );
         }
 
         #[test]

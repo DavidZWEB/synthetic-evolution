@@ -703,7 +703,7 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 
 ### 3.5 Morphology
 
-**DECIDED (Phase 3): scalar body traits evolve before body plans.** Three body genes become evolvable, so predators and prey can diverge in the dimensions that decide an encounter: `size` (radius), `muscle`, and `mouth`. With relative size `s = size / body.size`:
+**DECIDED (Phase 3): scalar body traits evolve before body plans.** Three body genes become evolvable, so predators and prey can diverge in the dimensions that decide an encounter: `size` (radius), `muscle`, and `mouth`. With relative size `s = size / body.size`, where `body.size` is the reference body and is fixed for the life of a world, since a retune would change every living body's mass and gape at once:
 
 - **Mass is `s²`.** Thrust force divided by mass is the acceleration (§2.4 step 5), so a large body is sluggish unless it pays for muscle.
 - **`muscle` multiplies the force** a full thrust drive produces. Movement still pays `k_move · force²` on that larger force.

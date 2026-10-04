@@ -232,6 +232,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             ),
             // Pre-Phase-3 runs left no corpses, and had no pool for its ceiling to pay for.
             (&["corpses"][..], &["energy_fraction", "max_corpses"][..]),
+            // Nor did their bodies pay upkeep for muscle or mouth.
+            (&["metabolism"][..], &["k_muscle", "k_mouth"][..]),
         ] {
             let mut object = Some(&mut *params);
             for key in path {
@@ -951,6 +953,12 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("grazing_lag");
+        for field in ["k_muscle", "k_mouth"] {
+            records[0]["data"]["params"]["metabolism"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
         for field in [
             "patchiness",
             "patch_scale",
@@ -983,6 +991,8 @@ mod tests {
         assert_eq!(data.header.params.plants.dispersal_radius, 0.0);
         assert_eq!(data.header.params.corpses.energy_fraction, 0.0);
         assert_eq!(data.header.params.corpses.max_corpses, 0);
+        assert_eq!(data.header.params.metabolism.k_muscle, 0.0);
+        assert_eq!(data.header.params.metabolism.k_mouth, 0.0);
         assert_eq!(
             data.samples[0]
                 .evolving

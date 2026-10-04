@@ -230,6 +230,8 @@ const LATER_PARAMS: &[&str] = &[
     "local_dispersal",
     "dispersal_radius",
     "corpses",
+    "k_muscle",
+    "k_mouth",
 ];
 
 /// Serde fills an omitted later field from today's default; reset it to the zero the
@@ -266,6 +268,12 @@ fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result
     if absent("/data/params/corpses") {
         params.corpses.energy_fraction = 0.0;
         params.corpses.max_corpses = 0;
+    }
+    if absent("/data/params/metabolism/k_muscle") {
+        params.metabolism.k_muscle = 0.0;
+    }
+    if absent("/data/params/metabolism/k_mouth") {
+        params.metabolism.k_mouth = 0.0;
     }
     Ok(())
 }
@@ -602,6 +610,8 @@ mod tests {
                 header.params.plants.patchiness = 2.0;
                 header.params.plants.death_stock = 0.2;
                 assert_ne!(header.params.corpses.energy_fraction, 0.0);
+                assert_ne!(header.params.metabolism.k_muscle, 0.0);
+                assert_ne!(header.params.metabolism.k_mouth, 0.0);
                 assert_ne!(header.params.plants.patch_scale, 0.0);
                 assert_ne!(header.params.plants.death_seconds, 0.0);
             }
@@ -613,6 +623,12 @@ mod tests {
             if !present {
                 assert_eq!(header.params.corpses.energy_fraction, 0.0);
                 assert_eq!(header.params.corpses.max_corpses, 0);
+                assert_eq!(header.params.metabolism.k_muscle, 0.0);
+                assert_eq!(header.params.metabolism.k_mouth, 0.0);
+            } else {
+                // A field the archive wrote is its own value, not one to reset.
+                assert_eq!(header.params.metabolism.k_muscle, 0.008);
+                assert_eq!(header.params.metabolism.k_mouth, 0.008);
             }
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);

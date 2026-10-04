@@ -13,7 +13,7 @@ use crate::command::{Command, Kind};
 use crate::control::BrainInheritance;
 use crate::corpses::SavedCorpses;
 use crate::effectors;
-use crate::genome::{self, Gene};
+use crate::genome::{self, BodyTrait, Gene};
 use crate::ids::{BirthId, NULL_ID, SpeciesId};
 use crate::ledger::EnergyLedger;
 use crate::params::SimParams;
@@ -29,7 +29,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 6;
+pub const CHECKPOINT_FORMAT: u32 = 7;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -491,6 +491,8 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.grid_cell[i] = agent.grid_cell;
         a.brain_units[i] = genome::brain_complexity(genes);
         a.sensor_load[i] = genome::sensor_load(genes);
+        a.muscle[i] = genome::body_trait(genes, BodyTrait::Muscle).unwrap_or(1.0);
+        a.mouth[i] = genome::body_trait(genes, BodyTrait::Mouth).unwrap_or(1.0);
         a.genome[i] = agent.genome.block;
         a.brain[i] = agent.brain.block;
         a.synapses[i] = agent.synapses;
@@ -704,6 +706,50 @@ mod tests {
                     other.err()
                 ),
             }
+        }
+    }
+
+    #[test]
+    fn restore_reads_muscle_and_mouth_from_the_genome() {
+        // Checkpoints do not store them: restore derives them as spawn does, so a saved
+        // body cannot disagree with the genes it carries (spec §3.5).
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 4;
+        let mut world = World::new(9, params).unwrap();
+        let founder = world.spawn_founder(Vec3::new(10.0, 10.0, 0.0)).unwrap();
+        let mut genes = world.genome(founder).to_vec();
+        for gene in &mut genes {
+            match gene {
+                Gene::Body(body) if body.trait_ == BodyTrait::Muscle => body.value = 2.0,
+                Gene::Body(body) if body.trait_ == BodyTrait::Mouth => body.value = 0.5,
+                _ => {}
+            }
+        }
+        let spec = crate::agents::SpawnSpec {
+            position: Vec3::new(20.0, 10.0, 0.0),
+            yaw: 0.0,
+            energy: 50.0,
+            size: world.params().body.size,
+            signature: Vec3::ZERO,
+            parent_a: crate::ids::AgentId::NULL,
+        };
+        let altered = world.spawn(&spec, &genes).unwrap();
+        // A genome from before Phase 3 carries neither gene.
+        genes.retain(|gene| {
+            !matches!(gene, Gene::Body(body)
+                if matches!(body.trait_, BodyTrait::Muscle | BodyTrait::Mouth))
+        });
+        let older = crate::agents::SpawnSpec {
+            position: Vec3::new(30.0, 10.0, 0.0),
+            ..spec
+        };
+        let older = world.spawn(&older, &genes).unwrap();
+
+        let restored = World::from_checkpoint(&world.checkpoint(), UNLIMITED).unwrap();
+        for (id, muscle, mouth) in [(founder, 1.0, 1.0), (altered, 2.0, 0.5), (older, 1.0, 1.0)] {
+            assert_eq!(restored.agents().muscle[id.index()], muscle, "{id:?}");
+            assert_eq!(restored.agents().mouth[id.index()], mouth, "{id:?}");
         }
     }
 

@@ -63,6 +63,12 @@ pub struct Agents {
     pub signature: Vec<Vec3>,
     /// Collision and render radius.
     pub size: Vec<f32>,
+    /// Multiplier on the force a thrust drive produces, read from the genome at birth
+    /// (spec §3.5). 1 for a genome that does not carry it.
+    pub muscle: Vec<f32>,
+    /// Gape relative to the body, read from the genome at birth (spec §3.5). Intake
+    /// and the bite scale with it.
+    pub mouth: Vec<f32>,
     /// Legacy parent slots, not persistent ancestry IDs. Use `parent_birth_a/b` for
     /// lifetime references; `parent_b` stays `NULL_ID` during asexual reproduction.
     ///
@@ -156,6 +162,8 @@ impl Agents {
             species_id: vec![NULL_ID; n],
             signature: vec![Vec3::ZERO; n],
             size: vec![0.0; n],
+            muscle: vec![1.0; n],
+            mouth: vec![1.0; n],
             parent_a: vec![NULL_ID; n],
             parent_b: vec![NULL_ID; n],
             birth_id: vec![BirthId::NULL; n],
@@ -200,10 +208,12 @@ impl Agents {
         self.parent_birth_a[i] = BirthId::NULL;
         self.parent_birth_b[i] = BirthId::NULL;
         self.grid_cell[i] = 0;
-        // Overwritten by `spawn` from the genome; zeroed here so a slot whose caller
-        // forgets cannot inherit the dead tenant's upkeep.
+        // Overwritten by `spawn` from the genome; reset here so a slot whose caller
+        // forgets cannot inherit the dead tenant's upkeep or body.
         self.brain_units[i] = 0;
         self.sensor_load[i] = 0.0;
+        self.muscle[i] = 1.0;
+        self.mouth[i] = 1.0;
         self.brain[i] = handles.brain;
         self.synapses[i] = handles.synapses;
         self.sensors[i] = handles.sensors;

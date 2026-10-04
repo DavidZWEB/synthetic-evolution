@@ -40,8 +40,8 @@ pub fn integrate(
 
     *orientation = math::rotate_yaw(*orientation, turn * dt);
 
-    // No mass in Phase 1, so a force is an acceleration. `size` becomes a mass term at
-    // Phase 5, when a body has parts to weigh.
+    // `thrust` arrives as an acceleration: the caller has already divided the force
+    // by the body's mass (spec §3.5).
     *velocity += math::forward(*orientation) * (thrust * dt);
 
     // `drag` is the fraction of velocity kept per *second*, so a tick keeps

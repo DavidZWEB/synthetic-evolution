@@ -59,7 +59,7 @@ const PARAMS = {
     max_sensors: u, max_vision_rays: u, max_effectors: u, max_memory_bytes: 'integer',
   },
   body: { size: f },
-  metabolism: { base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f },
+  metabolism: { base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f },
   movement: { max_thrust: f, max_turn_rate: f, drag: f, max_speed: f },
   sensing: {
     vision_range: f, vision_fov: f, vision_rays: u, chemo_sensors: u,
@@ -104,7 +104,7 @@ const PARAMS = {
  */
 const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
-  'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses',
+  'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
 ]);
 
 export function integerParam(path) {
