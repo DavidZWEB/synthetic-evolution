@@ -13,8 +13,8 @@ use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-pub const EVOLVING_GOLDEN: u64 = 0x4686_ca3e_ba5b_bbfd;
-pub const CONTROL_GOLDEN: u64 = 0x01ec_d732_c3a7_3111;
+pub const EVOLVING_GOLDEN: u64 = 0x8dc1_9e8f_20b5_5d3d;
+pub const CONTROL_GOLDEN: u64 = 0xa8e7_8c5b_cd59_eef1;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();

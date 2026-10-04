@@ -8,7 +8,7 @@ use sim_core::World;
 use sim_core::control::BrainInheritance;
 
 // The structural null heredity mode (spec section 7.8).
-pub const NULL_GOLDEN: u64 = 0x1b10_a671_066e_5d2f;
+pub const NULL_GOLDEN: u64 = 0x800f_ec4d_0117_054f;
 
 const FOUNDERS: u32 = 32;
 const TICKS: u64 = 500;

@@ -251,6 +251,8 @@ impl World {
                 h.u64(agents.parent_birth_b[i].raw());
             }
             h.f32(agents.size[i]);
+            h.f32(agents.muscle[i]);
+            h.f32(agents.mouth[i]);
             h.u32(agents.parent_a[i]);
             h.u32(agents.parent_b[i]);
             h.u32(agents.grid_cell[i]);
