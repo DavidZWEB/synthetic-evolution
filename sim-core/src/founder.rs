@@ -189,12 +189,14 @@ impl FounderPlan {
             genes.push(Gene::Effector(EffectorGene {
                 id: next_id(),
                 action,
-                params: match action {
-                    // V1 uses yaw, but the gene must retain its turn axis (spec §9.1).
-                    Action::Turn => [0.0, 0.0, 1.0, 0.0],
-                    // Facing forward, elevation pinned, as `instantiate` writes it.
-                    Action::Bite => [0.0, 0.0, params.combat.reach, 0.0],
-                    _ => [0.0; 4],
+                // V1 uses yaw, but the gene must retain its turn axis (spec §9.1). A
+                // bite's reach is live, so like a sensor's range it is written by
+                // `instantiate`: the template a restore rebuilds from retuned params
+                // must be the one this world was built with.
+                params: if action == Action::Turn {
+                    [0.0, 0.0, 1.0, 0.0]
+                } else {
+                    [0.0; 4]
                 },
                 source: neuron_ids[sensor_channels + i],
             }));

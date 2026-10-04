@@ -17,9 +17,9 @@ pub const MODES: [BrainInheritance; 3] = [
 ];
 /// `state_hash` after `TICKS`, per mode.
 pub const GOLDEN: [u64; 3] = [
-    0x5662_f091_410e_7ac1,
-    0x906e_e2ac_1e82_e14d,
-    0xc447_bce3_8441_05c8,
+    0xf4a5_c077_75c6_6ed6,
+    0xc1ce_ddd8_49ea_8d6a,
+    0xac6e_d56f_8a09_8e17,
 ];
 const TICKS: u32 = 135;
 /// Mid-fight: cooldowns running, wounds healing, corpses on the ground.
