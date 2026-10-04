@@ -106,3 +106,21 @@ fn a_small_world_from_before_the_bite_reads_without_a_founder_bite() {
         serde_json::from_str(&compare_representatives(&genes, &genes, &older).unwrap()).unwrap();
     assert_eq!(same["value"], 0.0);
 }
+
+#[wasm_bindgen_test]
+fn an_archive_whose_founders_bite_must_record_their_combat() {
+    // Today's defaults could describe attack rules the run never had.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let mut biting: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+    biting["founder"]["bite"] = json!(true);
+    assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_ok());
+    biting.as_object_mut().unwrap().remove("combat");
+    assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_err());
+}

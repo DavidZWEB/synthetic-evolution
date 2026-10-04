@@ -76,12 +76,19 @@ test('numeric parameter budgets outside JavaScript precision are rejected, never
   }, /params\.storage\.max_memory_bytes/);
 });
 
-test('a founder bite is true or false, and an archive from before it may omit it', async () => {
+test('a founder bite is true or false, and founders that bite record their combat', async () => {
   await rejects((archive) => {
     archive.header.data.params.founder = { bite: 1 };
   }, /params\.founder\.bite must be true or false/);
+  await rejects((archive) => {
+    archive.header.data.params.founder = { bite: true };
+  }, /params\.combat must be recorded when founders bite/);
   const biting = fixtureArchive();
   biting.header.data.params.founder = { bite: true };
+  biting.header.data.params.combat = {
+    gate: 0.5, reach: 4, arc: 0.7853982, attack_cost: 8, attack_damage: 0.25,
+    cooldown_seconds: 0.5, health_regen: 0.02, dormant_bias: -1, mouthful: 20, assimilation: 0.8,
+  };
   await validateArchive(biting);
 });
 

@@ -226,7 +226,8 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
 /// archived run actually had.
 fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result<()> {
     let wire: serde_json::Value = serde_json::from_slice(line)?;
-    later_params::restore(params, &wire["data"]["params"]);
+    later_params::restore(params, &wire["data"]["params"])
+        .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
     Ok(())
 }
 
@@ -604,5 +605,33 @@ mod tests {
                 assert_eq!(header.params.plants.dispersal_radius, 0.0);
             }
         }
+    }
+
+    #[test]
+    fn an_archive_whose_founders_bite_must_record_their_combat() {
+        // Filling an absent `combat` from today's defaults could describe attack rules
+        // the run never had.
+        let line = include_bytes!("../tests/fixtures/history-v1.ndjson")
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let mut wire: serde_json::Value = serde_json::from_slice(line).unwrap();
+        wire["data"]["params"]["founder"]["bite"] = serde_json::json!(true);
+        let restored = |wire: &serde_json::Value| {
+            let line = serde_json::to_vec(wire).unwrap();
+            let ArchiveRecord::Header(mut header) = serde_json::from_slice(&line).unwrap() else {
+                panic!("first record is the header");
+            };
+            restore_later_params(&mut header.params, &line)
+        };
+        assert!(restored(&wire).is_ok(), "recorded combat reads");
+        wire["data"]["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("combat");
+        assert!(
+            restored(&wire).is_err(),
+            "unrecorded combat read as today's"
+        );
     }
 }

@@ -200,7 +200,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(serde_json::Value::as_object_mut)
     {
         // Written by the same build as its run, so it omits the same fields.
-        backfill_later_params(retune);
+        backfill_later_params(retune)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
     }
     if value["kind"] == "header"
         && let Some(params) = value
@@ -208,7 +209,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
     {
-        backfill_later_params(params);
+        backfill_later_params(params)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
         for (section, fields) in [
             ("species", &["capacity", "threshold"][..]),
             (
@@ -238,8 +240,19 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
 }
 
 /// Fills the params fields a file written before them omits with the values its run
-/// actually had, which today's serde defaults would not.
-fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>) {
+/// actually had, which today's serde defaults would not. Refuses a run whose founders
+/// bite but which records no `combat`, as the history readers do: today's defaults
+/// could describe attack rules the run never had.
+fn backfill_later_params(
+    params: &mut serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), &'static str> {
+    let biting = params
+        .get("founder")
+        .and_then(|founder| founder.get("bite"))
+        .and_then(serde_json::Value::as_bool);
+    if biting == Some(true) && !params.contains_key("combat") {
+        return Err("a run whose founders bite must record its combat parameters");
+    }
     // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
     // not exist before it, and M9's plant ecology fields came later still; a
     // schema-8 file written earlier omits some of them. It ran without them, so
@@ -326,6 +339,7 @@ fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>
             .entry("bite")
             .or_insert_with(|| serde_json::json!(false));
     }
+    Ok(())
 }
 
 /// A recorded retune must be one the run could have applied: within the run, and a
@@ -1011,11 +1025,14 @@ mod tests {
         // Explicitly, so a later default cannot give an older run a bite it never had,
         // while a value the file wrote stays its own.
         let mut params = serde_json::Map::new();
-        backfill_later_params(&mut params);
+        backfill_later_params(&mut params).unwrap();
         assert_eq!(params["founder"]["bite"], false);
-        let mut written = serde_json::json!({"founder": {"bite": true}});
-        backfill_later_params(written.as_object_mut().unwrap());
+        let mut written = serde_json::json!({"founder": {"bite": true}, "combat": {}});
+        backfill_later_params(written.as_object_mut().unwrap()).unwrap();
         assert_eq!(written["founder"]["bite"], true);
+        // Biting with no record of how is refused, not filled from today's defaults.
+        let mut unrecorded = serde_json::json!({"founder": {"bite": true}});
+        assert!(backfill_later_params(unrecorded.as_object_mut().unwrap()).is_err());
     }
 
     #[test]

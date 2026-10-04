@@ -35,7 +35,16 @@ pub const LATER_PARAMS: &[&str] = &[
 /// Most fields read as zero, because a run that predates them ran without them.
 /// Body-trait ranges read as one point at the founders' traits instead: bodies did not
 /// evolve before Phase 3, and a zero range would neither describe that nor validate.
-pub fn restore(params: &mut SimParams, wire: &serde_json::Value) {
+///
+/// Refuses an archive whose founders bite but which records no `combat`: today's
+/// defaults could describe attack rules the run never had.
+pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &'static str> {
+    let biting = wire
+        .pointer("/founder/bite")
+        .and_then(serde_json::Value::as_bool);
+    if biting == Some(true) && wire.pointer("/combat").is_none() {
+        return Err("an archive whose founders bite must record its combat parameters");
+    }
     let absent = |path: &str| wire.pointer(path).is_none();
     if absent("/mutation/structural/add_oscillator_rate") {
         params.mutation.structural.add_oscillator_rate = 0.0;
@@ -95,4 +104,5 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) {
     if absent("/founder") {
         params.founder.bite = false;
     }
+    Ok(())
 }

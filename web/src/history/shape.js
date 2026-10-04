@@ -132,6 +132,11 @@ export function validateParamsShape(value, shape = PARAMS, path = 'params') {
     const keys = Object.keys(shape).filter((key) => !LATER_PARAMS.has(key) || Object.hasOwn(value ?? {}, key));
     object(value, keys, path);
     for (const key of keys) validateParamsShape(value[key], shape[key], `${path}.${key}`);
+    // Today's defaults could describe attack rules a biting run never had.
+    if (shape === PARAMS) {
+      requireThat(value.founder?.bite !== true || Object.hasOwn(value, 'combat'),
+        'params.combat must be recorded when founders bite');
+    }
   } else if (shape === f) {
     requireThat(typeof value === 'number' && Number.isFinite(value), `${path} must be finite`);
   } else if (shape === 'boolean') {
