@@ -159,6 +159,52 @@ pub struct WorldMetrics {
     /// its absence is unknown, not a world without plants.
     #[serde(default)]
     pub plants: Option<PlantMetrics>,
+    /// Evolvable body traits (spec §3.5). Files written before Phase 3 did not record
+    /// them; their absence is unknown, not a population of reference bodies.
+    #[serde(default)]
+    pub bodies: Option<BodyMetrics>,
+}
+
+/// Each evolvable body trait across living agents, at one sample.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BodyMetrics {
+    /// Radius in world units, the value `body.size_range` bounds.
+    pub size: TraitDistribution,
+    /// Multiples of the reference, as `body.muscle_range` bounds them.
+    pub muscle: TraitDistribution,
+    pub mouth: TraitDistribution,
+}
+
+/// Nearest-rank order statistics over one value per living agent, as
+/// [`SizeDistribution`] gives them for counts. An empty population reports zeros; its
+/// population count, not these values, establishes that nothing lived.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct TraitDistribution {
+    pub min: f64,
+    pub p25: f64,
+    pub median: f64,
+    pub p75: f64,
+    pub max: f64,
+    pub mean: f64,
+}
+
+impl TraitDistribution {
+    fn from_values(values: &mut [f64]) -> Self {
+        if values.is_empty() {
+            return Self::default();
+        }
+        values.sort_unstable_by(f64::total_cmp);
+        let n = values.len();
+        let rank = |numerator: usize| values[(n * numerator).div_ceil(4).max(1) - 1];
+        Self {
+            min: values[0],
+            p25: rank(1),
+            median: rank(2),
+            p75: rank(3),
+            max: values[n - 1],
+            mean: values.iter().sum::<f64>() / n as f64,
+        }
+    }
 }
 
 /// How the plants are spread and how fast they turn over, at one sample.
@@ -344,7 +390,25 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
             reseeded: world.plants().reseeded(),
             clustering: plant_clustering(world.plants(), world.params().world.size),
         }),
+        bodies: Some(body_metrics(world)),
     })
+}
+
+fn body_metrics(world: &World) -> BodyMetrics {
+    let agents = world.agents();
+    let trait_of = |values: &[f32]| {
+        let mut live: Vec<f64> = world
+            .pool()
+            .iter_live()
+            .map(|id| f64::from(values[id.index()]))
+            .collect();
+        TraitDistribution::from_values(&mut live)
+    };
+    BodyMetrics {
+        size: trait_of(&agents.size),
+        muscle: trait_of(&agents.muscle),
+        mouth: trait_of(&agents.mouth),
+    }
 }
 
 /// The Clark–Evans aggregation ratio of `plants` on a torus of side `size`.
@@ -510,6 +574,60 @@ mod tests {
         );
         assert!(complexity.wiring.is_some());
         assert_eq!(metrics.history, None);
+        assert_eq!(metrics.bodies, Some(BodyMetrics::default()));
+    }
+
+    #[test]
+    fn trait_quartiles_are_nearest_rank() {
+        let mut values = [4.0, 1.0, 3.0, 2.0, 8.0];
+        assert_eq!(
+            TraitDistribution::from_values(&mut values),
+            TraitDistribution {
+                min: 1.0,
+                p25: 2.0,
+                median: 3.0,
+                p75: 4.0,
+                max: 8.0,
+                mean: 3.6,
+            }
+        );
+        assert_eq!(
+            TraitDistribution::from_values(&mut []),
+            TraitDistribution::default()
+        );
+    }
+
+    #[test]
+    fn body_traits_are_sampled_from_living_agents() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 2;
+        let mut world = World::new(1, params).expect("valid params");
+        let ids: Vec<_> = (0..3)
+            .map(|i| {
+                world
+                    .spawn_founder(Vec3::new(i as f32, 0.0, 0.0))
+                    .expect("room")
+            })
+            .collect();
+        for (&id, (size, muscle, mouth)) in
+            ids.iter()
+                .zip([(2.0, 0.5, 4.0), (5.0, 2.0, 0.25), (9.0, 9.0, 9.0)])
+        {
+            let agents = world.agents_mut();
+            agents.size[id.index()] = size;
+            agents.muscle[id.index()] = muscle;
+            agents.mouth[id.index()] = mouth;
+        }
+        world.despawn(ids[2]);
+        let bodies = sample_world(&world)
+            .expect("samples")
+            .bodies
+            .expect("recorded");
+        assert_eq!((bodies.size.min, bodies.size.max), (2.0, 5.0));
+        assert_eq!((bodies.muscle.min, bodies.muscle.max), (0.5, 2.0));
+        assert_eq!((bodies.mouth.min, bodies.mouth.max), (0.25, 4.0));
+        assert_eq!(bodies.mouth.mean, 2.125);
     }
 
     #[test]

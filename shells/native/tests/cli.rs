@@ -171,6 +171,12 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
             let neurons = complexity["neurons"]["mean"].as_f64().unwrap();
             let connections = complexity["connections"]["mean"].as_f64().unwrap();
             assert!((brain_units - (neurons + connections)).abs() < 1e-9);
+            // Body mutation is off by default, so every body is the reference one.
+            let bodies = &sample["data"][cohort]["bodies"];
+            for (field, value) in [("size", 3.0), ("muscle", 1.0), ("mouth", 1.0)] {
+                assert_eq!(bodies[field]["min"], value, "{field}");
+                assert_eq!(bodies[field]["max"], value, "{field}");
+            }
         }
     }
     for cohort in ["evolving", "random_control"] {

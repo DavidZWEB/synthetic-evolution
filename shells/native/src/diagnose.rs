@@ -942,6 +942,7 @@ mod tests {
             complexity: None,
             history: None,
             plants: None,
+            bodies: None,
         }
     }
 
