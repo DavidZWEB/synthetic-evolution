@@ -33,7 +33,8 @@ not only with it off.
 
 ## M1 - Corpses
 
-A fixed pool of corpses (`corpses.max_corpses`), each a position and an energy pair.
+A fixed pool of corpses (`corpses.max_corpses`), each a position and an energy pair,
+all discs of radius `corpses.radius` for both eating and sight.
 Every death leaves `corpse_energy_fraction` of the agent's energy as a corpse at its
 position and dissipates the rest; a death that finds the pool full dissipates the whole,
 counted. Starved agents die empty, so until M2 nothing visible changes. Corpses decay at
@@ -51,7 +52,8 @@ order. Vision rays see corpses in `corpses.signature`.
 `Action::Bite`, an intent per agent, and a per-agent cooldown. Swings resolve at the start
 of step 7 in agent-index order: drive above `combat.gate`, cooldown elapsed, and energy
 of at least `attack_cost`; pay the cost; damage the nearest agent in reach and in the
-bite arc. Health regenerates in step 9; health at 0 dies in step 10 and leaves a corpse.
+bite arc. Health regenerates in step 9 only while above 0, so lethal damage cannot heal;
+health at 0 dies in step 10 and leaves a corpse.
 Founders carry a bite effector when `founder.bite` is set (default off until M4), which
 raises the per-genome effector limit to 5.
 
@@ -64,12 +66,13 @@ raises the per-genome effector limit to 5.
 
 Per-agent energy eaten from plants and from corpses, so a lineage's diet is measurable;
 kills per sample; corpse stock. `summarize` and `diagnose` report diet fractions and the
-spec §7.8 predation signals (carnivore biomass → 0; prey biomass → 0). The browser draws
-corpses and bites, and the inspector shows health and diet.
+spec §7.9 predation signals (carnivore biomass → 0; prey biomass → 0). The browser draws
+corpses, and the inspector shows health and diet. Drawing individual bites would need a
+snapshot field the spec does not define; it is out of scope.
 
 ## M4 - Calibration
 
-The spec §7.8 sweep: `attack_cost` × `attack_damage` × plant input, several seeds per
+The spec §7.9 sweep: `attack_cost` × `attack_damage` × plant input, several seeds per
 cell, both controls, reporting which cells sustain coexistence and an unranked shortlist
 rather than a winner. Ship defaults with their reasons on the fields.
 
