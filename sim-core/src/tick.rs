@@ -349,6 +349,9 @@ impl World {
         let dying = core::mem::take(&mut self.dying);
         let mut removed = 0;
         for &id in &dying {
+            if self.agents.health[id.index()] <= 0.0 {
+                self.bites.kills += 1;
+            }
             debug_assert!(
                 self.agents.energy[id.index()] <= 0.0 || self.agents.health[id.index()] <= 0.0,
                 "a dying agent ran out of neither energy nor health"
@@ -394,6 +397,7 @@ impl World {
             );
             self.ledger.record_dissipated_amount(paid);
             self.agents.cooldown[i] = cooldown;
+            self.bites.swings += 1;
             self.swings.push(Swing {
                 biter: id,
                 target: AgentId::NULL,
@@ -448,7 +452,7 @@ impl World {
                 (agents.energy[i], agents.energy_reserve[i]);
             let (mut victim_energy, mut victim_reserve) =
                 (agents.energy[j], agents.energy_reserve[j]);
-            let dissipated = combat::take_mouthful(
+            let mouthful = combat::take_mouthful(
                 combat::Hit {
                     biter_energy: &mut biter_energy,
                     biter_reserve: &mut biter_reserve,
@@ -462,7 +466,9 @@ impl World {
             agents.energy_reserve[i] = biter_reserve;
             agents.energy[j] = victim_energy;
             agents.energy_reserve[j] = victim_reserve;
-            self.ledger.record_dissipated_amount(dissipated);
+            agents.eaten_animals[i] += mouthful.kept as f32;
+            self.ledger.record_dissipated_amount(mouthful.dissipated);
+            self.bites.hits += 1;
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
@@ -491,7 +497,7 @@ impl World {
             // Intake grows with bite area, the square of gape: mouth relative to the
             // body, times the body relative to the reference (spec §3.5).
             let gape = self.agents.mouth[i] * (self.agents.size[i] / self.params.body.size);
-            feeding::ingest(
+            let meal = feeding::ingest(
                 self.agents.position[i],
                 feeding.rate * gape * gape,
                 &mut self.agents.energy[i],
@@ -503,6 +509,12 @@ impl World {
                     corpse_reach: body + corpse_radius,
                 },
             );
+            // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
+            if meal.carrion {
+                self.agents.eaten_animals[i] += meal.amount as f32;
+            } else {
+                self.agents.eaten_plants[i] += meal.amount as f32;
+            }
         }
     }
 
@@ -1339,5 +1351,55 @@ mod tests {
                 "{mouths:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_diet_counts_meat_and_carrion_apart_from_plants() {
+        // A bite's kept share and a corpse are both eaten from other agents; a plant is
+        // not (spec §7.9). Swings, hits, and kills accumulate for the shells.
+        let mut world = duel(
+            duel_params(2),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        world.agents_mut().health[1] = 0.25;
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        let meat = world.agents().eaten_animals[0];
+        assert_eq!(
+            meat,
+            (20.0 * world.params().combat.assimilation as f64) as f32
+        );
+        world.charge_metabolism();
+        world.resolve_deaths();
+        let counts = world.bite_counts();
+        assert_eq!((counts.swings, counts.hits, counts.kills), (1, 1, 1));
+        // The kill left a corpse, and eating it is meat too.
+        world.rebuild_spatial_hash();
+        world.intents_mut().ingest[0] = 1.0;
+        world.resolve_feeding();
+        assert!(
+            world.agents().eaten_animals[0] > meat,
+            "carrion counted as plants"
+        );
+        assert_eq!(world.agents().eaten_plants[0], 0.0);
+
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        assert!(
+            world.agents().eaten_plants[grazer] > 0.0,
+            "a grazer ate nothing"
+        );
+        assert_eq!(world.agents().eaten_animals[grazer], 0.0);
+        assert_eq!(world.bite_counts(), crate::combat::BiteCounts::default());
     }
 }

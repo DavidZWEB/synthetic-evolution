@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::arena::{Arena, Block};
 use crate::brain;
+use crate::combat::BiteCounts;
 use crate::command::{Command, Kind};
 use crate::control::BrainInheritance;
 use crate::corpses::SavedCorpses;
@@ -108,6 +109,8 @@ struct AgentState {
     energy_reserve: f64,
     health: f32,
     cooldown: u32,
+    eaten_plants: f32,
+    eaten_animals: f32,
     age: u32,
     species_id: u32,
     signature: Vec3,
@@ -149,6 +152,7 @@ struct Checkpoint {
     next_innovation: u32,
     next_birth: u64,
     unclassified: u32,
+    bites: BiteCounts,
     ledger: EnergyLedger,
     grid_cells_per_axis: u32,
     pool_incarnations: Vec<u32>,
@@ -197,6 +201,8 @@ impl World {
                     energy_reserve: a.energy_reserve[i],
                     health: a.health[i],
                     cooldown: a.cooldown[i],
+                    eaten_plants: a.eaten_plants[i],
+                    eaten_animals: a.eaten_animals[i],
                     age: a.age[i],
                     species_id: a.species_id[i],
                     signature: a.signature[i],
@@ -256,6 +262,7 @@ impl World {
             next_innovation: self.next_innovation,
             next_birth: self.next_birth,
             unclassified: self.unclassified,
+            bites: self.bites,
             ledger: self.ledger.clone(),
             grid_cells_per_axis: self.hash.cells_per_axis(),
             pool_incarnations: self.pool.incarnations().to_vec(),
@@ -434,6 +441,12 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         if !(agent.health > 0.0 && agent.health <= 1.0) {
             return Err(invalid("a living agent's health must lie in (0, 1]"));
         }
+        if ![agent.eaten_plants, agent.eaten_animals]
+            .iter()
+            .all(|&eaten| eaten >= 0.0 && eaten.is_finite())
+        {
+            return Err(invalid("a diet total must be finite and non-negative"));
+        }
         if agent.birth_id != BirthId::NULL.raw() && agent.birth_id >= c.next_birth {
             return Err(invalid("an agent birth ID was never issued"));
         }
@@ -499,6 +512,8 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.energy_reserve[i] = agent.energy_reserve;
         a.health[i] = agent.health;
         a.cooldown[i] = agent.cooldown;
+        a.eaten_plants[i] = agent.eaten_plants;
+        a.eaten_animals[i] = agent.eaten_animals;
         a.age[i] = agent.age;
         a.species_id[i] = agent.species_id;
         a.signature[i] = agent.signature;
@@ -625,6 +640,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
     world.tick = c.tick;
     world.next_innovation = c.next_innovation;
     world.next_birth = c.next_birth;
+    world.bites = c.bites;
     world.unclassified = c.unclassified;
     world.ledger = c.ledger;
     world.commands = c.commands;
@@ -686,7 +702,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 19] = [
+        let cases: [(&str, Corrupt); 20] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -720,6 +736,7 @@ mod tests {
             ("colour unlike its gene", |c| c.agents[0].signature.x = 0.0),
             ("health at zero", |c| c.agents[0].health = 0.0),
             ("health above full", |c| c.agents[0].health = 1.5),
+            ("a negative diet", |c| c.agents[0].eaten_animals = -1.0),
             ("bite aimed off the plane", |c| {
                 for gene in &mut c.agents[0].genome.values {
                     if let Gene::Effector(effector) = gene {

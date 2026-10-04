@@ -57,6 +57,11 @@ pub struct Agents {
     pub health: Vec<f32>,
     /// Ticks until this agent can swing again, counted down in step 9 (spec §4.2).
     pub cooldown: Vec<u32>,
+    /// Energy this agent has eaten over its life from plants, and from other agents
+    /// through bites and corpses, so diet can be measured (spec §7.9). Neither steers
+    /// the tick.
+    pub eaten_plants: Vec<f32>,
+    pub eaten_animals: Vec<f32>,
     pub age: Vec<u32>,
     /// Species cluster, or `NULL_ID` when classification is unavailable.
     pub species_id: Vec<u32>,
@@ -165,6 +170,8 @@ impl Agents {
             energy_reserve: vec![0.0; n],
             health: vec![0.0; n],
             cooldown: vec![0; n],
+            eaten_plants: vec![0.0; n],
+            eaten_animals: vec![0.0; n],
             age: vec![0; n],
             species_id: vec![NULL_ID; n],
             signature: vec![Vec3::ZERO; n],
@@ -205,6 +212,8 @@ impl Agents {
         self.energy_reserve[i] = 0.0;
         self.health[i] = 1.0;
         self.cooldown[i] = 0;
+        self.eaten_plants[i] = 0.0;
+        self.eaten_animals[i] = 0.0;
         self.age[i] = 0;
         self.species_id[i] = NULL_ID;
         self.signature[i] = spec.signature;
