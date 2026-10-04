@@ -200,10 +200,10 @@ hidden neurons, and a sensor load of 3.
 
 - **No plant setting made perception pay.** Evolving worlds wired fewer sensors than
   the null in 10 of 12 seed pairs, at least two in every configuration. The other two
-  are a tie (sites-1000 seed 117) and one exception (sites-250 seed 314). Patchier food stopped sensor *genes*
-  from being lost (sensor load about 2.85 at sites-1000 against 0.20–2.05 at
-  baseline), but not stopped them being disconnected. The null kept as many sensors
-  and wired more of them.
+  are a tie (sites-1000 seed 117) and one exception (sites-250 seed 314). Patchier
+  food kept sensor *genes* (sensor load about 2.85 at sites-1000 against 0.20–2.05 at
+  baseline) but did not keep them wired. The null kept as many sensors and wired more
+  of them.
 - **Perception does not earn its upkeep.** A chemo sensor adds 0.0019 per tick to an
   idle founder's 0.064 (about 3%), and lineages that drop or disconnect it do not
   lose. Movement is far dearer (`k_move` × thrust², up to 0.5 per tick), yet evolving
@@ -217,7 +217,8 @@ hidden neurons, and a sensor load of 3.
 - **Added structure is still not distinguished from the null.** Wired hidden
   neurons go each way across seeds in every configuration.
 - **sites-250 is too sparse to read.** Populations shrank to 109–446 and one
-  scalar-control world held 148 agents, so seed-to-seed variation swamps the comparison.
+  scalar-control world held 148 agents, so seed-to-seed variation swamps the
+  comparison.
 - Species-founding genomes agree. Running [`wiring.py`](../experiments/phase-2-m8/wiring.py)
   on history archives of the same worlds (revision `e515d3f`, whose 24 final state
   hashes match `ac36fea`'s) found last-quarter founders had 0.07–0.59 wired sensors
@@ -233,7 +234,8 @@ nutrient heterogeneity, is a design change for discussion, not tuning.
 
 ## Unranked shortlist for watching
 
-With today's shipped defaults, in the browser against the scalar control:
+In the browser against the scalar control, at shipped defaults unless a params
+override is given:
 
 - **seed 42** — the largest genomes in the shipped rerun (max 51 genes). Are the added
   neurons and clocks visible in behavior?
@@ -243,8 +245,9 @@ With today's shipped defaults, in the browser against the scalar control:
 - **scarce, any seed** (`{"plants":{"energy_input_rate":8000.0}}`): evolving worlds
   out-captured the null on every seed with fewer wired sensors. Is the difference
   visible as movement, such as speed, turning, and dispersal?
-- **sites-1000 seed 42**: sensors kept and mostly wired (0.89 per agent). Does
-  anything look like chemotaxis, or do agents pass plants they could have turned to?
+- **sites-1000 seed 42** (`{"plants":{"max_plants":1000,"max_energy":240.0}}`):
+  sensors kept and mostly wired (0.89 per agent). Does anything look like
+  chemotaxis, or do agents pass plants they could have turned to?
 
 ## Limitations
 
