@@ -433,7 +433,12 @@ test('quota errors keep the incomplete prefix in a saved run while the World kee
           throw new DOMException('test quota exhausted', 'QuotaExceededError');
         };
       });
-      await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
+      // The World keeps stepping, so a periodic drain can hit the quota before this
+      // click lands; that ends the capture and removes the button. Either way the
+      // capture must end incomplete, which is what the rest of the test checks.
+      await panel.getByRole('button', { name: 'stop recording', exact: true })
+        .click({ timeout: 2_000 })
+        .catch(() => {});
       await page.getByText('history incomplete', { exact: true }).waitFor();
       await stepTo(page, 1);
       await page.evaluate(() => globalThis.restoreHistoryWrites());
