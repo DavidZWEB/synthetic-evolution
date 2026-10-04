@@ -11,6 +11,10 @@ use std::path::Path;
 use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 use sim_core::ids::{BirthId, SpeciesId};
 
+#[path = "../../shared/later_params.rs"]
+mod later_params;
+use later_params::LATER_PARAMS;
+
 use crate::Result;
 use crate::history_wire::{
     ArchiveRecord, BROWSER_SCHEMA_VERSION, CaptureEnd, Cohort, Completion, Counts, Decimal,
@@ -218,85 +222,11 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
     Ok(())
 }
 
-/// Params fields added after archives were first written. An archive written before
-/// one existed ran without it, so its value is zero, not today's default.
-const LATER_PARAMS: &[&str] = &[
-    "add_oscillator_rate",
-    "grazing_lag",
-    "patchiness",
-    "patch_scale",
-    "death_stock",
-    "death_seconds",
-    "local_dispersal",
-    "dispersal_radius",
-    "corpses",
-    "k_muscle",
-    "k_mouth",
-    "body_trait_rate",
-    "body_trait_sigma",
-    "size_range",
-    "muscle_range",
-    "mouth_range",
-];
-
-/// Serde fills an omitted later field from today's default; reset it to the zero the
-/// archived run actually used.
+/// Serde fills an omitted later field from today's default; reset it to the value the
+/// archived run actually had.
 fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result<()> {
     let wire: serde_json::Value = serde_json::from_slice(line)?;
-    let absent = |path: &str| wire.pointer(path).is_none();
-    if absent("/data/params/mutation/structural/add_oscillator_rate") {
-        params.mutation.structural.add_oscillator_rate = 0.0;
-    }
-    if absent("/data/params/plants/grazing_lag") {
-        params.plants.grazing_lag = 0.0;
-    }
-    if absent("/data/params/plants/patchiness") {
-        params.plants.patchiness = 0.0;
-    }
-    if absent("/data/params/plants/patch_scale") {
-        params.plants.patch_scale = 0.0;
-    }
-    if absent("/data/params/plants/death_stock") {
-        params.plants.death_stock = 0.0;
-    }
-    if absent("/data/params/plants/death_seconds") {
-        params.plants.death_seconds = 0.0;
-    }
-    if absent("/data/params/plants/local_dispersal") {
-        params.plants.local_dispersal = 0.0;
-    }
-    if absent("/data/params/plants/dispersal_radius") {
-        params.plants.dispersal_radius = 0.0;
-    }
-    // A run from before Phase 3 left no corpses: a zero share reproduces it, and no
-    // slots keep its memory ceiling from paying for a pool it never had.
-    if absent("/data/params/corpses") {
-        params.corpses.energy_fraction = 0.0;
-        params.corpses.max_corpses = 0;
-    }
-    if absent("/data/params/metabolism/k_muscle") {
-        params.metabolism.k_muscle = 0.0;
-    }
-    if absent("/data/params/metabolism/k_mouth") {
-        params.metabolism.k_mouth = 0.0;
-    }
-    if absent("/data/params/mutation/body_trait_rate") {
-        params.mutation.body_trait_rate = 0.0;
-    }
-    if absent("/data/params/mutation/body_trait_sigma") {
-        params.mutation.body_trait_sigma = 0.0;
-    }
-    // Bodies did not evolve before Phase 3, so a one-point range at the founders'
-    // traits is exactly such a run, whatever body.size it used.
-    if absent("/data/params/body/size_range") {
-        params.body.size_range = [params.body.size; 2];
-    }
-    if absent("/data/params/body/muscle_range") {
-        params.body.muscle_range = [1.0; 2];
-    }
-    if absent("/data/params/body/mouth_range") {
-        params.body.mouth_range = [1.0; 2];
-    }
+    later_params::restore(params, &wire["data"]["params"]);
     Ok(())
 }
 

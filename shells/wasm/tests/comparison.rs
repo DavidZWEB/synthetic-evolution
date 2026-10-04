@@ -49,3 +49,30 @@ fn archived_representatives_compare_exactly_as_the_classifier_splits_them() {
         compare_representatives(&Value::from(unsorted).to_string(), &genomes[1], &full).is_err()
     );
 }
+
+#[wasm_bindgen_test]
+fn an_archive_from_before_evolving_bodies_reads_as_the_run_it_recorded() {
+    // Written before Phase 3: no trait ranges or trait upkeep, and a body size today's
+    // default range would refuse. Read as that run had them, as the native reader
+    // reads them, rather than with today's defaults.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let mut older: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+    older["body"] = json!({"size": 1.0});
+    for field in ["k_muscle", "k_mouth"] {
+        older["metabolism"].as_object_mut().unwrap().remove(field);
+    }
+    for field in ["body_trait_rate", "body_trait_sigma"] {
+        older["mutation"].as_object_mut().unwrap().remove(field);
+    }
+    let older = older.to_string();
+    let same: Value =
+        serde_json::from_str(&compare_representatives(&genes, &genes, &older).unwrap()).unwrap();
+    assert_eq!(same["value"], 0.0);
+}

@@ -10,7 +10,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::cohort_capture::CohortCapture;
 use crate::history_event_wire::{Decimal, EventRecord, RepresentativeRecord};
-use crate::{Sim, js_error, parse_params};
+use crate::{Sim, js_error, parse_archive_params};
 
 #[derive(Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -93,7 +93,7 @@ impl Sim {
 /// archive's `storage.max_genes` and a coherent core genome. Import-time only.
 #[wasm_bindgen]
 pub fn validate_representative(genes_json: &str, params_json: &str) -> Result<(), JsError> {
-    let params = parse_params(Some(params_json))?;
+    let params = parse_archive_params(params_json)?;
     let genes: Vec<Gene> =
         serde_json::from_str(genes_json).map_err(|error| js_error("representative", error))?;
     if genes.len() > params.storage.max_genes as usize {
