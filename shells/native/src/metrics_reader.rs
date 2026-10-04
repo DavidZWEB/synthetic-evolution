@@ -6,7 +6,6 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
-use sim_core::LayoutEra;
 use sim_core::control::{
     RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL,
 };
@@ -17,15 +16,6 @@ use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, WorldM
 pub(crate) struct MetricsData {
     pub header: RunHeader,
     pub samples: Vec<RunSample>,
-}
-
-fn layout_era(schema: u32) -> Option<LayoutEra> {
-    match schema {
-        3..=5 => Some(LayoutEra::BeforeSpecies),
-        6 => Some(LayoutEra::Species),
-        7..=8 => Some(LayoutEra::BirthIdentities),
-        _ => None,
-    }
 }
 
 pub(crate) fn read_metrics(path: &std::path::Path) -> Result<MetricsData> {
@@ -59,66 +49,31 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
         })?;
         match record {
             MetricsRecord::Header(next) if header.is_none() && samples.is_empty() => {
-                let era = layout_era(next.schema_version).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unsupported metrics schema {}", next.schema_version),
-                    )
-                })?;
-                let (expected_phase, controls): (_, &[&str]) = match next.schema_version {
-                    3 => (1, &["randomized_at_birth"]),
-                    4 => (2, &["randomized_at_birth_v2"]),
-                    // The structural nulls first shipped with this schema.
-                    SCHEMA_VERSION => (
-                        2,
-                        &[
-                            RANDOMIZED_AT_BIRTH_PROTOCOL,
-                            STRUCTURAL_NULL_PROTOCOL,
-                            STRUCTURAL_NULL_V2_PROTOCOL,
-                        ],
-                    ),
-                    _ => (2, &[RANDOMIZED_AT_BIRTH_PROTOCOL]),
-                };
-                if next.phase != expected_phase || !controls.contains(&next.control.as_str()) {
+                // Only the current schema is read; older metrics files are not supported.
+                if next.schema_version != SCHEMA_VERSION {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
-                            "unsupported metrics protocol combination: schema {}, phase {}, control {}",
-                            next.schema_version, next.phase, next.control
+                            "unsupported metrics schema {} (this build reads schema {SCHEMA_VERSION})",
+                            next.schema_version
                         ),
                     )
                     .into());
                 }
-                let structural = &next.params.mutation.structural;
-                if next.schema_version == 3
-                    && [
-                        structural.remove_connection_rate,
-                        structural.remove_neuron_rate,
-                        structural.toggle_connection_rate,
-                        structural.add_connection_rate,
-                        structural.add_neuron_rate,
-                    ]
-                    .iter()
-                    .any(|&rate| rate != 0.0)
-                {
+                let controls = [
+                    RANDOMIZED_AT_BIRTH_PROTOCOL,
+                    STRUCTURAL_NULL_PROTOCOL,
+                    STRUCTURAL_NULL_V2_PROTOCOL,
+                ];
+                if next.phase != 2 || !controls.contains(&next.control.as_str()) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "legacy randomized_at_birth protocol cannot have nonzero structural mutation rates",
-                    ).into());
-                }
-                // These are Phase 1's historical counts, not today's defaults; legacy
-                // decoding restores them for omitted fields. Leave this guard fixed.
-                if next.schema_version < 5
-                    && (next.params.mutation.organs.remove_sensor_rate != 0.0
-                        || next.params.mutation.organs.add_sensor_rate != 0.0
-                        || next.params.sensing.chemo_sensors != 1
-                        || next.params.sensing.energy_sensors != 1
-                        || next.params.brain.connections_per_target.is_some())
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "legacy metrics cannot have nonzero organ mutation rates or nondefault M3 founder composition",
-                    ).into());
+                        format!(
+                            "unsupported metrics protocol combination: phase {}, control {}",
+                            next.phase, next.control
+                        ),
+                    )
+                    .into());
                 }
                 if next.seed.parse::<u64>().is_err() {
                     return Err(io::Error::new(
@@ -134,7 +89,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                next.params.validate_for_layout(era).map_err(|error| {
+                next.params.validate().map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("metrics header contains {error}"),
@@ -163,22 +118,10 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         "metrics header must be the first record",
                     )
                 })?;
-                validate_history(run, samples.last(), &sample)?;
+                validate_history(samples.last(), &sample)?;
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
-                    validate_complexity(run, metrics)?;
-                    // Oscillator addition first shipped with schema 8.
-                    if let Some(counts) = metrics.structural_mutations
-                        && (run.schema_version == 3
-                            || (run.schema_version == 4
-                                && (counts.remove_sensor.is_some() || counts.add_sensor.is_some()))
-                            || (run.schema_version < 8 && counts.add_oscillator.is_some()))
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "legacy metrics claim mutation observations unavailable in their schema",
-                        ).into());
-                    }
+                    validate_complexity(metrics)?;
                 }
                 if samples
                     .last()
@@ -238,10 +181,10 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
 
 fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
     let mut value: serde_json::Value = serde_json::from_str(line)?;
-    // Schema 8 writes `null` to mean capture was off, so an omitted key would be
-    // indistinguishable from a positive "off" claim once serde fills the default.
+    // `null` means capture was off, so an omitted key would be indistinguishable
+    // from a positive "off" claim once serde fills the default.
     if value["kind"] == "sample"
-        && schema.is_some_and(|version| version >= 8)
+        && schema.is_some()
         && ["evolving", "random_control"].iter().any(|cohort| {
             value["data"][cohort]
                 .as_object()
@@ -254,126 +197,77 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
         )
         .into());
     }
-    if value["kind"] == "header" {
-        let schema = value["data"]["schema_version"].as_u64();
-        if let Some(params) = value
+    if value["kind"] == "header"
+        && let Some(params) = value
             .get_mut("data")
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
-        {
-            // Every mutation rate shipped at zero until Phase 2 M8 enabled them, and
-            // oscillator addition did not exist before then. A file omitting a rate
-            // ran without that mutation; today's nonzero defaults must not rewrite it.
-            for (section, fields) in [
-                (
-                    "structural",
-                    &[
-                        "remove_connection_rate",
-                        "remove_neuron_rate",
-                        "toggle_connection_rate",
-                        "add_connection_rate",
-                        "add_neuron_rate",
-                        "add_oscillator_rate",
-                    ][..],
-                ),
-                ("organs", &["remove_sensor_rate", "add_sensor_rate"][..]),
-            ] {
-                if let Some(object) = params
-                    .entry("mutation")
-                    .or_insert_with(|| serde_json::json!({}))
-                    .as_object_mut()
-                    .and_then(|mutation| {
-                        mutation
-                            .entry(section)
-                            .or_insert_with(|| serde_json::json!({}))
-                            .as_object_mut()
-                    })
-                {
-                    for field in fields {
-                        object
-                            .entry(*field)
-                            .or_insert_with(|| serde_json::json!(0.0));
-                    }
+    {
+        // Mutation rates shipped at zero until Phase 2 M8, and oscillator addition
+        // did not exist before it; a schema-8 file written earlier omits some rates.
+        // It ran without those mutations, so today's defaults must not rewrite it.
+        for (section, fields) in [
+            (
+                "structural",
+                &[
+                    "remove_connection_rate",
+                    "remove_neuron_rate",
+                    "toggle_connection_rate",
+                    "add_connection_rate",
+                    "add_neuron_rate",
+                    "add_oscillator_rate",
+                ][..],
+            ),
+            ("organs", &["remove_sensor_rate", "add_sensor_rate"][..]),
+        ] {
+            if let Some(object) = params
+                .entry("mutation")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+                .and_then(|mutation| {
+                    mutation
+                        .entry(section)
+                        .or_insert_with(|| serde_json::json!({}))
+                        .as_object_mut()
+                })
+            {
+                for field in fields {
+                    object
+                        .entry(*field)
+                        .or_insert_with(|| serde_json::json!(0.0));
                 }
             }
-            if matches!(schema, Some(3..=5)) {
-                if params.contains_key("species") {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "legacy metrics cannot claim species configuration",
-                    )
-                    .into());
-                }
-                // No historical classifier allocation existed. Inserting a disabled
-                // policy preserves the metadata's meaning, not its buffer selection:
-                // LayoutEra owns accounting independently of this normalization.
-                params.insert(
-                    "species".to_owned(),
-                    serde_json::json!({"capacity": 0, "threshold": 0.5}),
-                );
-                // Schemas 3-4 predate configurable founder composition, and every such
-                // run used the dense founder. Omitted fields must not take today's
-                // sparse defaults, which would rewrite what those runs measured.
-                if matches!(schema, Some(3..=4)) {
-                    for (section, field, phase_one) in [
-                        ("sensing", "chemo_sensors", serde_json::json!(1)),
-                        ("sensing", "energy_sensors", serde_json::json!(1)),
-                        ("brain", "connections_per_target", serde_json::Value::Null),
-                    ] {
-                        if let Some(object) = params
-                            .entry(section)
-                            .or_insert_with(|| serde_json::json!({}))
-                            .as_object_mut()
-                        {
-                            object.entry(field).or_insert(phase_one);
-                        }
-                    }
-                }
-            } else if schema
-                .is_some_and(|version| (6..=u64::from(SCHEMA_VERSION)).contains(&version))
-            {
-                for (section, fields) in [
-                    ("species", &["capacity", "threshold"][..]),
-                    (
-                        "distance",
-                        &[
-                            "disjoint_coefficient",
-                            "excess_coefficient",
-                            "weight_coefficient",
-                        ][..],
-                    ),
-                ] {
-                    if fields.iter().any(|field| {
-                        params
-                            .get(section)
-                            .and_then(serde_json::Value::as_object)
-                            .is_none_or(|object| !object.contains_key(*field))
-                    }) {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("current metrics require explicit {section} configuration"),
-                        )
-                        .into());
-                    }
-                }
+        }
+        for (section, fields) in [
+            ("species", &["capacity", "threshold"][..]),
+            (
+                "distance",
+                &[
+                    "disjoint_coefficient",
+                    "excess_coefficient",
+                    "weight_coefficient",
+                ][..],
+            ),
+        ] {
+            if fields.iter().any(|field| {
+                params
+                    .get(section)
+                    .and_then(serde_json::Value::as_object)
+                    .is_none_or(|object| !object.contains_key(*field))
+            }) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("current metrics require explicit {section} configuration"),
+                )
+                .into());
             }
         }
     }
     Ok(serde_json::from_value(value)?)
 }
 
-fn validate_complexity(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
+fn validate_complexity(metrics: &WorldMetrics) -> Result<()> {
     let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
-    if header.schema_version < 8 {
-        return if metrics.complexity.is_some() {
-            Err(invalid(
-                "legacy metrics claim complexity distributions unavailable in their schema",
-            )
-            .into())
-        } else {
-            Ok(())
-        };
-    }
     let complexity = metrics
         .complexity
         .as_ref()
@@ -388,23 +282,9 @@ fn validate_complexity(header: &RunHeader, metrics: &WorldMetrics) -> Result<()>
 }
 
 /// History capture is fixed for a run: both cohorts share it, and its counts only grow.
-fn validate_history(
-    header: &RunHeader,
-    previous: Option<&RunSample>,
-    sample: &RunSample,
-) -> Result<()> {
+fn validate_history(previous: Option<&RunSample>, sample: &RunSample) -> Result<()> {
     let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
     let pair = [sample.evolving.history, sample.random_control.history];
-    if header.schema_version < 8 {
-        return if pair.iter().any(Option::is_some) {
-            Err(
-                invalid("legacy metrics claim history availability unavailable in their schema")
-                    .into(),
-            )
-        } else {
-            Ok(())
-        };
-    }
     match pair {
         [None, None] => {}
         [Some(evolving), Some(control)] => {
@@ -450,15 +330,6 @@ fn validate_history(
 
 fn validate_species(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
     let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
-    if header.schema_version < 6 {
-        if metrics.species.is_some() {
-            return Err(invalid(
-                "legacy metrics claim species observations unavailable in their schema",
-            )
-            .into());
-        }
-        return Ok(());
-    }
     let species = metrics
         .species
         .as_ref()
@@ -504,21 +375,6 @@ mod tests {
     use crate::metrics::{
         ComplexityMetrics, RunSample, SizeDistribution, SpeciesMetrics, StateHashes, WorldMetrics,
     };
-
-    #[test]
-    fn wire_schemas_map_explicitly_to_their_immutable_layout_eras() {
-        for schema in [3, 4, 5] {
-            assert_eq!(layout_era(schema), Some(LayoutEra::BeforeSpecies));
-        }
-        assert_eq!(layout_era(6), Some(LayoutEra::Species));
-        for schema in [7, 8] {
-            assert_eq!(layout_era(schema), Some(LayoutEra::BirthIdentities));
-        }
-        assert_eq!(layout_era(SCHEMA_VERSION), Some(LayoutEra::CURRENT));
-        for unsupported in [0, 1, 2, 9, u32::MAX] {
-            assert_eq!(layout_era(unsupported), None);
-        }
-    }
 
     fn empty_world_metrics() -> WorldMetrics {
         WorldMetrics {
@@ -567,19 +423,6 @@ mod tests {
         .unwrap()
     }
 
-    /// What every legacy schema's runs used: Phase 1's dense founder and no structural
-    /// or sensor mutation. Test data describing old files, not a supported preset.
-    fn legacy_era_params() -> SimParams {
-        let mut params = SimParams::default().without_structural_mutation();
-        params.sensing.vision_rays = 3;
-        params.sensing.energy_sensors = 1;
-        params.brain.hidden_neurons = 6;
-        params.brain.oscillators = 2;
-        params.brain.connections_per_target = None;
-        params
-    }
-
-    /// Legacy-era headers; see `legacy_era_params`.
     fn final_records() -> [serde_json::Value; 2] {
         [
             serde_json::to_value(MetricsRecord::Header(Box::new(RunHeader {
@@ -591,7 +434,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: legacy_era_params(),
+                params: SimParams::default(),
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
             })))
             .unwrap(),
@@ -615,78 +458,6 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         parse_metrics(Cursor::new(jsonl))
-    }
-
-    fn set_legacy_header(records: &mut [serde_json::Value], schema: u32) {
-        records[0]["data"]["schema_version"] = schema.into();
-        records[0]["data"]["phase"] = if schema == 3 { 1 } else { 2 }.into();
-        records[0]["data"]["control"] = match schema {
-            3 => "randomized_at_birth",
-            4 => "randomized_at_birth_v2",
-            5 => RANDOMIZED_AT_BIRTH_PROTOCOL,
-            _ => panic!("not a legacy schema"),
-        }
-        .into();
-        records[0]["data"]["params"]
-            .as_object_mut()
-            .unwrap()
-            .remove("species");
-        for record in &mut records[1..] {
-            for cohort in ["evolving", "random_control"] {
-                let metrics = record["data"][cohort].as_object_mut().unwrap();
-                for field in ["species", "complexity", "history"] {
-                    metrics.remove(field);
-                }
-                // Oscillator addition did not exist in any legacy schema.
-                if let Some(counts) = metrics
-                    .get_mut("structural_mutations")
-                    .and_then(serde_json::Value::as_object_mut)
-                {
-                    counts.remove("add_oscillator");
-                }
-            }
-        }
-    }
-
-    fn strip_schema_eight_observations(records: &mut [serde_json::Value]) {
-        for record in &mut records[1..] {
-            for cohort in ["evolving", "random_control"] {
-                let metrics = record["data"][cohort].as_object_mut().unwrap();
-                metrics.remove("complexity");
-                metrics.remove("history");
-            }
-        }
-    }
-
-    #[test]
-    fn schema_seven_reads_without_inventing_complexity_or_history() {
-        let mut records = final_records();
-        records[0]["data"]["schema_version"] = 7.into();
-        strip_schema_eight_observations(&mut records);
-        let data = parse_values(&records).expect("schema 7 remains readable");
-        for metrics in [&data.samples[0].evolving, &data.samples[0].random_control] {
-            assert_eq!(metrics.complexity, None);
-            assert_eq!(metrics.history, None);
-        }
-        for (field, value) in [
-            (
-                "complexity",
-                serde_json::to_value(ComplexityMetrics::default()).unwrap(),
-            ),
-            (
-                "history",
-                serde_json::json!({"capacity": 1, "retained_events": 0, "dropped_events": 0, "gaps": 0}),
-            ),
-        ] {
-            let mut claimed = records.clone();
-            for cohort in ["evolving", "random_control"] {
-                claimed[1]["data"][cohort][field] = value.clone();
-            }
-            assert!(
-                parse_values(&claimed).is_err(),
-                "schema 7 cannot claim {field}"
-            );
-        }
     }
 
     #[test]
@@ -793,263 +564,6 @@ mod tests {
             let mut records = final_records();
             records[0]["data"]["control"] = protocol.into();
             assert_eq!(parse_values(&records).unwrap().header.control, protocol);
-        }
-    }
-
-    #[test]
-    fn reads_current_and_explicit_legacy_protocols_without_inventing_observations() {
-        let current = parse_values(&final_records()).unwrap();
-        assert_eq!(current.header.control, RANDOMIZED_AT_BIRTH_PROTOCOL);
-        let mut records = final_records();
-        set_legacy_header(&mut records, 3);
-        records[0]["data"]["params"]["mutation"]
-            .as_object_mut()
-            .unwrap()
-            .remove("structural");
-        for cohort in ["evolving", "random_control"] {
-            records[1]["data"][cohort]
-                .as_object_mut()
-                .unwrap()
-                .remove("structural_mutations");
-        }
-        let legacy = parse_values(&records).unwrap();
-        assert_eq!(legacy.header.control, "randomized_at_birth");
-        assert_eq!(
-            legacy.header.params.mutation.structural,
-            SimParams::default()
-                .without_structural_mutation()
-                .mutation
-                .structural,
-            "omitted rates are the zeros those runs used"
-        );
-        assert_eq!(legacy.samples[0].evolving.structural_mutations, None);
-        assert_eq!(legacy.samples[0].random_control.structural_mutations, None);
-
-        let mut records = final_records();
-        set_legacy_header(&mut records, 4);
-        records[0]["data"]["params"]["mutation"]
-            .as_object_mut()
-            .unwrap()
-            .remove("organs");
-        for field in ["chemo_sensors", "energy_sensors"] {
-            records[0]["data"]["params"]["sensing"]
-                .as_object_mut()
-                .unwrap()
-                .remove(field);
-        }
-        records[0]["data"]["params"]["brain"]
-            .as_object_mut()
-            .unwrap()
-            .remove("connections_per_target");
-        for cohort in ["evolving", "random_control"] {
-            let mut counts =
-                serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
-                    .unwrap();
-            counts.as_object_mut().unwrap().remove("remove_sensor");
-            counts.as_object_mut().unwrap().remove("add_sensor");
-            counts.as_object_mut().unwrap().remove("add_oscillator");
-            counts["add_neuron"]["attempted"] = 2.into();
-            counts["add_neuron"]["applied"] = 2.into();
-            records[1]["data"][cohort]["structural_mutations"] = counts;
-        }
-        let legacy = parse_values(&records).unwrap();
-        assert_eq!(legacy.header.control, "randomized_at_birth_v2");
-        let mut expected_params = legacy_era_params();
-        expected_params.species.capacity = 0;
-        assert_eq!(legacy.header.params, expected_params);
-        for cohort in [
-            &legacy.samples[0].evolving,
-            &legacy.samples[0].random_control,
-        ] {
-            let counts = cohort.structural_mutations.unwrap();
-            assert_eq!(counts.add_neuron.applied, 2);
-            assert_eq!(counts.remove_sensor, None);
-            assert_eq!(counts.add_sensor, None);
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_or_mixed_protocol_versions() {
-        for (schema, phase, control) in [
-            (3, 2, "randomized_at_birth"),
-            (3, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (4, 1, "randomized_at_birth_v2"),
-            (4, 2, "randomized_at_birth"),
-            (4, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (4, 2, "unknown"),
-            (4, 3, "randomized_at_birth_v2"),
-            (5, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (5, 2, "randomized_at_birth_v2"),
-            (5, 2, "randomized_at_birth"),
-            (5, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (6, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (6, 2, "randomized_at_birth_v2"),
-            (6, 2, "randomized_at_birth"),
-            (6, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (7, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (7, 2, "randomized_at_birth_v2"),
-            (7, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (8, 1, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (8, 3, RANDOMIZED_AT_BIRTH_PROTOCOL),
-            (8, 1, STRUCTURAL_NULL_PROTOCOL),
-            (8, 2, "structural_null"),
-            (7, 2, STRUCTURAL_NULL_PROTOCOL),
-            (5, 2, STRUCTURAL_NULL_PROTOCOL),
-            (7, 2, STRUCTURAL_NULL_V2_PROTOCOL),
-            (8, 2, "structural_null_v3"),
-            (9, 2, RANDOMIZED_AT_BIRTH_PROTOCOL),
-        ] {
-            let mut records = final_records();
-            if matches!(schema, 3..=5) {
-                set_legacy_header(&mut records, schema);
-            }
-            records[0]["data"]["schema_version"] = schema.into();
-            records[0]["data"]["phase"] = phase.into();
-            records[0]["data"]["control"] = control.into();
-            assert!(
-                parse_values(&records).is_err(),
-                "accepted {schema}/{phase}/{control}"
-            );
-        }
-    }
-
-    #[test]
-    fn all_historical_schemas_keep_their_tight_preclassification_budget() {
-        for schema in [3, 4, 5] {
-            let mut params = legacy_era_params();
-            params.world.max_agents = 2;
-            params.plants.max_plants = 8;
-            params.species.capacity = 0;
-            params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
-                - 3 * 8 * u64::from(params.world.max_agents);
-            let historical_budget = params.storage.max_memory_bytes;
-            let mut records = final_records();
-            records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
-            set_legacy_header(&mut records, schema);
-            let legacy = parse_values(&records).expect("valid historical construction budget");
-            assert_eq!(legacy.header.params.species.capacity, 0);
-            assert_eq!(
-                legacy.header.params.storage.max_memory_bytes,
-                historical_budget
-            );
-            assert_eq!(legacy.samples[0].evolving.species, None);
-            assert_eq!(legacy.samples[0].random_control.species, None);
-
-            params.species.capacity = 256;
-            assert!(
-                params.validate().is_err(),
-                "fixture must reject the false default classifier allocation"
-            );
-        }
-    }
-
-    #[test]
-    fn schema_five_retains_sparse_founders_and_measured_organ_observations() {
-        let mut records = final_records();
-        records[0]["data"]["params"]["sensing"]["vision_rays"] = 0.into();
-        records[0]["data"]["params"]["sensing"]["chemo_sensors"] = 0.into();
-        records[0]["data"]["params"]["sensing"]["energy_sensors"] = 2.into();
-        records[0]["data"]["params"]["brain"]["connections_per_target"] = 1.into();
-        records[0]["data"]["params"]["mutation"]["organs"]["add_sensor_rate"] = 0.1.into();
-        for cohort in ["evolving", "random_control"] {
-            records[1]["data"][cohort]["structural_mutations"] =
-                serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
-                    .unwrap();
-            records[1]["data"][cohort]["structural_mutations"]["add_sensor"]["attempted"] =
-                2.into();
-            records[1]["data"][cohort]["structural_mutations"]["add_sensor"]["applied"] = 2.into();
-        }
-        set_legacy_header(&mut records, 5);
-        let legacy = parse_values(&records).unwrap();
-        assert_eq!(legacy.header.params.sensing.chemo_sensors, 0);
-        assert_eq!(legacy.header.params.sensing.energy_sensors, 2);
-        assert_eq!(legacy.header.params.brain.connections_per_target, Some(1));
-        assert_eq!(legacy.header.params.species.capacity, 0);
-        for metrics in [
-            &legacy.samples[0].evolving,
-            &legacy.samples[0].random_control,
-        ] {
-            assert_eq!(
-                metrics
-                    .structural_mutations
-                    .unwrap()
-                    .add_sensor
-                    .unwrap()
-                    .applied,
-                2
-            );
-            assert_eq!(metrics.species, None);
-        }
-    }
-
-    #[test]
-    fn schema_six_preserves_species_but_does_not_pay_for_later_birth_identity_arrays() {
-        let mut records = final_records();
-        records[0]["data"]["schema_version"] = 6.into();
-        strip_schema_eight_observations(&mut records);
-        let mut params = legacy_era_params();
-        params.world.max_agents = 2;
-        params.plants.max_plants = 8;
-        params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
-            - 3 * 8 * u64::from(params.world.max_agents);
-        assert!(params.validate().is_err());
-        params.validate_for_layout(LayoutEra::Species).unwrap();
-        records[0]["data"]["params"] = serde_json::to_value(&params).unwrap();
-        let data = parse_values(&records).unwrap();
-        assert_eq!(
-            data.header.params, params,
-            "do not rewrite the historical budget or classifier"
-        );
-        assert!(data.samples[0].evolving.species.is_some());
-        records[0]["data"]["schema_version"] = SCHEMA_VERSION.into();
-        for cohort in ["evolving", "random_control"] {
-            records[1]["data"][cohort]["complexity"] =
-                serde_json::to_value(ComplexityMetrics::default()).unwrap();
-            records[1]["data"][cohort]["history"] = serde_json::Value::Null;
-        }
-        assert!(
-            parse_values(&records).is_err(),
-            "current runtime must pay for its identity arrays"
-        );
-    }
-
-    #[test]
-    fn historical_schemas_reject_species_claims_instead_of_silently_disabling_them() {
-        for schema in [3, 4, 5] {
-            for policy in [
-                serde_json::Value::Null,
-                serde_json::json!({}),
-                serde_json::json!({"capacity": 0, "threshold": 0.5}),
-                serde_json::json!({"capacity": 256, "threshold": 0.5}),
-            ] {
-                let mut records = final_records();
-                set_legacy_header(&mut records, schema);
-                records[0]["data"]["params"]["species"] = policy;
-                let error = parse_values(&records)
-                    .err()
-                    .expect("accepted legacy classification");
-                assert!(
-                    error
-                        .to_string()
-                        .contains("legacy metrics cannot claim species configuration")
-                );
-            }
-            for cohort in ["evolving", "random_control"] {
-                let mut records = final_records();
-                set_legacy_header(&mut records, schema);
-                records[1]["data"][cohort]["species"] = serde_json::Value::Null;
-                parse_values(&records).expect("null means historically unavailable");
-                records[1]["data"][cohort]["species"] =
-                    serde_json::to_value(SpeciesMetrics::default()).unwrap();
-                let error = parse_values(&records)
-                    .err()
-                    .expect("accepted invented measured zeroes");
-                assert!(
-                    error
-                        .to_string()
-                        .contains("species observations unavailable")
-                );
-            }
         }
     }
 
@@ -1180,172 +694,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_control_rejects_each_nonzero_structural_rate_but_current_accepts_it() {
-        for rate in [
-            "remove_connection_rate",
-            "remove_neuron_rate",
-            "toggle_connection_rate",
-            "add_connection_rate",
-            "add_neuron_rate",
-        ] {
-            let mut records = final_records();
-            records[0]["data"]["params"]["mutation"]["structural"][rate] = 0.1.into();
-            parse_values(&records).expect("current structural configuration");
-            set_legacy_header(&mut records, 4);
-            parse_values(&records).expect("schema 4 supports neural structural mutation");
-            records[0]["data"]["schema_version"] = 3.into();
-            records[0]["data"]["phase"] = 1.into();
-            records[0]["data"]["control"] = "randomized_at_birth".into();
-            let error = parse_values(&records)
-                .err()
-                .expect("legacy structural rate accepted");
-            assert!(
-                error
-                    .to_string()
-                    .contains("nonzero structural mutation rates"),
-                "{error}"
-            );
-        }
-    }
-
-    #[test]
-    fn pre_m3_schemas_restore_the_dense_founder_they_ran() {
-        for schema in [3, 4] {
-            let mut records = final_records();
-            set_legacy_header(&mut records, schema);
-            for (section, field) in [
-                ("sensing", "chemo_sensors"),
-                ("sensing", "energy_sensors"),
-                ("brain", "connections_per_target"),
-            ] {
-                records[0]["data"]["params"][section]
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(field);
-            }
-            let legacy = parse_values(&records).expect("omitted M3 fields are restored");
-            let params = &legacy.header.params;
-            assert_eq!(
-                (
-                    params.sensing.chemo_sensors,
-                    params.sensing.energy_sensors,
-                    params.brain.connections_per_target
-                ),
-                (1, 1, None),
-                "schema {schema} took today's founder defaults"
-            );
-        }
-    }
-
-    #[test]
-    fn legacy_protocols_reject_m3_behavior_but_current_accepts_it() {
-        for (path, value) in [
-            (
-                "/mutation/organs/remove_sensor_rate",
-                serde_json::json!(0.1),
-            ),
-            ("/mutation/organs/add_sensor_rate", serde_json::json!(0.1)),
-            ("/sensing/chemo_sensors", serde_json::json!(0)),
-            ("/sensing/energy_sensors", serde_json::json!(2)),
-            ("/brain/connections_per_target", serde_json::json!(0)),
-            ("/brain/connections_per_target", serde_json::json!(1)),
-        ] {
-            let mut records = final_records();
-            *records[0]["data"]["params"].pointer_mut(path).unwrap() = value;
-            parse_values(&records).expect("current M3 configuration");
-            set_legacy_header(&mut records, 5);
-            parse_values(&records).expect("schema 5 supports nondefault M3 configuration");
-            for schema in [3, 4] {
-                set_legacy_header(&mut records, schema);
-                let error = parse_values(&records)
-                    .err()
-                    .expect("accepted legacy M3 behavior");
-                assert!(
-                    error.to_string().contains("M3 founder composition"),
-                    "{error}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn oscillator_addition_counts_are_unknown_before_they_were_recorded() {
-        let with_counts = |records: &mut [serde_json::Value], oscillator: bool| {
-            for cohort in ["evolving", "random_control"] {
-                let mut counts =
-                    serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
-                        .unwrap();
-                if !oscillator {
-                    counts.as_object_mut().unwrap().remove("add_oscillator");
-                }
-                records[1]["data"][cohort]["structural_mutations"] = counts;
-            }
-        };
-        let mut legacy = final_records();
-        records_at_schema_seven(&mut legacy);
-        with_counts(&mut legacy, false);
-        parse_values(&legacy).expect("schema 7 without oscillator observations");
-        with_counts(&mut legacy, true);
-        assert!(
-            parse_values(&legacy).is_err(),
-            "schema 7 cannot claim oscillator-addition observations"
-        );
-
-        let mut current = final_records();
-        with_counts(&mut current, false);
-        let data = parse_values(&current).expect("schema 8 written before the operator");
-        for metrics in [&data.samples[0].evolving, &data.samples[0].random_control] {
-            assert_eq!(metrics.structural_mutations.unwrap().add_oscillator, None);
-        }
-        with_counts(&mut current, true);
-        let data = parse_values(&current).unwrap();
-        assert!(
-            data.samples[0]
-                .evolving
-                .structural_mutations
-                .unwrap()
-                .add_oscillator
-                .is_some()
-        );
-    }
-
-    fn records_at_schema_seven(records: &mut [serde_json::Value]) {
-        records[0]["data"]["schema_version"] = 7.into();
-        strip_schema_eight_observations(records);
-    }
-
-    #[test]
-    fn legacy_sensor_observations_are_unknown_never_measured_zero() {
-        for schema in [3, 4] {
-            for cohort in ["evolving", "random_control"] {
-                for operator in ["remove_sensor", "add_sensor"] {
-                    let mut records = final_records();
-                    set_legacy_header(&mut records, schema);
-                    let mut counts =
-                        serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
-                            .unwrap();
-                    counts["remove_sensor"] = serde_json::Value::Null;
-                    counts["add_sensor"] = serde_json::Value::Null;
-                    counts.as_object_mut().unwrap().remove("add_oscillator");
-                    records[1]["data"][cohort]["structural_mutations"] = counts;
-                    if schema == 4 {
-                        parse_values(&records).expect("explicit null remains unavailable");
-                    }
-                    records[1]["data"][cohort]["structural_mutations"][operator] =
-                        serde_json::to_value(sim_core::mutate::OperatorCounts::default()).unwrap();
-                    let error = parse_values(&records)
-                        .err()
-                        .expect("legacy claimed measured sensor observations");
-                    assert!(
-                        error.to_string().contains("observations unavailable"),
-                        "{error}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn rejects_a_truncated_metrics_stream() {
         let header = RunHeader {
             schema_version: SCHEMA_VERSION,
@@ -1356,7 +704,7 @@ mod tests {
             ticks: 10,
             founders: 1,
             sample_every: 5,
-            params: legacy_era_params(),
+            params: SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let records = [
@@ -1390,7 +738,7 @@ mod tests {
             ticks: 0,
             founders: 1,
             sample_every: 5,
-            params: legacy_era_params(),
+            params: SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let final_sample = RunSample {
@@ -1421,7 +769,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_header_params() {
-        let mut params = legacy_era_params();
+        let mut params = SimParams::default();
         params.world.dt = 0.0;
         let records = [
             MetricsRecord::Header(Box::new(RunHeader {
@@ -1474,7 +822,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: legacy_era_params(),
+                params: SimParams::default(),
                 control: "randomized_at_birth".to_owned(),
             }));
             let jsonl = serde_json::to_string(&header).unwrap();
@@ -1487,5 +835,63 @@ mod tests {
                     .contains(&format!("unsupported metrics schema {version}"))
             );
         }
+    }
+
+    #[test]
+    fn only_the_current_schema_and_protocols_are_read() {
+        for schema in [7, 9] {
+            let mut records = final_records();
+            records[0]["data"]["schema_version"] = schema.into();
+            let error = parse_values(&records).err().expect("other schemas refused");
+            assert!(
+                error.to_string().contains("unsupported metrics schema"),
+                "{error}"
+            );
+        }
+        for (field, value) in [
+            ("phase", serde_json::json!(1)),
+            ("control", "unknown".into()),
+        ] {
+            let mut records = final_records();
+            records[0]["data"][field] = value;
+            assert!(parse_values(&records).is_err(), "{field}");
+        }
+        for control in [STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL] {
+            let mut records = final_records();
+            records[0]["data"]["control"] = control.into();
+            parse_values(&records).unwrap();
+        }
+    }
+
+    #[test]
+    fn rates_and_counts_older_schema_eight_files_omit_are_zero_and_unknown() {
+        let mut records = final_records();
+        records[0]["data"]["params"]["mutation"]["structural"]
+            .as_object_mut()
+            .unwrap()
+            .remove("add_oscillator_rate");
+        records[0]["data"]["params"]["mutation"]["organs"]
+            .as_object_mut()
+            .unwrap()
+            .remove("add_sensor_rate");
+        for cohort in ["evolving", "random_control"] {
+            let mut counts =
+                serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
+                    .unwrap();
+            counts.as_object_mut().unwrap().remove("add_oscillator");
+            records[1]["data"][cohort]["structural_mutations"] = counts;
+        }
+        let data = parse_values(&records).unwrap();
+        let mutation = &data.header.params.mutation;
+        assert_eq!(mutation.structural.add_oscillator_rate, 0.0);
+        assert_eq!(mutation.organs.add_sensor_rate, 0.0);
+        assert_eq!(
+            data.samples[0]
+                .evolving
+                .structural_mutations
+                .unwrap()
+                .add_oscillator,
+            None
+        );
     }
 }

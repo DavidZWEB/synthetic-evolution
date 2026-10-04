@@ -17,7 +17,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::genome;
-use crate::storage::{LayoutEra, StorageLayout};
+use crate::storage::StorageLayout;
 
 /// The complete parameter set for one world.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -776,20 +776,11 @@ impl SimParams {
         Ok(())
     }
 
-    /// Validate archived run parameters against their historical buffer inventory.
-    ///
-    /// This is not construction permission: `World::new` always validates and reserves
-    /// the complete current layout. Shells select a `LayoutEra` from their wire version;
-    /// core owns which buffers existed in that era (spec section 7.9).
-    pub fn validate_for_layout(&self, era: LayoutEra) -> Result<(), ParamError> {
-        self.validate_values()?;
-        StorageLayout::for_era(self, era)?;
-        Ok(())
-    }
-
     /// Validates scalar values and the storage needed to construct a new world.
     pub fn validate(&self) -> Result<(), ParamError> {
-        self.validate_for_layout(LayoutEra::CURRENT)
+        self.validate_values()?;
+        StorageLayout::new(self)?;
+        Ok(())
     }
 
     /// `!(x > 0.0)` rather than `x <= 0.0` throughout: the negated form also rejects

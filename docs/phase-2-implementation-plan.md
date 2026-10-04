@@ -535,8 +535,8 @@ once after plants and reused by every founder. The accepted dense default remain
 unchanged.
 
 Schema 5 / phase 2 / `randomized_at_birth_v3` records sensor-aware scalar control.
-Schemas 3 and 4 remain explicitly readable, with unavailable historical organ
-observations kept distinct from measured zeros. WASM inspection/diagnostics and
+Schemas 3 and 4 then remained readable (support for metrics schemas before 8 was
+dropped in M8's cleanup). WASM inspection/diagnostics and
 browser URL sharing support the new shapes. Reachable eye acquisition and wiring
 are demonstrated mechanisms, not evidence that selection finds them useful; M8
 owns viability and structural-null experiments.
@@ -603,9 +603,7 @@ the resulting genomes validate.
 **Identity foundation delivered:** monotonic world-owned IDs, parent capture at
 admission, explicit exhaustion, persistent references across slot reuse, and exact
 inspection values. The identity slice alone does not retain an ancestry graph.
-Native schema 7 distinguishes the new construction footprint while preserving
-historical schemas 3-6 without charging their runtimes for nonexistent identity
-arrays. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
+Native schema 7 distinguished the new construction footprint. Ecological state, RNG, legacy parent slots, and render snapshots are unchanged.
 
 **History capture/native export delivered:** rich optional species lifecycle
 callbacks, a bounded shell-owned FIFO with explicit ordered gaps, and versioned
@@ -622,10 +620,9 @@ commit then hashes the birth counter and each live individual's ID and two paren
 references, with a shared native/WASM continuation case. This is a coverage-only
 refresh, not ecological or heredity change.
 
-**Compatibility follow-up:** historical footprint accounting is consolidated behind
-core `LayoutEra` inventories, with wire-version mapping and feature-claim validation
-owned by the shells. This removes feature-specific layout-validator growth before
-the retained-history work, without changing schema versions, buffers, or references.
+**Compatibility follow-up:** historical footprint accounting was consolidated behind
+core layout eras; M8's cleanup later removed them along with reading of metrics
+schemas before 8.
 It is not a checkpoint migration framework; M7 still rejects incompatible formats.
 
 Implement D6's identities, species-origin events, history retention, and shell-side
@@ -656,8 +653,8 @@ yet claim richer complexity telemetry, archived genomes, comparison, or graph vi
 distributions of genome genes, neuron genes, connection genes, and enabled
 connections. Each cohort also records history-capture availability, `null` when
 capture is off. `diagnose` reports both, with active species against configured
-capacity and a `history_gaps` finding. The approved compatibility policy keeps
-schemas 3–7 readable, with these observations unknown rather than zero. One shared
+capacity and a `history_gaps` finding. (Schemas 3–7 stayed readable until M8's
+cleanup dropped them.) One shared
 shell module computes the distributions for native metrics and WASM
 `complexity_diagnostics()`. The species browser shows them for the same completed
 tick, and a shared reference case pins native/WASM/browser agreement. Per-species

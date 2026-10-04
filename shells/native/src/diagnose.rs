@@ -81,7 +81,7 @@ pub struct ComplexityReport {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum HistoryStatus {
-    /// Schemas before 8 did not record whether capture was on.
+    /// No sample to report.
     Unknown,
     Off,
     Complete {
@@ -179,7 +179,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
                 .any(|sample| select(sample, cohort).species.is_none())
         {
             unavailable.push(format!(
-                "complete active-species and unclassified populations for {} are unavailable: legacy sampling does not establish zero species",
+                "complete active-species and unclassified populations for {} are unavailable: unrecorded sampling does not establish zero species",
                 cohort.name()
             ));
         }
@@ -193,7 +193,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
             })
         {
             unavailable.push(format!(
-                "complete species-event counts for {} are unavailable: legacy or unobserved sampling does not establish zero transitions",
+                "complete species-event counts for {} are unavailable: unobserved sampling does not establish zero transitions",
                 cohort.name()
             ));
         }
@@ -203,15 +203,8 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
                 .any(|sample| select(sample, cohort).complexity.is_none())
         {
             unavailable.push(format!(
-                "separate neuron/connection counts and genome-size distributions for {} are unavailable: legacy sampling did not record them",
+                "separate neuron/connection counts and genome-size distributions for {} are unavailable: sampling did not record them",
                 cohort.name()
-            ));
-        }
-        if header.schema_version < 8 {
-            unavailable.push(format!(
-                "history-capture availability for {} is unknown: schema {} did not record whether capture was on",
-                cohort.name(),
-                header.schema_version
             ));
         }
         if samples.is_empty()
@@ -238,7 +231,7 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
             {
                 let operator = operator_name(operator);
                 unavailable.push(format!(
-                    "complete {operator} sensor-mutation counts for {} are unavailable: legacy or unobserved sampling does not establish zero edits",
+                    "complete {operator} sensor-mutation counts for {} are unavailable: unobserved sampling does not establish zero edits",
                     cohort.name()
                 ));
             }
@@ -269,8 +262,8 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
             random_control: complexity_summary(samples.last(), Cohort::control(header)),
         },
         history: HistoryReport {
-            evolving: history_status(header, samples.last(), Cohort::Evolving),
-            random_control: history_status(header, samples.last(), Cohort::control(header)),
+            evolving: history_status(samples.last(), Cohort::Evolving),
+            random_control: history_status(samples.last(), Cohort::control(header)),
         },
         unavailable,
     }
@@ -299,8 +292,8 @@ fn complexity_summary(sample: Option<&RunSample>, cohort: Cohort) -> Option<Comp
     })
 }
 
-fn history_status(header: &RunHeader, sample: Option<&RunSample>, cohort: Cohort) -> HistoryStatus {
-    let Some(sample) = sample.filter(|_| header.schema_version >= 8) else {
+fn history_status(sample: Option<&RunSample>, cohort: Cohort) -> HistoryStatus {
+    let Some(sample) = sample else {
         return HistoryStatus::Unknown;
     };
     match select(sample, cohort).history {
@@ -1842,15 +1835,6 @@ mod tests {
             "evolving: incomplete through tick 1000: 2 dropped events in 1 gaps (5 retained, capacity 8)"
         ));
         assert!(output.contains("  - scalar control: off"));
-
-        let mut legacy = header(1_000);
-        legacy.schema_version = 7;
-        let report = diagnose(&legacy, &samples);
-        assert_eq!(report.history.evolving, HistoryStatus::Unknown);
-        assert_eq!(report.history.random_control, HistoryStatus::Unknown);
-        assert!(report.unavailable.iter().any(|reason| {
-            reason.contains("history-capture availability for scalar control is unknown")
-        }));
     }
 
     #[test]
