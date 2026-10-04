@@ -602,7 +602,8 @@ pub struct PlantParams {
     /// **0.8 after M9 calibration**: a stripped plant regrows at a fifth of the rate of
     /// a full one. Zero reproduces Phase 1's plants, where every plant takes its full
     /// share until it is full however hard it was grazed. At 0.9 together with
-    /// patchiness 8 every calibration world went extinct.
+    /// patchiness 8 and 15-second starvation, every evolving and structural-null world
+    /// went extinct on all three calibration seeds.
     pub grazing_lag: f32,
     /// How strongly plants cluster on fertile ground, in `[0, MAX_PATCHINESS]`
     /// (spec §5.3).
@@ -640,7 +641,8 @@ pub struct PlantParams {
     /// to regrow past [`Self::death_stock`], or seedlings die before they establish.
     ///
     /// **30 after M9 calibration**, about one idle founder's lifetime. 15 together with
-    /// grazing lag 0.9 and patchiness 8 drove every calibration world extinct.
+    /// grazing lag 0.9 and patchiness 8 drove every evolving and structural-null world
+    /// extinct on all three calibration seeds.
     pub death_seconds: f32,
     /// Probability that a reseeded plant lands near a parent rather than anywhere, in
     /// `[0, 1]`. Seed mostly falls near the plant that dropped it, which is what lets a

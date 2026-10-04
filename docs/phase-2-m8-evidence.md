@@ -313,8 +313,9 @@ sensor, 0 hidden neurons, 25 genes):
   only together with grazing lag and turnover, which make a patch something to find
   and leave.
 - **Limits.** Grazing lag 0.9 with patchiness 8 and 15-second starvation killed
-  every world, controls included; fewer, larger sites with the ecology on nearly
-  killed seed 314. The shipped values sit inside that boundary.
+  every evolving and structural-null world on all three seeds, and two of three
+  scalar controls (the third held a single agent); fewer, larger sites with the
+  ecology on nearly killed seed 314. The shipped values sit inside that boundary.
 - **Species.** Evolving worlds hold fewer persistent species than the null under the
   ecology (6–10 against 17–28 shipped); at the 0.5 threshold, species counts still
   do not favour the evolving world.
