@@ -296,7 +296,11 @@ run eats everything that enters and per-agent intake is then just input divided 
 population; what foraging changes is how much enters, since a full plant refuses its
 share. Agents gain energy only by eating, so intake between samples is the change in
 agent-held energy plus what was dissipated; it matches the plants' side of the books
-exactly when no founders are added mid-run. Each params file is a partial
+exactly when no founders are added mid-run. Three plant measures come from the final
+sample: `plant_stock` (plant energy as a fraction of every plant full),
+`plant_clustering` (the Clark–Evans ratio of nearest-neighbour distances, near 1 for
+random scatter and below 1 for patches), and `plants_reseeded` (plants that starved
+and reseeded over the run). Each params file is a partial
 `SimParams` document (`{}` for shipped defaults). Published summaries live under
 `experiments/` (M8 in `phase-2-m8/`, the perception sweep in `perception-sweep/`).
 

@@ -27,6 +27,9 @@ const METRICS: &[&str] = &[
     "agent_energy_mean",
     "speed_mean",
     "supply_captured",
+    "plant_stock",
+    "plant_clustering",
+    "plants_reseeded",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -100,6 +103,8 @@ const NOTES: &[&str] = &[
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
     "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
     "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
+    "plant_stock: plant energy as a fraction of every plant full; plant_clustering: Clark-Evans ratio, near 1 random and below 1 clustered",
+    "plants_reseeded: plants that died of starvation and reseeded over the run",
     "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
     "peak_arena_use: the fullest arena's used fraction at the final sample",
 ];
@@ -203,8 +208,7 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         .final_state_hashes
         .as_ref()
         .map(|hashes| hashes.evolving.clone());
-    let supply = f64::from(header.params.plants.energy_input_rate * header.params.world.dt);
-    let evolving = cohort_values(&run.samples, header.ticks, supply, |sample| {
+    let evolving = cohort_values(&run.samples, header.ticks, &header.params, |sample| {
         &sample.evolving
     });
     // Every control run repeats the same evolving world; disagreement means the runs
@@ -218,7 +222,7 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         Some(_) => {}
         None => runs.evolving = Some((evolving, hash)),
     }
-    let control = cohort_values(&run.samples, header.ticks, supply, |sample| {
+    let control = cohort_values(&run.samples, header.ticks, &header.params, |sample| {
         &sample.random_control
     });
     let Some(index) = CONTROLS
@@ -337,14 +341,16 @@ fn stats(name: &'static str, values: Vec<Option<f64>>) -> MetricStats {
     }
 }
 
-/// One cohort's metric vector in `METRICS` order. `supply` is the plants' nominal
-/// energy input per tick.
+/// One cohort's metric vector in `METRICS` order.
 fn cohort_values(
     samples: &[RunSample],
     ticks: u64,
-    supply: f64,
+    params: &sim_core::SimParams,
     select: impl Fn(&RunSample) -> &WorldMetrics,
 ) -> Vec<Option<f64>> {
+    let plants = &params.plants;
+    let supply = f64::from(plants.energy_input_rate * params.world.dt);
+    let capacity = f64::from(plants.max_energy) * f64::from(plants.max_plants);
     let last = select(samples.last().expect("checked non-empty"));
     let complexity = last.complexity.as_ref();
     let wiring = complexity.and_then(|c| c.wiring.as_ref());
@@ -360,6 +366,9 @@ fn cohort_values(
         Some(last.agent_energy.mean),
         Some(last.speed.mean),
         captured,
+        (capacity > 0.0).then(|| last.plant_energy / capacity),
+        last.plants.and_then(|p| p.clustering),
+        last.plants.map(|p| p.reseeded as f64),
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),
@@ -701,7 +710,12 @@ mod tests {
 
     #[test]
     fn every_metric_has_a_value_slot() {
-        let values = cohort_values(&[sample(0, &[1])], 0, 1.0, |s| &s.evolving);
+        let values = cohort_values(
+            &[sample(0, &[1])],
+            0,
+            &sim_core::SimParams::default(),
+            |s| &s.evolving,
+        );
         assert_eq!(values.len(), METRICS.len());
         assert_eq!(values[0], Some(0.0), "a living population is not extinct");
     }
