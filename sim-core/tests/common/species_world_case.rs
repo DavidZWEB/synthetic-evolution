@@ -13,11 +13,12 @@ use sim_core::ids::{AgentId, BirthId, InnovationId, NULL_ID, SpeciesId};
 use sim_core::species::SpeciesEventCounts;
 use sim_core::{SpawnSpec, World};
 
-// Phase 3 M2 refresh: founders carry muscle and mouth genes, and the hash covers both
-// (spec §3.5). M5's coverage-only refresh before it added lifetime birth identities
+// Phase 3 M3 coverage refresh: the hash covers each agent's bite cooldown (spec §4.2).
+// Before it, Phase 3 M2's founders gained muscle and mouth genes and the hash covered
+// both (spec §3.5), and M5's coverage-only refresh added lifetime birth identities
 // (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xd1b5_e2fa_0ce1_c72e;
-pub const CONTROL_GOLDEN: u64 = 0xd864_2add_7fbd_632b;
+pub const EVOLVING_GOLDEN: u64 = 0x586d_77c4_a6bd_d1ae;
+pub const CONTROL_GOLDEN: u64 = 0xc0cc_7437_267e_23ab;
 
 fn genes(weight: f32) -> [Gene; 4] {
     [

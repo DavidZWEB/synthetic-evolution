@@ -7,7 +7,7 @@
 //! The subsequent coverage-only refresh adds full classifier state to both values.
 //! M5's additional coverage-only refresh includes lifetime birth identities.
 //! Phase 3 M2 refreshes both again: founders carry muscle and mouth genes, and the
-//! hash covers them.
+//! hash covers them. Phase 3 M3's coverage refresh adds each agent's bite cooldown.
 
 use sim_core::World;
 use sim_core::control::BrainInheritance;
@@ -15,8 +15,8 @@ use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-pub const EVOLVING_GOLDEN: u64 = 0x8dc1_9e8f_20b5_5d3d;
-pub const CONTROL_GOLDEN: u64 = 0xa8e7_8c5b_cd59_eef1;
+pub const EVOLVING_GOLDEN: u64 = 0x1cc3_229e_d300_94bd;
+pub const CONTROL_GOLDEN: u64 = 0x3af7_144c_1cee_7c61;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();
