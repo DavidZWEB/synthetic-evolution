@@ -179,7 +179,8 @@ pub struct WorldParams {
 #[serde(default, deny_unknown_fields)]
 pub struct BodyParams {
     /// The founders' collision and rendering radius, in world units, and the size every
-    /// body's mass and gape are measured against (spec §3.5).
+    /// body's mass and gape are measured against (spec §3.5). Fixed for the life of a
+    /// world.
     pub size: f32,
     /// Bounds on an evolved radius, which must contain `size`.
     ///

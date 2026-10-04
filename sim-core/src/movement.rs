@@ -23,6 +23,8 @@ use crate::spatial::wrap_scalar;
 
 /// Advances one agent by a tick of its own intent.
 ///
+/// `acceleration` is the thrust force already divided by the body's mass (spec §3.5).
+///
 /// Turn first, then thrust: an agent pushes along the heading it just chose rather than
 /// the one it held last tick. Either order is deterministic, but this one makes a turn
 /// take effect immediately, which is what "steer toward the food" has to mean if a
@@ -31,7 +33,7 @@ pub fn integrate(
     position: &mut Vec3,
     velocity: &mut Vec3,
     orientation: &mut Quat,
-    thrust: f32,
+    acceleration: f32,
     turn: f32,
     movement: &MovementParams,
     world: &WorldParams,
@@ -40,9 +42,7 @@ pub fn integrate(
 
     *orientation = math::rotate_yaw(*orientation, turn * dt);
 
-    // `thrust` arrives as an acceleration: the caller has already divided the force
-    // by the body's mass (spec §3.5).
-    *velocity += math::forward(*orientation) * (thrust * dt);
+    *velocity += math::forward(*orientation) * (acceleration * dt);
 
     // `drag` is the fraction of velocity kept per *second*, so a tick keeps
     // `drag^dt` — otherwise the same parameter would mean different things at
