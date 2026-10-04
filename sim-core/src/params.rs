@@ -1537,10 +1537,12 @@ impl SimParams {
                 "the largest body's feeding reach exceeds half the world; the hash cannot wrap",
             ));
         }
-        // A bite searches past both bodies, and the victim may be the largest there is.
-        if (self.combat.reach + 2.0 * self.body.size_range[1]) * 2.0 > self.world.size {
+        // A founder's bite gene takes `combat.reach`, and must reach no further than an
+        // import's may (spec §4.2). A world whose founders do not bite builds no such
+        // gene, as every world before the bite did not.
+        if self.founder.bite && !(self.combat.reach * 2.0 <= self.world.size) {
             return Err(ParamError(
-                "the largest bodies' bite reach exceeds half the world; the hash cannot wrap",
+                "a founder's bite must reach no further than half the world",
             ));
         }
         Ok(())
@@ -2353,6 +2355,29 @@ mod tests {
     }
 
     #[test]
+    fn the_founder_reach_binds_only_worlds_whose_founders_bite() {
+        // A small world without the bite, as every world before it was, need not fit a
+        // founder's bite it will never build.
+        let mut params = SimParams::default();
+        params.world.size = 30.0;
+        params.sensing.vision_range = 10.0;
+        params.sensing.chemo_radius = 10.0;
+        params.plants.dispersal_radius = 10.0;
+        params.plants.patch_scale = 10.0;
+        params.combat.reach = 16.0;
+        assert_eq!(params.validate(), Ok(()));
+        params.founder.bite = true;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "a founder's bite must reach no further than half the world"
+            ))
+        );
+        params.combat.reach = 15.0;
+        assert_eq!(params.validate(), Ok(()));
+    }
+
+    #[test]
     fn combat_params_are_bounded() {
         // Each break must fail on its own check, not on whichever runs first.
         type BreakIt = fn(&mut SimParams);
@@ -2362,7 +2387,7 @@ mod tests {
         let amounts = "combat reach, attack cost, health regeneration, and mouthful must be finite and non-negative";
         let fractions = "combat.attack_damage and combat.assimilation must be in [0, 1]";
         let cooldown = "combat.cooldown_seconds must be non-negative and countable in ticks";
-        let reach = "the largest bodies' bite reach exceeds half the world; the hash cannot wrap";
+        let reach = "a founder's bite must reach no further than half the world";
         let overflow = "body ranges let a body's acceleration, upkeep, intake, or bite overflow";
         let cases: Vec<(&str, BreakIt)> = vec![
             (gate, |p| p.combat.gate = f32::NAN),
@@ -2378,8 +2403,10 @@ mod tests {
             (fractions, |p| p.combat.assimilation = -0.1),
             (cooldown, |p| p.combat.cooldown_seconds = -1.0),
             (cooldown, |p| p.combat.cooldown_seconds = 1e30),
-            // The largest bite searches past two of the largest bodies: (490 + 12) · 2.
-            (reach, |p| p.combat.reach = 490.0),
+            (reach, |p| {
+                p.founder.bite = true;
+                p.combat.reach = 500.5;
+            }),
             // A hit at the widest gape asks for mouthful · 8².
             (overflow, |p| p.combat.mouthful = f32::MAX),
         ];
