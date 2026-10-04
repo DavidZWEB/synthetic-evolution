@@ -10,11 +10,20 @@ export interface SizeDistribution {
   mean: number;
 }
 
+/** Structure on an enabled sensor-or-clock to effector path, per agent. */
+export interface Wiring {
+  wiredHiddenNeurons: SizeDistribution;
+  wiredSensors: SizeDistribution;
+  drivenEffectors: SizeDistribution;
+}
+
 export interface Complexity {
   genomeGenes: SizeDistribution;
   neurons: SizeDistribution;
   connections: SizeDistribution;
   enabledConnections: SizeDistribution;
+  /** Absent when the producer did not record wiring. */
+  wiring: Wiring | null;
 }
 
 const ORDER = ['min', 'p25', 'median', 'p75', 'max'] as const;
@@ -48,13 +57,26 @@ function boundedBy(inner: SizeDistribution, outer: SizeDistribution): boolean {
 export function decodeComplexity(json: string, population: number): Complexity {
   const data: unknown = JSON.parse(json);
   if (!isRecord(data)) throw new TypeError('invalid complexity payload');
-  const complexity = {
+  const sizes = {
     genomeGenes: decodeDistribution(data.genome_genes, 'genome gene'),
     neurons: decodeDistribution(data.neurons, 'neuron'),
     connections: decodeDistribution(data.connections, 'connection'),
     enabledConnections: decodeDistribution(data.enabled_connections, 'enabled connection'),
   };
-  const empty = Object.values(complexity).every((d) => d.max === 0 && d.mean === 0);
+  let wiring: Wiring | null = null;
+  if (data.wiring !== undefined && data.wiring !== null) {
+    if (!isRecord(data.wiring)) throw new TypeError('invalid wiring');
+    wiring = {
+      wiredHiddenNeurons: decodeDistribution(data.wiring.wired_hidden_neurons, 'wired hidden neuron'),
+      wiredSensors: decodeDistribution(data.wiring.wired_sensors, 'wired sensor'),
+      drivenEffectors: decodeDistribution(data.wiring.driven_effectors, 'driven effector'),
+    };
+    if (!boundedBy(wiring.wiredHiddenNeurons, sizes.neurons)) {
+      throw new TypeError('inconsistent complexity distributions');
+    }
+  }
+  const complexity = { ...sizes, wiring };
+  const empty = Object.values(sizes).every((d) => d.max === 0 && d.mean === 0);
   if (
     empty !== (population === 0) ||
     !boundedBy(complexity.enabledConnections, complexity.connections) ||

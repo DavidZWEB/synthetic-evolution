@@ -10,6 +10,11 @@
     ['neurons', complexity.neurons],
     ['connections', complexity.connections],
     ['enabled connections', complexity.enabledConnections],
+    ...(complexity.wiring ? [
+      ['wired hidden neurons', complexity.wiring.wiredHiddenNeurons],
+      ['wired sensors', complexity.wiring.wiredSensors],
+      ['driven effectors', complexity.wiring.drivenEffectors],
+    ] : []),
   ];
 </script>
 
@@ -55,7 +60,7 @@
     </ul>
     {#if sample.populations.length === 0}<p>No classified species are active.</p>{/if}
     <h3 id="genome-complexity-heading">Genome complexity</h3>
-    <p class="help">Sizes across all living agents at the same tick. Disabled connections still cost energy. Observation only, not fitness.</p>
+    <p class="help">Sizes across all living agents at the same tick. Disabled connections still cost energy. "Wired" counts structure on a path from a sensor or clock to an effector; the rest cannot affect behavior. Observation only, not fitness.</p>
     {#if sample.population === 0}
       <p>No living agents.</p>
     {:else}

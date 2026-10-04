@@ -379,7 +379,12 @@ mod tests {
         assert_eq!(metrics.spawn_failures, None);
         assert_eq!(metrics.structural_mutations, None);
         assert_eq!(metrics.species, Some(SpeciesMetrics::default()));
-        assert_eq!(metrics.complexity, Some(ComplexityMetrics::default()));
+        let complexity = metrics.complexity.expect("recorded");
+        assert!(
+            complexity.is_empty(),
+            "an empty world reports zeroes, recorded"
+        );
+        assert!(complexity.wiring.is_some());
         assert_eq!(metrics.history, None);
     }
 
