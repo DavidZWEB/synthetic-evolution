@@ -151,14 +151,14 @@ A narrow projection of (a), containing only what's needed to draw a frame:
 
 ```
 agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount, incarnation,
-        health, swingAge, hurtAge, biteTarget                       (combat: Phase 3)
+        health, swingAge, hurtAge, biteAt                           (combat: Phase 3)
 plants: positions, energy
 corpses: positions, energy            (Phase 3)
 ```
 
 Plant energy is the current stock, used to show whether a plant is full or depleted (§5.1); it is not a history. Plant positions change when a plant dies and reseeds, so they travel with every frame too. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
 
-**DECIDED (Phase 3): combat travels with the frame,** so attacks can be drawn. Each agent carries `health` quantized to a byte, `swingAge` and `hurtAge` (ticks since it last swung and since it was last hit, saturating at 255, so a renderer that skipped frames still learns that it happened), and `biteTarget` (the slot it last hit, or none). That is 7 bytes, taking an agent from 61 to 68. A renderer turns a newly seen event into a wall-clock animation, as it does for plant reseeds, so attacks stay visible at any sim speed.
+**DECIDED (Phase 3): combat travels with the frame,** so attacks can be drawn. Each agent carries `health` quantized to a byte, `swingAge` and `hurtAge` (ticks since it last swung and since it was last hit, saturating at 255, so a renderer that skipped frames still learns that it happened), and `biteAt`, where its last hit landed (the victim's centre, x and y). A slot index would not do: deaths and births resolve before a frame is published, so a killed victim's slot can already hold a newborn, and the killing blow is the hit most worth drawing. That is 11 bytes, taking an agent from 61 to 72. A renderer turns a newly seen event into a wall-clock animation, as it does for plant reseeds, so attacks stay visible at any sim speed.
 
 `incarnation` changes whenever a pool slot is allocated. A slot index alone is not an agent identity because the free list reuses it; `(index, incarnation)` lets a click-driven inspector reject a response for a replacement born after the displayed frame.
 
@@ -710,7 +710,7 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 - **`mouth` is gape relative to the body**, so gape is `g = mouth · s`. Grazing and scavenging intake per tick is `feeding.rate · g²`, since bite area grows with the square of mouth width, and the bite's damage and mouthful scale with it (§4.2).
 - **Costs** (§5.2): size already pays `k_size · size²`. Muscle and mouth add `k_muscle · (muscle² − 1)` and `k_mouth · (mouth² − 1)`, which are zero at the default of 1.
 - **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
-- **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma` (colour by an additive step), clamped to `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
+- **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
 
 The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
 
@@ -822,7 +822,11 @@ Two of these are disproportionately valuable and cheap:
   - Damage is `combat.attack_damage · g / s_victim`, clamped to `[0, 1]`, where `g` is the biter's gape and `s_victim` the victim's relative size (§3.5). A bigger mouth wounds faster, and a big enough victim is nearly immune.
   - A hit also takes a mouthful: up to `combat.mouthful · g²` of energy leaves the victim, and the biter keeps `combat.assimilation` of it. The rest is dissipated. This is the omnivory bridge real predators crossed: biting pays from the first hit, not only after a kill, and kills still leave corpses for anyone to scavenge.
 - **Health** is a fraction in `[0, 1]`, full at birth. It regenerates at `combat.health_regen` per second, but only while above 0, so lethal damage cannot heal before step 10. An agent whose health reaches 0 dies in step 10, as a starved one does.
-- **Order.** Swings resolve in agent-index order. Damage accumulates, so order cannot decide who dies. Mouthfuls are taken in that order, as food is (§2.4), so a victim holding less than every biter asks serves earlier slots first.
+- **Order.** Swings resolve in two passes.
+  1. Every swing is fixed first: eligibility and target come from the state at the start of step 7, and every cost is paid.
+  2. Hits then apply in agent-index order.
+
+  An earlier biter's mouthful therefore cannot drain a later one below `attack_cost` and cancel its swing. Damage accumulates, so order cannot decide who swings or who dies. Mouthfuls are taken in index order, as food is (§2.4): a victim holding less than every biter asks serves earlier slots first, and that is the one place index order shows.
 - **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. No mutation adds or removes effectors yet.
 
 ---
@@ -914,6 +918,8 @@ the absolutes are the **relationships**, which are stated alongside.
 | `combat_assimilation` | 0.8 | Animals assimilate 60–90% of meat; the rest is dissipated |
 | `k_muscle`, `k_mouth` | 0.008 each | Doubling either trait adds about 40% to a founder's idle upkeep |
 | `body_trait_rate`, `body_trait_sigma` | 0.1, 0.05 | A trait drifts a few percent per mutation: visible over thousands of births, not per generation |
+| `body_size_range` | [1.5, 6] | Half to double the founder radius: room for a size refuge, and still far below the 60-unit grid cell |
+| `body_muscle_range`, `body_mouth_range` | [0.25, 4] each | Quarter to quadruple. At the floor each trait saves `k · 0.9375 = 0.0075` of upkeep, so even the smallest, weakest body still pays a positive cost |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
 | `corpse_decay` | 0.02 /second | Carrion lasts long enough to be found, not long enough to be a second plant layer |
 | `plant_energy_input_rate` | 24000 /sim-second | A ceiling, not an income: with grazing lag the world captures about a quarter of it, and the 2,000-founder web profile settles near 800–1,000 agents |
@@ -1078,7 +1084,7 @@ Two things follow, and the order matters.
 
 The first lever is **not** lazy allocation. A full world is a full world, and 50k *is* the full world — growing on demand only buys headroom for the common case where population sits below the ceiling. The first lever is the genome arena's layout: `Gene` is an enum sized by its widest variant, so the ~85% of genes that are connections pay 40 bytes for a 20-byte payload. Splitting the arena by gene class roughly halves genome memory and needs no new machinery. Lazy growth composes on top of that, and can be made behaviourally invisible — keep `max_agents` as the ceiling the simulation sees and let allocation track live population underneath, so allocation strategy never reaches the golden hash.
 
-And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **68 bytes per agent** (61 before Phase 3's combat fields) — under 1% of per-agent state and 3.4 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the rest, which is where the cost is, is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
+And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **72 bytes per agent** (61 before Phase 3's combat fields) — under 1% of per-agent state and 3.6 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the rest, which is where the cost is, is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
 
 ### 7.6 Tuning discipline
 

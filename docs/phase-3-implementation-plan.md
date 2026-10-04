@@ -139,7 +139,9 @@ Spec §4.2 and §2.4.
   `combat.dormant_bias`.
 - The per-genome effector limit rises from 4 to 5 in the storage defaults, in its own
   commit.
-- Step 7 swings before ingest.
+- Step 7 swings before ingest, in two passes.
+  - The first pass fixes every eligible swing, its target, and its paid cost from the
+    state at the start of step 7. The second applies hits in agent-index order.
   - The agent grid is rebuilt for the swing pass only on ticks when someone swings,
     since agents moved in step 5.
   - Damage is `attack_damage · g / s_victim`.
@@ -157,7 +159,7 @@ Spec §4.2 and §2.4.
 **Tests**
 
 - A hit moves exactly the mouthful, and the dissipated share is exact (spec §7.8 tier 1).
-- Damage order cannot decide a kill.
+- Index order cannot decide who swings or who dies.
 - Cooldown and cost.
 - Arc, reach, and size-ratio geometry.
 - Regeneration stops at 0.
@@ -186,8 +188,8 @@ Spec §2.2b.
 **Snapshot**
 
 The combat fields: health, ticks since the last swing, ticks since the last hit, and
-the last victim's slot. That is 68 bytes per agent, pinned on both sides as the current
-61 is.
+where the last hit landed. That is 72 bytes per agent, pinned on both sides as the
+current 61 is.
 
 **Renderer**
 
