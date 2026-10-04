@@ -42,7 +42,8 @@ fn a_chemo_led_sparse_founder_has_the_declared_small_controller() {
     for id in world.pool().iter_live() {
         assert_eq!(world.brain(id).len(), 7);
         assert_eq!(world.wiring(id).len(), 4);
-        assert_eq!(world.genome(id).len(), 23);
+        // 23 through Phase 2; Phase 3 adds the muscle and mouth genes (spec §3.5).
+        assert_eq!(world.genome(id).len(), 25);
         assert_eq!(world.agents().sensor_load[id.index()], 3.0);
         assert_eq!(world.agents().brain_units[id.index()], 11);
         assert!(!world.genome(id).iter().any(|g| matches!(g,

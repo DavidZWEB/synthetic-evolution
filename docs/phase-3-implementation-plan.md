@@ -14,7 +14,7 @@ Design decisions live in the spec: §2.2b combat in the snapshot, §3.3 wired se
 §5.5 constants. This plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: M1 done; M2 next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1 and M2 done; M3 next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**. It is measured as a species
 whose members take most of their energy from other agents (bites and corpses),
 persisting for at least half a run on several seeds while plant-eaters persist beside
@@ -25,7 +25,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 |---|---|
 | M0 Design | Recorded in the spec; revised 2026-10-04 from the research below |
 | M1 Corpses | Done: pool, decomposition, eating, sight, hashing, checkpoints, snapshot, and drawing |
-| M2 Evolvable bodies | Not started |
+| M2 Evolvable bodies | Done: muscle and mouth genes, mass, gape, upkeep, the mutation operator at rate 0, and trait telemetry |
 | M3 The bite | Not started |
 | M4 Protecting innovation | Not started |
 | M5 Seeing predation | Not started |
@@ -97,7 +97,7 @@ discs of radius `corpses.radius` for both eating and sight.
 - `ingest` takes from the nearest food, plant or corpse. Vision sees corpses.
 - Corpses are hashed, checkpointed, sent in the snapshot, and drawn.
 
-## M2 - Evolvable bodies
+## M2 - Evolvable bodies (done)
 
 Spec §3.5 and §5.2.
 
@@ -123,8 +123,13 @@ Spec §3.5 and §5.2.
 - Conservation and no allocation hold with traits mutating.
 - Native/WASM agreement on a trait-mutating case.
 
-**Golden:** founders gain two inert genes, which moves hashes without changing
-dynamics. This goes in its own commit.
+**Golden:** founders gain two inert genes, and the state hash folds muscle and mouth.
+Each moves hashes without changing dynamics, in its own commit.
+
+**Landed** with body-trait mutation at rate 0, so Phase 2's dynamics are unchanged.
+`body.size` is fixed for a world's life, since every body is measured against it
+(spec §3.5). History and metrics files written earlier read one-point trait ranges at
+the founders' values, which is exactly a run whose bodies never evolved.
 
 ## M3 - The bite
 

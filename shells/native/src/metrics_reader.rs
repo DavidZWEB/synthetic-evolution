@@ -193,62 +193,22 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
         .into());
     }
     if value["kind"] == "header"
+        && let Some(retune) = value
+            .get_mut("data")
+            .and_then(|data| data.get_mut("retune"))
+            .and_then(|retune| retune.get_mut("params"))
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        // Written by the same build as its run, so it omits the same fields.
+        backfill_later_params(retune);
+    }
+    if value["kind"] == "header"
         && let Some(params) = value
             .get_mut("data")
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
     {
-        // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
-        // not exist before it, and M9's plant ecology fields came later still; a
-        // schema-8 file written earlier omits some of them. It ran without them, so
-        // today's defaults must not rewrite it.
-        for (path, fields) in [
-            (
-                &["mutation", "structural"][..],
-                &[
-                    "remove_connection_rate",
-                    "remove_neuron_rate",
-                    "toggle_connection_rate",
-                    "add_connection_rate",
-                    "add_neuron_rate",
-                    "add_oscillator_rate",
-                ][..],
-            ),
-            (
-                &["mutation", "organs"][..],
-                &["remove_sensor_rate", "add_sensor_rate"][..],
-            ),
-            (
-                &["plants"][..],
-                &[
-                    "grazing_lag",
-                    "patchiness",
-                    "patch_scale",
-                    "death_stock",
-                    "death_seconds",
-                    "local_dispersal",
-                    "dispersal_radius",
-                ][..],
-            ),
-            // Pre-Phase-3 runs left no corpses, and had no pool for its ceiling to pay for.
-            (&["corpses"][..], &["energy_fraction", "max_corpses"][..]),
-        ] {
-            let mut object = Some(&mut *params);
-            for key in path {
-                object = object.and_then(|parent| {
-                    parent
-                        .entry(*key)
-                        .or_insert_with(|| serde_json::json!({}))
-                        .as_object_mut()
-                });
-            }
-            if let Some(object) = object {
-                for field in fields {
-                    // An integer zero, which reads as either a rate or a count.
-                    object.entry(*field).or_insert_with(|| serde_json::json!(0));
-                }
-            }
-        }
+        backfill_later_params(params);
         for (section, fields) in [
             ("species", &["capacity", "threshold"][..]),
             (
@@ -275,6 +235,86 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
         }
     }
     Ok(serde_json::from_value(value)?)
+}
+
+/// Fills the params fields a file written before them omits with the values its run
+/// actually had, which today's serde defaults would not.
+fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>) {
+    // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
+    // not exist before it, and M9's plant ecology fields came later still; a
+    // schema-8 file written earlier omits some of them. It ran without them, so
+    // today's defaults must not rewrite it.
+    for (path, fields) in [
+        (
+            &["mutation", "structural"][..],
+            &[
+                "remove_connection_rate",
+                "remove_neuron_rate",
+                "toggle_connection_rate",
+                "add_connection_rate",
+                "add_neuron_rate",
+                "add_oscillator_rate",
+            ][..],
+        ),
+        (
+            &["mutation", "organs"][..],
+            &["remove_sensor_rate", "add_sensor_rate"][..],
+        ),
+        (
+            &["plants"][..],
+            &[
+                "grazing_lag",
+                "patchiness",
+                "patch_scale",
+                "death_stock",
+                "death_seconds",
+                "local_dispersal",
+                "dispersal_radius",
+            ][..],
+        ),
+        // Pre-Phase-3 runs left no corpses, and had no pool for its ceiling to pay for.
+        (&["corpses"][..], &["energy_fraction", "max_corpses"][..]),
+        // Nor did their bodies pay upkeep for muscle or mouth, or evolve.
+        (&["metabolism"][..], &["k_muscle", "k_mouth"][..]),
+        (
+            &["mutation"][..],
+            &["body_trait_rate", "body_trait_sigma"][..],
+        ),
+    ] {
+        let mut object = Some(&mut *params);
+        for key in path {
+            object = object.and_then(|parent| {
+                parent
+                    .entry(*key)
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+            });
+        }
+        if let Some(object) = object {
+            for field in fields {
+                // An integer zero, which reads as either a rate or a count.
+                object.entry(*field).or_insert_with(|| serde_json::json!(0));
+            }
+        }
+    }
+    // Bodies did not evolve before Phase 3 either, so a one-point range at the
+    // founders' traits is exactly such a run, whatever body.size it used.
+    if let Some(body) = params
+        .entry("body")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        let size = body
+            .get("size")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(sim_core::params::BodyParams::default().size));
+        body.entry("size_range")
+            .or_insert_with(|| serde_json::json!([size.clone(), size]));
+        for field in ["muscle_range", "mouth_range"] {
+            body.entry(field)
+                .or_insert_with(|| serde_json::json!([1.0, 1.0]));
+        }
+    }
 }
 
 /// A recorded retune must be one the run could have applied: within the run, and a
@@ -933,6 +973,29 @@ mod tests {
     }
 
     #[test]
+    fn a_recorded_retune_is_read_as_its_run_was() {
+        // Written by the same build as its run, a retune omits the same later fields.
+        // Read with today's defaults, it would appear to change frozen ones.
+        let mut records = final_records();
+        let mut knockout = SimParams::default();
+        knockout.plants.scent_rate = 0.0;
+        records[0]["data"]["retune"] = serde_json::json!({
+            "at_tick": 0,
+            "params": serde_json::to_value(&knockout).unwrap(),
+        });
+        for path in ["/data/params", "/data/retune/params"] {
+            let params = records[0].pointer_mut(path).unwrap();
+            params.as_object_mut().unwrap().remove("corpses");
+            params["body"].as_object_mut().unwrap().remove("size_range");
+        }
+        let data = parse_values(&records).unwrap();
+        let retune = data.header.retune.unwrap().params;
+        assert_eq!(retune.corpses.max_corpses, 0);
+        assert_eq!(retune.body.size_range, data.header.params.body.size_range);
+        assert_eq!(retune.plants.scent_rate, 0.0);
+    }
+
+    #[test]
     fn rates_and_counts_older_schema_eight_files_omit_are_zero_and_unknown() {
         let mut records = final_records();
         records[0]["data"]["params"]["mutation"]["structural"]
@@ -951,6 +1014,24 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("grazing_lag");
+        for field in ["k_muscle", "k_mouth"] {
+            records[0]["data"]["params"]["metabolism"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
+        for field in ["body_trait_rate", "body_trait_sigma"] {
+            records[0]["data"]["params"]["mutation"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
+        for field in ["size_range", "muscle_range", "mouth_range"] {
+            records[0]["data"]["params"]["body"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
         for field in [
             "patchiness",
             "patch_scale",
@@ -983,6 +1064,14 @@ mod tests {
         assert_eq!(data.header.params.plants.dispersal_radius, 0.0);
         assert_eq!(data.header.params.corpses.energy_fraction, 0.0);
         assert_eq!(data.header.params.corpses.max_corpses, 0);
+        assert_eq!(data.header.params.metabolism.k_muscle, 0.0);
+        assert_eq!(data.header.params.metabolism.k_mouth, 0.0);
+        assert_eq!(data.header.params.mutation.body_trait_rate, 0.0);
+        assert_eq!(data.header.params.mutation.body_trait_sigma, 0.0);
+        let size = data.header.params.body.size;
+        assert_eq!(data.header.params.body.size_range, [size, size]);
+        assert_eq!(data.header.params.body.muscle_range, [1.0, 1.0]);
+        assert_eq!(data.header.params.body.mouth_range, [1.0, 1.0]);
         assert_eq!(
             data.samples[0]
                 .evolving

@@ -3,14 +3,16 @@
 //! Each control is a separate world with the same seed and [`SimParams`]. The scalar
 //! control redraws neural scalars instead of inheriting a mutated parent brain; the
 //! structural null replaces the inherited topology with a living donor's while keeping
-//! the parent's scalars on shared genes. All modes use the same mutation rules (spec
-//! §7.8, §10). Choosing which world runs which mode is the shells' concern.
+//! the parent's scalars on shared genes. All modes use the same mutation rules, and
+//! every child's body mutates alike (spec §3.5, §7.8, §10). Choosing which world runs
+//! which mode is the shells' concern.
 
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
-use crate::mutate::{self, MutationState, organs, structural};
+use crate::mutate::{self, MutationState, body, organs, structural};
 use crate::params::SimParams;
 use crate::pool::SlotPool;
+use crate::spawn::SpawnError;
 use crate::{AgentId, Rng};
 use structural::StructuralMutationEvent;
 
@@ -56,6 +58,10 @@ impl BrainInheritance {
         if redraws {
             plan.randomize_brain(state.rng, params, genes, state.neuron_scratch);
         }
+        // Last, in every mode: the controls disturb neural heredity, not bodies, so a
+        // control child's body inherits and mutates as an evolving child's does. A zero
+        // rate draws nothing, so the stream stays exactly Phase 2's (spec §3.5).
+        body::apply(genes, params, state.rng);
     }
 }
 
@@ -76,14 +82,36 @@ pub(crate) fn pick_donor(pool: &SlotPool, parent: AgentId, rng: &mut Rng) -> Age
 }
 
 /// A structural-null child's starting genome: the donor's neurons, sensors, effectors,
-/// and connections with the parent's body and meta genes. Every genome carries one gene
-/// per body and meta trait, so the result has the donor's length and stays sorted.
-pub(crate) fn donor_topology(parent: &[Gene], donor: &[Gene], out: &mut Vec<Gene>) {
-    let is_body = |gene: &&Gene| matches!(gene, Gene::Body(_) | Gene::Meta(_));
+/// and connections with the parent's body and meta genes, whichever traits the parent
+/// carries (spec §7.8). Body and meta genes sort after every other class, so the result
+/// stays sorted.
+///
+/// Founders and their descendants carry one gene per trait, so the child has the
+/// donor's length; but a spawned genome may omit traits, and a child that would then
+/// outgrow `max_genes` is refused before anything is copied, as any over-long genome is.
+pub(crate) fn donor_topology(
+    parent: &[Gene],
+    donor: &[Gene],
+    max_genes: u32,
+    out: &mut Vec<Gene>,
+) -> Result<(), SpawnError> {
+    let split = |genes: &[Gene]| {
+        genes.partition_point(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+    };
+    let topology = &donor[..split(donor)];
+    let body = &parent[split(parent)..];
+    let count = topology.len() + body.len();
+    if count > max_genes as usize {
+        return Err(SpawnError::GenomeLimit {
+            kind: "genes",
+            count,
+            limit: max_genes,
+        });
+    }
     out.clear();
-    out.extend(donor.iter().filter(|gene| !is_body(gene)));
-    out.extend(parent.iter().filter(is_body));
-    debug_assert_eq!(out.len(), donor.len());
+    out.extend_from_slice(topology);
+    out.extend_from_slice(body);
+    Ok(())
 }
 
 /// Gives a donor-topology genome the parent's neural scalars (weights, biases, taus,
@@ -175,6 +203,69 @@ mod tests {
     }
 
     #[test]
+    fn every_mode_mutates_the_body_after_its_neural_passes() {
+        // The same child by hand: the mode's passes with the body pass off, then the
+        // body pass on the same stream. Any other order would draw differently (spec
+        // §3.5).
+        let mut params = SimParams::default().without_structural_mutation();
+        params.mutation.body_trait_rate = 1.0;
+        let mut without_body = params.clone();
+        without_body.mutation.body_trait_rate = 0.0;
+        let mut next = 0;
+        let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
+            let id = InnovationId::new(next);
+            next += 1;
+            id
+        })
+        .unwrap();
+        let mut initial = vec![Gene::default(); plan.len()];
+        plan.instantiate(&mut Rng::from_seed(1), &params, &mut initial);
+        let body_of = |genes: &[Gene]| {
+            genes
+                .iter()
+                .copied()
+                .filter(|gene| matches!(gene, Gene::Body(_)))
+                .collect::<Vec<_>>()
+        };
+        for mode in [
+            BrainInheritance::Evolving,
+            BrainInheritance::RandomizedAtBirth,
+            BrainInheritance::StructuralNull,
+        ] {
+            let child = |params: &SimParams, rng: &mut Rng| {
+                let mut genes = Vec::with_capacity(params.storage.max_genes as usize);
+                genes.extend_from_slice(&initial);
+                let mut next = 1_000;
+                let mut scratch = vec![0; params.storage.max_neurons as usize];
+                mode.prepare_offspring(
+                    &plan,
+                    &mut genes,
+                    params,
+                    &mut MutationState {
+                        rng,
+                        next_innovation: &mut next,
+                        neuron_scratch: &mut scratch,
+                    },
+                    |_| {},
+                );
+                genes
+            };
+            let mut by_hand = Rng::from_seed(23);
+            let mut expected = child(&without_body, &mut by_hand);
+            body::apply(&mut expected, &params, &mut by_hand);
+            let mut rng = Rng::from_seed(23);
+            let actual = child(&params, &mut rng);
+            assert_eq!(actual, expected, "{mode:?}");
+            assert_eq!(rng.state_fingerprint(), by_hand.state_fingerprint());
+            assert_ne!(
+                body_of(&actual),
+                body_of(&initial),
+                "{mode:?} kept the body"
+            );
+        }
+    }
+
+    #[test]
     fn disabled_structure_preserves_each_legacy_scalar_path_and_rng() {
         let params = SimParams::default().without_structural_mutation();
         let mut next = 0;
@@ -223,5 +314,36 @@ mod tests {
             assert_eq!(counter, next);
             assert_eq!(events, 0);
         }
+    }
+
+    #[test]
+    fn a_donor_topology_takes_whatever_body_the_parent_carries() {
+        // A spawned genome may omit body and meta traits, so parent and donor need not
+        // carry the same ones; the child still takes the donor's structure and the
+        // parent's body (spec §7.8), and its length is the donor's no longer.
+        let full = crate::genome::fixtures::tiny();
+        let bare: Vec<Gene> = full
+            .iter()
+            .copied()
+            .filter(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+            .collect();
+        assert!(bare.len() < full.len(), "the fixture carries a body");
+        let mut out = Vec::new();
+        donor_topology(&full, &bare, 64, &mut out).unwrap();
+        assert_eq!(out, full);
+        donor_topology(&bare, &full, 64, &mut out).unwrap();
+        assert_eq!(out, bare);
+        // A child that would outgrow the genome limit is refused before it is built.
+        let limit = bare.len() as u32;
+        out.clear();
+        assert_eq!(
+            donor_topology(&full, &bare, limit, &mut out),
+            Err(SpawnError::GenomeLimit {
+                kind: "genes",
+                count: full.len(),
+                limit,
+            })
+        );
+        assert!(out.is_empty());
     }
 }

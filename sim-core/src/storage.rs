@@ -244,11 +244,12 @@ impl AllocationRequests {
         self.buffer::<u8>(agents)?;
         self.buffers::<u32>(agents, 2)?;
         // Agents: position/velocity/signature, orientation, energy reserve,
-        // energy/health/size/sensor load, age/species/parents/grid/brain units, handles.
+        // energy/health/size/muscle/mouth/sensor load, age/species/parents/grid/brain
+        // units, handles.
         self.buffers::<Vec3>(agents, 3)?;
         self.buffer::<Quat>(agents)?;
         self.buffer::<f64>(agents)?;
-        self.buffers::<f32>(agents, 4)?;
+        self.buffers::<f32>(agents, 6)?;
         self.buffers::<u32>(agents, 6)?;
         self.buffers::<Block>(agents, 6)?;
         // Intents: thrust, turn, ingest, reproduce.

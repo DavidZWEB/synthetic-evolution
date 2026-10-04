@@ -86,7 +86,9 @@
     "weight_limit": 4.0,
     "neuron_perturb_rate": 0.00625,
     "bias_perturb_sigma": 0.1,
-    "tau_perturb_factor": 0.1
+    "tau_perturb_factor": 0.1,
+    "body_trait_rate": 0.0,
+    "body_trait_sigma": 0.05
   },
   "distance": {
     "disjoint_coefficient": 1.0,

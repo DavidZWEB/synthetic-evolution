@@ -703,14 +703,14 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 
 ### 3.5 Morphology
 
-**DECIDED (Phase 3): scalar body traits evolve before body plans.** Three body genes become evolvable, so predators and prey can diverge in the dimensions that decide an encounter: `size` (radius), `muscle`, and `mouth`. With relative size `s = size / body.size`:
+**DECIDED (Phase 3): scalar body traits evolve before body plans.** Three body genes become evolvable, so predators and prey can diverge in the dimensions that decide an encounter: `size` (radius), `muscle`, and `mouth`. With relative size `s = size / body.size`, where `body.size` is the reference body and is fixed for the life of a world, since a retune would change every living body's mass and gape at once:
 
 - **Mass is `s²`.** Thrust force divided by mass is the acceleration (§2.4 step 5), so a large body is sluggish unless it pays for muscle.
 - **`muscle` multiplies the force** a full thrust drive produces. Movement still pays `k_move · force²` on that larger force.
 - **`mouth` is gape relative to the body**, so gape is `g = mouth · s`. Grazing and scavenging intake per tick is `feeding.rate · g²`, since bite area grows with the square of mouth width, and the bite's damage and mouthful scale with it (§4.2).
-- **Costs** (§5.2): size already pays `k_size · size²`. Muscle and mouth add `k_muscle · (muscle² − 1)` and `k_mouth · (mouth² − 1)`, which are zero at the default of 1.
+- **Costs** (§5.2): size already pays `k_size · size²`. Muscle and mouth add `k_muscle · (muscle² − 1)` and `k_mouth · (mouth² − 1)`, which are zero at the default of 1 and discounts below it. A bill the discounts would take below zero is zero, since upkeep dissipates energy and cannot create it (§5.1).
 - **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
-- **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
+- **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. Every living body lies inside the ranges, which validation proves keep the strongest, lightest, and widest-mouthed body's acceleration, upkeep, and intake finite: a spawned or restored body outside them is refused, and a retune may widen a range but not narrow it. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
 
 The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
 
@@ -1453,8 +1453,9 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 6 since
-Phase 3 added corpses — their params and their slots, energies, and free order; earlier
+manifest records the container and checkpoint formats (checkpoint format 7 since
+Phase 3's evolvable bodies added trait ranges, trait upkeep, and trait mutation to the
+params; format 6 had added corpses' params, slots, energies, and free order; earlier
 formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash

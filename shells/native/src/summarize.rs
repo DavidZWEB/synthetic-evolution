@@ -30,6 +30,15 @@ const METRICS: &[&str] = &[
     "plant_stock",
     "plant_clustering",
     "plants_reseeded",
+    "size_p25",
+    "size_median",
+    "size_p75",
+    "muscle_p25",
+    "muscle_median",
+    "muscle_p75",
+    "mouth_p25",
+    "mouth_median",
+    "mouth_p75",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -105,6 +114,7 @@ const NOTES: &[&str] = &[
     "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
     "plant_stock: plant energy as a fraction of every plant full; plant_clustering: Clark-Evans ratio, near 1 random and below 1 clustered",
     "plants_reseeded: plants that died of starvation and reseeded over the run",
+    "size/muscle/mouth quartiles: each body trait across living agents; size is a radius in world units, muscle and mouth multiples of the reference",
     "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
     "peak_arena_use: the fullest arena's used fraction at the final sample",
 ];
@@ -398,6 +408,7 @@ fn cohort_values(
     let last = select(samples.last().expect("checked non-empty"));
     let complexity = last.complexity.as_ref();
     let wiring = complexity.and_then(|c| c.wiring.as_ref());
+    let bodies = last.bodies.as_ref();
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
@@ -413,6 +424,15 @@ fn cohort_values(
         (capacity > 0.0).then(|| last.plant_energy / capacity),
         last.plants.and_then(|p| p.clustering),
         last.plants.map(|p| p.reseeded as f64),
+        bodies.map(|b| b.size.p25),
+        bodies.map(|b| b.size.median),
+        bodies.map(|b| b.size.p75),
+        bodies.map(|b| b.muscle.p25),
+        bodies.map(|b| b.muscle.median),
+        bodies.map(|b| b.muscle.p75),
+        bodies.map(|b| b.mouth.p25),
+        bodies.map(|b| b.mouth.median),
+        bodies.map(|b| b.mouth.p75),
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),

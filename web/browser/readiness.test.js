@@ -351,7 +351,8 @@ for (const mode of ['development', 'transferable']) {
         assert.equal(genome.filter((gene) => gene.Neuron).length, 7);
         assert.equal(genome.filter((gene) => gene.Connection).length, 4);
         assert.equal(genome.filter((gene) => gene.Effector).length, 4);
-        assert.equal(genome.filter((gene) => gene.Body).length, 4);
+        // Size, three colour channels, and since Phase 3 muscle and mouth (spec §3.5).
+        assert.equal(genome.filter((gene) => gene.Body).length, 6);
         assert.equal(genome.filter((gene) => gene.Meta).length, 3);
         return genome;
       }

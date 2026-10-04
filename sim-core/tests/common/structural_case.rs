@@ -8,9 +8,11 @@ use sim_core::control::BrainInheritance;
 use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-// M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xcc38_0203_a01a_cdef;
-pub const CONTROL_GOLDEN: u64 = 0x3bbf_2295_53b4_5a52;
+// Phase 3 M2 refresh: founders carry muscle and mouth genes, and the hash covers both
+// (spec §3.5). M5's coverage-only refresh before it added lifetime birth identities
+// (spec section 7.8).
+pub const EVOLVING_GOLDEN: u64 = 0x52bf_f67e_f2c9_49fd;
+pub const CONTROL_GOLDEN: u64 = 0x5623_198a_a944_33b8;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();

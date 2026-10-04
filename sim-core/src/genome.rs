@@ -106,6 +106,13 @@ pub enum BodyTrait {
     SignatureR,
     SignatureG,
     SignatureB,
+    /// Multiplies the force a full thrust drive produces; upkeep grows with its square
+    /// (spec §3.5). Appended after the colour channels so existing genomes keep their
+    /// encoding; a genome without it has muscle 1.
+    Muscle,
+    /// Gape relative to the body: intake and the bite scale with it (spec §3.5). A
+    /// genome without it has mouth 1.
+    Mouth,
 }
 
 /// Traits governing the genome's own evolution. Present and inherited in Phase 1; no
@@ -275,6 +282,11 @@ pub enum GenomeError {
     DuplicateInnovation,
     /// Runtime architecture has at most one retained connection per ordered pair.
     DuplicateConnection,
+    /// A size, muscle, or mouth that is not positive. All three are magnitudes (spec
+    /// §3.5): the tick divides force by the mass that size sets, so a zero size has no
+    /// mass, and muscle and mouth multiply force and gape, so zero or less describes no
+    /// working body. Mutation's multiplicative step never carries one through zero.
+    BadBodyTrait,
 }
 
 pub(crate) fn valid_tau(tau: f32) -> bool {
@@ -369,6 +381,13 @@ pub fn validate(genes: &[Gene]) -> Result<(), GenomeError> {
             Gene::Body(b) => {
                 if !b.value.is_finite() {
                     return Err(GenomeError::NonFinite);
+                }
+                if matches!(
+                    b.trait_,
+                    BodyTrait::Size | BodyTrait::Muscle | BodyTrait::Mouth
+                ) && b.value <= 0.0
+                {
+                    return Err(GenomeError::BadBodyTrait);
                 }
             }
             Gene::Meta(m) => {
@@ -677,6 +696,39 @@ mod tests {
             }
         }
         assert_eq!(validate(&genes), Err(GenomeError::NonFinite));
+    }
+
+    #[test]
+    fn a_body_that_mass_or_force_would_divide_by_zero_is_rejected() {
+        for (trait_, value) in [
+            (BodyTrait::Size, 0.0),
+            (BodyTrait::Muscle, -1.0),
+            (BodyTrait::Mouth, 0.0),
+        ] {
+            let mut genes = tiny();
+            genes.push(Gene::Body(BodyGene { trait_, value }));
+            genes.sort_by_key(Gene::sort_key);
+            genes.dedup_by_key(|g| g.sort_key());
+            if let Some(Gene::Body(b)) = genes
+                .iter_mut()
+                .find(|g| matches!(g, Gene::Body(b) if b.trait_ == trait_))
+            {
+                b.value = value;
+            }
+            assert_eq!(
+                validate(&genes),
+                Err(GenomeError::BadBodyTrait),
+                "{trait_:?}"
+            );
+        }
+        // Colour channels may be zero: black is a colour.
+        let mut genes = tiny();
+        genes.push(Gene::Body(BodyGene {
+            trait_: BodyTrait::SignatureR,
+            value: 0.0,
+        }));
+        genes.sort_by_key(Gene::sort_key);
+        assert_eq!(validate(&genes), Ok(()));
     }
 
     #[test]

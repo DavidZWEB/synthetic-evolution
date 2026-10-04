@@ -6,6 +6,8 @@
 //! M4 integration first refreshed only the control reference for real species labels.
 //! The subsequent coverage-only refresh adds full classifier state to both values.
 //! M5's additional coverage-only refresh includes lifetime birth identities.
+//! Phase 3 M2 refreshes both again: founders carry muscle and mouth genes, and the
+//! hash covers them.
 
 use sim_core::World;
 use sim_core::control::BrainInheritance;
@@ -13,8 +15,8 @@ use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-pub const EVOLVING_GOLDEN: u64 = 0x3a84_a8e6_f5dd_0cca;
-pub const CONTROL_GOLDEN: u64 = 0x21e7_5a6b_cfa7_4b9c;
+pub const EVOLVING_GOLDEN: u64 = 0x8dc1_9e8f_20b5_5d3d;
+pub const CONTROL_GOLDEN: u64 = 0xa8e7_8c5b_cd59_eef1;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();
@@ -30,14 +32,16 @@ fn run(mode: BrainInheritance) -> u64 {
     params.brain.oscillators = 0;
     params.brain.connections_per_target = Some(1);
     params.storage.max_neurons = 11;
-    params.storage.max_genes = 29;
+    // Exactly room for the founder (25 genes since Phase 3's muscle and mouth), one
+    // vision sensor, and one connection, so the next addition hits the genome limit.
+    params.storage.max_genes = 31;
     params.mutation.organs.add_sensor_rate = 1.0;
     params.mutation.organs.chemo_weight = 0.0;
     params.mutation.organs.energy_weight = 0.0;
     params.mutation.structural.add_connection_rate = 1.0;
     let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
     let parent = world.spawn_founder(world.plants().position()[0]).unwrap();
-    assert_eq!(world.genome(parent).len(), 23);
+    assert_eq!(world.genome(parent).len(), 25);
     world.intents_mut().ingest[parent.index()] = 1.0;
     world.resolve_feeding();
     world.intents_mut().reproduce[parent.index()] = 1.0;
@@ -52,7 +56,7 @@ fn run(mode: BrainInheritance) -> u64 {
     );
     let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
     assert_eq!(world.brain(child).len(), 11);
-    assert_eq!(world.genome(child).len(), 29);
+    assert_eq!(world.genome(child).len(), 31);
     assert_eq!(edits.add_sensor.unwrap().applied, 1);
     assert!(world.genome(child).iter().any(|gene| matches!(gene,
         Gene::Sensor(sensor) if sensor.modality == Modality::VisionRay)));
@@ -76,7 +80,7 @@ fn run(mode: BrainInheritance) -> u64 {
         .find(|&id| id != parent && id != child)
         .unwrap();
     assert_eq!(world.brain(grandchild).len(), 11);
-    assert_eq!(world.genome(grandchild).len(), 28);
+    assert_eq!(world.genome(grandchild).len(), 30);
     assert_eq!(edits.remove_sensor.unwrap().applied, 1);
 
     params.mutation.organs.add_sensor_rate = 1.0;

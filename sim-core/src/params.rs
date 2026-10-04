@@ -173,12 +173,30 @@ pub struct WorldParams {
     pub founder_spread: f32,
 }
 
-/// Fixed body traits. Genetic from Phase 2; one value for everyone in Phase 1.
+/// The reference body, and the ranges body-trait mutation keeps every body within
+/// (spec §3.5).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BodyParams {
-    /// Collision and rendering radius, in world units.
+    /// The founders' collision and rendering radius, in world units, and the size every
+    /// body's mass and gape are measured against (spec §3.5). Fixed for the life of a
+    /// world.
     pub size: f32,
+    /// Bounds on an evolved radius, which must contain `size`.
+    ///
+    /// **[1.5, 6] (spec §5.5)**: half to double the founder radius, room for a size
+    /// refuge while staying far below the spatial grid's cell.
+    pub size_range: [f32; 2],
+    /// Bounds on muscle, which must contain the founders' 1.
+    ///
+    /// **[0.25, 4] (spec §5.5)**: a quarter to four times the reference. At the floor
+    /// the trait saves `k_muscle · 0.9375 = 0.0075` of upkeep, so even the weakest body
+    /// still pays a positive cost.
+    pub muscle_range: [f32; 2],
+    /// Bounds on mouth, which must contain the founders' 1.
+    ///
+    /// **[0.25, 4] (spec §5.5)**, as for muscle.
+    pub mouth_range: [f32; 2],
 }
 
 /// Per-tick energy costs. Spec §5.2.
@@ -244,6 +262,17 @@ pub struct MetabolismParams {
     /// this ratio is the one to watch with `stable_but_idle` when Phase 2 makes brain
     /// structure evolvable (spec §10).
     pub k_move: f32,
+    /// Upkeep per unit of `muscle² − 1`: zero at the reference body, cheaper for weaker
+    /// muscle and dearer for stronger, paid even at rest (spec §3.5).
+    ///
+    /// **0.008, spec §5.5's starting value**: doubling muscle adds about 40% to a
+    /// founder's idle upkeep, on top of the larger force `k_move` charges for.
+    pub k_muscle: f32,
+    /// Upkeep per unit of `mouth² − 1`, as for muscle (spec §3.5).
+    ///
+    /// **0.008 (spec §5.5)**: doubling the mouth quadruples intake per tick but adds
+    /// about 40% to idle upkeep, so a big mouth pays only where food is there to take.
+    pub k_mouth: f32,
 }
 
 /// Locomotion limits.
@@ -308,7 +337,8 @@ pub struct BrainParams {
     /// Hidden neurons in the founding template.
     ///
     /// Default 0 since Phase 2 M8 (was 6): the minimal chemo-led founder (9 neurons
-    /// with its 2 oscillators, 4 connections, 25 genes) replaced the dense one after multi-seed viability
+    /// with its 2 oscillators, 4 connections, 25 genes; 27 since Phase 3 added muscle and
+    /// mouth) replaced the dense one after multi-seed viability
     /// evidence and human approval (`docs/phase-2-m8-evidence.md`). Structural
     /// mutation, not the founder, is now the source of hidden structure.
     pub hidden_neurons: u32,
@@ -425,6 +455,19 @@ pub struct MutationParams {
     /// Multiplicative, so tau explores across orders of magnitude rather than
     /// random-walking off the bottom of its range.
     pub tau_perturb_factor: f32,
+    /// Per-gene chance, per birth, that a body trait (size, muscle, mouth, or a colour
+    /// channel) steps (spec §3.5).
+    ///
+    /// **0, against spec §5.5's starting value of 0.1.** Phase 3 lands each mechanism
+    /// reproducing Phase 2's dynamics, and a zero rate draws nothing. Calibration
+    /// switches it on with multi-seed evidence.
+    pub body_trait_rate: f32,
+    /// Scale of that step. Size, muscle, and mouth are multiplied by `exp(σ·N(0, 1))`,
+    /// and colour channels take `σ·N(0, 1)` (spec §3.5).
+    ///
+    /// **0.05 (spec §5.5)**: a trait drifts a few percent per mutation, which shows
+    /// over thousands of births rather than in one generation.
+    pub body_trait_sigma: f32,
 }
 
 /// Per-offspring structural edits, disabled by default while preserving the accepted
@@ -531,7 +574,8 @@ impl OrganMutationParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct FeedingParams {
-    /// Energy per tick an agent draws from the plant it is touching, at full drive.
+    /// Energy per tick an agent with the reference mouth draws from the food it is
+    /// touching. A gape `g` takes `rate · g²` (spec §3.5).
     ///
     /// Per tick, matching [`MetabolismParams`], so the two can be compared directly:
     /// this has to beat upkeep by enough that foraging pays, or eating is a way to
@@ -789,13 +833,14 @@ impl SimParams {
     /// Whether `next` may replace these params on a world already running, given the
     /// spatial grid's `grid_cell` extent.
     ///
-    /// **Editable — nearly everything.** Every field of `body`, `metabolism`,
-    /// `movement`, `mutation`, `feeding`, `reproduction`, `chemo.decay`,
-    /// `chemo.diffuse`, `world.dt`, `world.founder_spread`, `plants` other than the two
-    /// below, `sensing` ranges within the limit below, and the `brain` fields that are
-    /// not topology (`tau_min`, `tau_max`, the oscillator periods, `weight_init_scale`).
-    /// That is the whole point of spec §7.6: tuning happens in the browser against a
-    /// running population, not in the compiler.
+    /// **Editable — nearly everything.** The `body` trait ranges (widening only, below),
+    /// every field of
+    /// `metabolism`, `movement`, `mutation`, `feeding`, and `reproduction`,
+    /// `chemo.decay`, `chemo.diffuse`, `world.dt`, `world.founder_spread`, the `plants`
+    /// and `corpses` fields not named below, `sensing` ranges within the limit below,
+    /// and the `brain` fields that are not topology (`tau_min`, `tau_max`, the
+    /// oscillator periods, `weight_init_scale`). That is the whole point of spec §7.6:
+    /// tuning happens in the browser against a running population, not in the compiler.
     ///
     /// **Frozen, because they size something already allocated:**
     ///
@@ -806,20 +851,32 @@ impl SimParams {
     /// | `species`, `distance` | representative storage and stable classification meaning |
     /// | `world.size` | the spatial grid's extent and the chemo field's |
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
+    /// | `corpses.max_corpses` | the corpse pool and its grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
     /// | founder sensor counts, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
-    /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
-    /// read once when the larder is stocked. Refusing is the honest answer for all of
-    /// these — accepting a value that changes nothing makes the inspector disagree with
-    /// the sim, and honouring one would move memory that JS holds views over (spec §7.3).
+    /// **Frozen, because they would silently do nothing:** `plants.initial_fill`, read
+    /// once when the larder is stocked, and `plants.patchiness` and `plants.patch_scale`,
+    /// read once when the fertility map is drawn. Refusing is the honest answer for all
+    /// of these — accepting a value that changes nothing makes the inspector disagree
+    /// with the sim, and honouring one would move memory that JS holds views over (spec
+    /// §7.3).
+    ///
+    /// **Frozen, because every body is measured against it:** `body.size`, the reference
+    /// body. Moving it would change every living body's mass and gape at once (spec
+    /// §3.5).
     ///
     /// **Sensing ranges may shrink but not grow.** `vision_range` and `chemo_radius`
     /// below the grid's cell size are fine: the cells are then larger than they need to
     /// be, which costs a little time and stays correct. Above it, a neighbour query
     /// would walk one ring of cells and miss agents beyond it — silently, and it would
     /// read as a sensor bug rather than a params one (spec §2.3).
+    ///
+    /// **Body trait ranges may widen but not narrow.** Every living body lies inside
+    /// them, and validation of the ranges' worst case is what keeps each body's motion,
+    /// upkeep, and intake finite; a narrower range could strand a living body outside
+    /// what was checked (spec §3.5).
     ///
     /// Written here rather than on `World` because none of it is about a world: it is a
     /// property of two `SimParams` and one number, which is what makes it testable
@@ -870,6 +927,12 @@ impl SimParams {
                 "the founding topology is fixed for the life of a world",
             ),
             (
+                // Mass and gape are measured against it, so moving it would change them
+                // for every living body at once (spec §3.5).
+                next.body.size != self.body.size,
+                "body.size is the reference body, fixed for the life of a world",
+            ),
+            (
                 next.plants.initial_fill != self.plants.initial_fill,
                 "plants.initial_fill is read once, when the larder is stocked",
             ),
@@ -891,6 +954,17 @@ impl SimParams {
         if next.sensing.max_sense_radius() > grid_cell {
             return Err(ParamError(
                 "sensing radius would outgrow the spatial grid built for this world",
+            ));
+        }
+        // Every living body lies inside the ranges, which is what validation of the
+        // ranges' worst case covers; a narrower range could leave one outside (spec §3.5).
+        let narrows = |now: [f32; 2], next: [f32; 2]| next[0] > now[0] || next[1] < now[1];
+        if narrows(self.body.size_range, next.body.size_range)
+            || narrows(self.body.muscle_range, next.body.muscle_range)
+            || narrows(self.body.mouth_range, next.body.mouth_range)
+        {
+            return Err(ParamError(
+                "body trait ranges may widen during a run but not narrow",
             ));
         }
         Ok(())
@@ -917,8 +991,10 @@ impl SimParams {
         if !(self.world.dt > 0.0) || !self.world.dt.is_finite() {
             return Err(ParamError("world.dt must be finite and positive"));
         }
-        if !(self.body.size >= 0.0) || !self.body.size.is_finite() {
-            return Err(ParamError("body.size must be finite and non-negative"));
+        if !(self.body.size > 0.0) || !self.body.size.is_finite() {
+            return Err(ParamError(
+                "body.size must be finite and positive, since mass is measured against it",
+            ));
         }
         if self.world.max_agents == 0 {
             return Err(ParamError("world.max_agents must be non-zero"));
@@ -1018,6 +1094,7 @@ impl SimParams {
             self.mutation.weight_perturb_rate,
             self.mutation.weight_reset_rate,
             self.mutation.neuron_perturb_rate,
+            self.mutation.body_trait_rate,
         ]
         .iter()
         .any(|value| !(0.0..=1.0).contains(value))
@@ -1029,6 +1106,7 @@ impl SimParams {
             self.mutation.weight_perturb_sigma,
             self.mutation.bias_perturb_sigma,
             self.mutation.tau_perturb_factor,
+            self.mutation.body_trait_sigma,
         ]
         .iter()
         .any(|&value| !(value >= 0.0) || !value.is_finite())
@@ -1245,12 +1323,96 @@ impl SimParams {
             self.metabolism.k_brain,
             self.metabolism.k_sensor,
             self.metabolism.k_move,
+            self.metabolism.k_muscle,
+            self.metabolism.k_mouth,
         ]
         .iter()
         .any(|&cost| !(cost >= 0.0) || !cost.is_finite())
         {
             return Err(ParamError(
                 "metabolism costs must be finite and non-negative",
+            ));
+        }
+        // Positive because they bound magnitudes: the tick divides by the mass that size
+        // sets, and muscle and mouth multiply force and gape. Each holds the founders'
+        // trait, so a first mutation cannot jump a body to a bound (spec §3.5).
+        for (range, founder, message) in [
+            (
+                self.body.size_range,
+                self.body.size,
+                "body.size_range must be positive, finite, and contain body.size",
+            ),
+            (
+                self.body.muscle_range,
+                1.0,
+                "body.muscle_range must be positive, finite, and contain 1",
+            ),
+            (
+                self.body.mouth_range,
+                1.0,
+                "body.mouth_range must be positive, finite, and contain 1",
+            ),
+        ] {
+            let [low, high] = range;
+            if !(low > 0.0) || !high.is_finite() || !(low <= founder && founder <= high) {
+                return Err(ParamError(message));
+            }
+        }
+        // The strongest, lightest, and widest-mouthed bodies the ranges allow must keep
+        // acceleration, upkeep, and intake finite, computed as the tick computes them: an
+        // infinite acceleration becomes NaN velocity at the speed limit (spec §3.5).
+        // Neuron outputs lie in [-1, 1], and every thrust effector adds its drive. The
+        // bill is the tick's own sum at the largest of every term, the storage limits
+        // bounding brain and senses; each term only grows with its input, so no agent's
+        // bill can exceed it.
+        let body = &self.body;
+        let force =
+            self.movement.max_thrust * self.storage.max_effectors as f32 * body.muscle_range[1];
+        let lightest = body.size_range[0] / body.size;
+        let gape = body.mouth_range[1] * (body.size_range[1] / body.size);
+        let worst = [
+            force / (lightest * lightest),
+            crate::metabolism::cost_per_tick(
+                body.size_range[1],
+                body.muscle_range[1],
+                body.mouth_range[1],
+                self.storage
+                    .max_neurons
+                    .saturating_add(self.storage.max_connections),
+                self.storage.max_sensors as f32 * genome::SENSOR_CHANNELS as f32,
+                force,
+                &self.metabolism,
+            ),
+            self.feeding.rate * gape * gape,
+        ];
+        if worst.iter().any(|value| !value.is_finite()) {
+            return Err(ParamError(
+                "body ranges let a body's acceleration, upkeep, or intake overflow",
+            ));
+        }
+        // A tick turns by the summed turn drives, adds the acceleration to a velocity
+        // the last tick capped, squares the sum to cap it again, then moves by the
+        // capped speed, each over `dt`. Any of them overflowing reaches the position as
+        // NaN (spec §2.4). A turn drive lies in [-3, 1] per effector, and the squared
+        // speed sums both axes.
+        let dt = self.world.dt;
+        let fastest = self.movement.max_speed + force / (lightest * lightest) * dt;
+        let movement = [
+            3.0 * self.storage.max_effectors as f32 * self.movement.max_turn_rate * dt,
+            fastest * fastest * 2.0,
+            self.movement.max_speed * dt,
+        ];
+        if movement.iter().any(|value| !value.is_finite()) {
+            return Err(ParamError(
+                "movement limits let a tick's turn, speed, or step overflow",
+            ));
+        }
+        // The largest body's feeding query must fit in half the world, as every
+        // spatial query must for the minimum image to be unambiguous (spec §2.3).
+        let food_radius = self.plants.radius.max(self.corpses.radius);
+        if (self.body.size_range[1] + self.feeding.reach + food_radius) * 2.0 > self.world.size {
+            return Err(ParamError(
+                "the largest body's feeding reach exceeds half the world; the hash cannot wrap",
             ));
         }
         Ok(())
@@ -1270,7 +1432,12 @@ impl Default for WorldParams {
 
 impl Default for BodyParams {
     fn default() -> Self {
-        Self { size: 3.0 }
+        Self {
+            size: 3.0,
+            size_range: [1.5, 6.0],
+            muscle_range: [0.25, 4.0],
+            mouth_range: [0.25, 4.0],
+        }
     }
 }
 
@@ -1282,6 +1449,8 @@ impl Default for MetabolismParams {
             k_brain: 0.00005,
             k_sensor: 0.000625,
             k_move: 0.5,
+            k_muscle: 0.008,
+            k_mouth: 0.008,
         }
     }
 }
@@ -1368,6 +1537,8 @@ impl Default for MutationParams {
             neuron_perturb_rate: 0.00625,
             bias_perturb_sigma: 0.1,
             tau_perturb_factor: 0.1,
+            body_trait_rate: 0.0,
+            body_trait_sigma: 0.05,
         }
     }
 }
@@ -1578,8 +1749,46 @@ mod tests {
             next.chemo.decay = vec![0.5; next.chemo.decay.len()];
             next.world.dt = 1.0 / 30.0;
             next.world.founder_spread = 0.2;
-            next.body.size = 1.0;
+            next.metabolism.k_muscle = 0.02;
+            next.metabolism.k_mouth = 0.0;
             assert!(current.check_retune(&next, GRID_CELL).is_ok());
+        }
+
+        #[test]
+        fn body_ranges_may_widen_but_not_narrow() {
+            // Every living body lies inside the ranges (spec §3.5).
+            let (current, mut next) = pair();
+            next.body.size_range = [1.0, 8.0];
+            next.body.mouth_range = [0.1, 5.0];
+            assert!(current.check_retune(&next, GRID_CELL).is_ok());
+            for narrow in [
+                |p: &mut SimParams| p.body.size_range[1] = 5.0,
+                |p: &mut SimParams| p.body.muscle_range[0] = 0.5,
+                |p: &mut SimParams| p.body.mouth_range = [0.5, 3.0],
+            ] {
+                let (current, mut next) = pair();
+                narrow(&mut next);
+                assert_eq!(
+                    current.check_retune(&next, GRID_CELL),
+                    Err(ParamError(
+                        "body trait ranges may widen during a run but not narrow"
+                    ))
+                );
+            }
+        }
+
+        #[test]
+        fn the_reference_body_is_fixed() {
+            // Mass and gape are measured against body.size, so a retune would change
+            // them for every living body at once (spec §3.5).
+            let (current, mut next) = pair();
+            next.body.size = 2.0;
+            assert_eq!(
+                current.check_retune(&next, GRID_CELL),
+                Err(ParamError(
+                    "body.size is the reference body, fixed for the life of a world"
+                ))
+            );
         }
 
         #[test]
@@ -1913,6 +2122,12 @@ mod tests {
             ("non-finite neuron perturbation probability", |p| {
                 p.mutation.neuron_perturb_rate = f32::NAN
             }),
+            ("body trait rate above certainty", |p| {
+                p.mutation.body_trait_rate = 1.5
+            }),
+            ("negative body trait step", |p| {
+                p.mutation.body_trait_sigma = -0.1
+            }),
             ("chemo sizing overflows u64", |p| {
                 p.chemo.cells = [u32::MAX, u32::MAX, 1];
                 p.chemo.decay.push(0.5);
@@ -1926,6 +2141,67 @@ mod tests {
                 "should have been rejected: {name}"
             );
         }
+    }
+
+    #[test]
+    fn body_ranges_are_positive_and_hold_the_founders() {
+        // Each break must fail on its own check, not on whichever runs first.
+        type BreakIt = fn(&mut SimParams);
+        let size = "body.size_range must be positive, finite, and contain body.size";
+        let muscle = "body.muscle_range must be positive, finite, and contain 1";
+        let mouth = "body.mouth_range must be positive, finite, and contain 1";
+        let reach = "the largest body's feeding reach exceeds half the world; the hash cannot wrap";
+        let overflow = "body ranges let a body's acceleration, upkeep, or intake overflow";
+        let movement = "movement limits let a tick's turn, speed, or step overflow";
+        let cases: Vec<(&str, BreakIt)> = vec![
+            (size, |p| p.body.size_range = [0.0, 6.0]),
+            (size, |p| p.body.size_range = [4.0, 6.0]),
+            (size, |p| p.body.size_range = [1.5, f32::INFINITY]),
+            (muscle, |p| p.body.muscle_range = [f32::NAN, 4.0]),
+            (muscle, |p| p.body.muscle_range = [2.0, 4.0]),
+            (mouth, |p| p.body.mouth_range = [4.0, 0.25]),
+            (mouth, |p| p.body.mouth_range = [0.25, 0.5]),
+            (reach, |p| p.feeding.reach = 500.0),
+            (reach, |p| p.body.size_range = [1.5, 495.0]),
+            (overflow, |p| p.body.muscle_range = [1.0, f32::MAX]),
+            (overflow, |p| p.body.size_range = [1e-30, 6.0]),
+            (overflow, |p| p.body.mouth_range = [1.0, 1e30]),
+            // The whole bill counts, not only its body terms: each of these terms is
+            // finite alone, and the tick's sum is not.
+            (overflow, |p| {
+                p.metabolism.base = 2e38;
+                p.metabolism.k_muscle = 1e37;
+            }),
+            (overflow, |p| {
+                p.metabolism.base = 2e38;
+                p.metabolism.k_brain = 2e35;
+            }),
+            // Acceleration alone is finite here; a step of it over a long tick is not.
+            (movement, |p| {
+                p.body.size_range = [p.body.size; 2];
+                p.body.muscle_range = [1.0, 4.0];
+                p.movement.max_thrust = 5e36;
+                p.world.dt = 10.0;
+                p.metabolism.k_move = 0.0;
+            }),
+            (movement, |p| {
+                p.movement.max_turn_rate = 1e37;
+                p.world.dt = 10.0;
+            }),
+            (movement, |p| {
+                p.movement.max_speed = 1e38;
+                p.world.dt = 10.0;
+            }),
+        ];
+        for (message, break_it) in cases {
+            let mut params = SimParams::default();
+            break_it(&mut params);
+            assert_eq!(params.validate(), Err(ParamError(message)));
+        }
+        // A one-point range is a trait that cannot evolve, which is allowed.
+        let mut params = SimParams::default();
+        params.body.muscle_range = [1.0, 1.0];
+        assert_eq!(params.validate(), Ok(()));
     }
 
     #[test]

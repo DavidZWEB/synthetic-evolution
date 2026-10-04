@@ -8,9 +8,11 @@ use sim_core::genome::{Activation, BodyTrait, Gene, NeuronGene, body_trait};
 use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{AgentId, Rng, SpawnSpec, World};
 
-// M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xbeba_6bdd_018e_b28d;
-pub const CONTROL_GOLDEN: u64 = 0x2258_b077_77ac_bb88;
+// Phase 3 M2 refresh: founders carry muscle and mouth genes, and the hash covers both
+// (spec §3.5). M5's coverage-only refresh before it added lifetime birth identities
+// (spec section 7.8).
+pub const EVOLVING_GOLDEN: u64 = 0x70a6_439b_c53a_247f;
+pub const CONTROL_GOLDEN: u64 = 0x5360_ba9f_89af_9bdb;
 
 const EXTRA: usize = 8;
 

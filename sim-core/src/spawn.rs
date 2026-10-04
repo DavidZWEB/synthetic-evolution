@@ -3,11 +3,12 @@
 //! Describes boundary/capacity outcomes without deciding reproduction or logging.
 //! Counters belong to observing shells; the ordinary tick uses a no-op observer.
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::arena::AllocationFailure;
-use crate::genome::{self, Gene, GenomeError, Modality};
-use crate::params::StorageParams;
+use crate::genome::{self, BodyTrait, Gene, GenomeError, Modality};
+use crate::params::{BodyParams, StorageParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ArenaKind {
@@ -24,6 +25,7 @@ pub enum SpawnError {
     PoolFull,
     InvalidGenome(GenomeError),
     SensorParameters(&'static str),
+    BodyTraits(&'static str),
     GenomeLimit {
         kind: &'static str,
         count: usize,
@@ -41,6 +43,7 @@ impl core::fmt::Display for SpawnError {
             Self::PoolFull => f.write_str("agent pool is full"),
             Self::InvalidGenome(reason) => write!(f, "invalid genome: {reason:?}"),
             Self::SensorParameters(reason) => write!(f, "invalid sensor parameters: {reason}"),
+            Self::BodyTraits(reason) => write!(f, "invalid body: {reason}"),
             Self::GenomeLimit { kind, count, limit } => {
                 write!(f, "genome has {count} {kind}, exceeding limit {limit}")
             }
@@ -76,9 +79,9 @@ impl SpawnFailureCounts {
     pub fn record(&mut self, error: SpawnError) {
         let counter = match error {
             SpawnError::PoolFull => &mut self.pool_full,
-            SpawnError::InvalidGenome(_) | SpawnError::SensorParameters(_) => {
-                &mut self.invalid_genome
-            }
+            SpawnError::InvalidGenome(_)
+            | SpawnError::SensorParameters(_)
+            | SpawnError::BodyTraits(_) => &mut self.invalid_genome,
             SpawnError::GenomeLimit { .. } => &mut self.genome_limit,
             SpawnError::Arena { reason, .. } => match reason {
                 AllocationFailure::BlockLimit => &mut self.arena_block_limit,
@@ -88,6 +91,42 @@ impl SpawnFailureCounts {
         };
         *counter = counter.saturating_add(1);
     }
+}
+
+/// An imported body must lie inside the ranges every birth keeps bodies within, or one
+/// agent could carry a size whose feeding reach validation never covered, or a muscle
+/// whose force overflows (spec §3.5). `size` and `signature` are the radius and colour
+/// the agent will carry; a colour outside `[0, 1]` would reach every eye that sees it.
+pub(crate) fn validate_body(
+    genes: &[Gene],
+    size: f32,
+    signature: Vec3,
+    body: &BodyParams,
+) -> Result<(), SpawnError> {
+    let inside = |value: f32, [low, high]: [f32; 2]| (low..=high).contains(&value);
+    if !inside(size, body.size_range) {
+        return Err(SpawnError::BodyTraits("size is outside body.size_range"));
+    }
+    if !signature
+        .to_array()
+        .into_iter()
+        .all(|channel| inside(channel, [0.0, 1.0]))
+    {
+        return Err(SpawnError::BodyTraits("signature is outside [0, 1]"));
+    }
+    for gene in genes {
+        let Gene::Body(gene) = gene else { continue };
+        let range = match gene.trait_ {
+            BodyTrait::Size => body.size_range,
+            BodyTrait::Muscle => body.muscle_range,
+            BodyTrait::Mouth => body.mouth_range,
+            BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => [0.0, 1.0],
+        };
+        if !inside(gene.value, range) {
+            return Err(SpawnError::BodyTraits("a body trait is outside its range"));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_limits(genes: &[Gene], limits: &StorageParams) -> Result<(), SpawnError> {

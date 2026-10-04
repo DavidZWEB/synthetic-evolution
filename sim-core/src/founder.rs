@@ -27,11 +27,13 @@ const EFFECTORS: [Action; 4] = [
     Action::Ingest,
     Action::Reproduce,
 ];
-const BODY_TRAITS: [BodyTrait; 4] = [
+const BODY_TRAITS: [BodyTrait; 6] = [
     BodyTrait::Size,
     BodyTrait::SignatureR,
     BodyTrait::SignatureG,
     BodyTrait::SignatureB,
+    BodyTrait::Muscle,
+    BodyTrait::Mouth,
 ];
 const META_TRAITS: [MetaTrait; 3] = [
     MetaTrait::MutationRate,
@@ -400,6 +402,9 @@ impl FounderPlan {
                     }
                     b.value = match b.trait_ {
                         BodyTrait::Size => params.body.size,
+                        // Founders all start at the reference body, with no draw, so the
+                        // random sequence is the one Phase 2 founders drew (spec §3.5).
+                        BodyTrait::Muscle | BodyTrait::Mouth => 1.0,
                         // Founders differ in colour so lineages are distinguishable on
                         // screen from the first frame, and so `vision_ray` has
                         // something to discriminate before `set_signature` exists.
@@ -716,7 +721,8 @@ mod tests {
         params.brain.connections_per_target = Some(1);
         let plan = plan(&params);
         assert_eq!(plan.neuron_count(), 7);
-        assert_eq!(plan.len(), 23);
+        // 23 through Phase 2; Phase 3 adds the muscle and mouth genes (spec §3.5).
+        assert_eq!(plan.len(), 25);
         assert_counts_and_wiring(&params, 42);
         let genes = instantiate(&plan, &params, 42);
         for trait_ in BODY_TRAITS {
@@ -1026,6 +1032,41 @@ mod tests {
             let v = crate::genome::body_trait(&genes, t).expect("signature channel present");
             assert!((0.0..=1.0).contains(&v), "signature out of range: {v}");
         }
+        for t in [BodyTrait::Muscle, BodyTrait::Mouth] {
+            assert_eq!(
+                crate::genome::body_trait(&genes, t),
+                Some(1.0),
+                "founders start at the reference body"
+            );
+        }
+    }
+
+    #[test]
+    fn reference_traits_draw_nothing() {
+        // The muscle and mouth genes must not consume founder draws, or every Phase 2
+        // seed would produce different founders (spec §3.5). Randomizing the template
+        // without them must leave every other gene, and the stream, where the full
+        // template leaves them.
+        let params = SimParams::default();
+        let plan = plan(&params);
+        let mut full = plan.genes().to_vec();
+        let mut full_rng = Rng::from_seed(4);
+        plan.randomize_scalars(&mut full_rng, &params, &mut full, true, None);
+
+        let reference = |g: &Gene| matches!(g, Gene::Body(b) if matches!(b.trait_, BodyTrait::Muscle | BodyTrait::Mouth));
+        let mut without: Vec<Gene> = plan
+            .genes()
+            .iter()
+            .copied()
+            .filter(|g| !reference(g))
+            .collect();
+        assert_eq!(without.len() + 2, plan.len());
+        let mut without_rng = Rng::from_seed(4);
+        plan.randomize_scalars(&mut without_rng, &params, &mut without, true, None);
+
+        let kept: Vec<Gene> = full.iter().copied().filter(|g| !reference(g)).collect();
+        assert_eq!(kept, without);
+        assert_eq!(full_rng.unit(), without_rng.unit(), "the streams diverged");
     }
 
     #[test]

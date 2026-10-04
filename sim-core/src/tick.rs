@@ -203,11 +203,16 @@ impl World {
     pub fn integrate_movement(&mut self) {
         for id in self.pool.iter_live() {
             let i = id.index();
+            // Muscle scales the force a drive produces and mass divides it, so a large
+            // body is sluggish unless it pays for muscle (spec §3.5). Both factors are
+            // exactly 1 at the reference body, so Phase 2 movement is unchanged.
+            let relative = self.agents.size[i] / self.params.body.size;
+            let force = self.intents.thrust[i] * self.agents.muscle[i];
             movement::integrate(
                 &mut self.agents.position[i],
                 &mut self.agents.velocity[i],
                 &mut self.agents.orientation[i],
-                self.intents.thrust[i],
+                force / (relative * relative),
                 self.intents.turn[i],
                 &self.params.movement,
                 &self.params.world,
@@ -266,9 +271,11 @@ impl World {
             let i = id.index();
             let cost = metabolism::cost_per_tick(
                 self.agents.size[i],
+                self.agents.muscle[i],
+                self.agents.mouth[i],
                 self.agents.brain_units[i],
                 self.agents.sensor_load[i],
-                self.intents.thrust[i],
+                self.intents.thrust[i] * self.agents.muscle[i],
                 &self.params.metabolism,
             );
             // Only what is there. Charging past zero would dissipate energy the world
@@ -349,9 +356,12 @@ impl World {
                 continue;
             }
             let body = self.agents.size[i] + feeding.reach;
+            // Intake grows with bite area, the square of gape: mouth relative to the
+            // body, times the body relative to the reference (spec §3.5).
+            let gape = self.agents.mouth[i] * (self.agents.size[i] / self.params.body.size);
             feeding::ingest(
                 self.agents.position[i],
-                feeding.rate,
+                feeding.rate * gape * gape,
                 &mut self.agents.energy[i],
                 &mut self.agents.energy_reserve[i],
                 &mut feeding::Larder {
@@ -462,11 +472,17 @@ impl World {
                 // shared genes' scalars stay the parent's (spec §7.8).
                 let donor = control::pick_donor(&self.pool, parent, &mut self.rng);
                 let parent_genes = self.genes.get(genome);
-                control::donor_topology(
+                if let Err(error) = control::donor_topology(
                     parent_genes,
                     self.genes.get(self.agents.genome[donor.index()]),
+                    self.params.storage.max_genes,
                     &mut scratch,
-                );
+                ) {
+                    // Refused like any birth: the parent stays whole.
+                    self.genome_scratch = scratch;
+                    on_refusal(error);
+                    continue;
+                }
                 control::parent_scalars(parent_genes, &mut scratch);
             } else {
                 scratch.extend_from_slice(self.genes.get(genome));
@@ -745,5 +761,124 @@ mod tests {
             }
         }
         assert!(neural_change, "control child inherited its parent's brain");
+    }
+
+    /// Founders on the given traits, at rest and facing one way, so after a tick they
+    /// differ only by what each body did with the same request. Powers of two keep
+    /// every expected ratio exact in `f32`.
+    fn bodies(params: SimParams, traits: &[(f32, f32, f32)]) -> World {
+        let mut world = World::new(17, params).expect("valid params");
+        for i in 0..traits.len() {
+            world
+                .spawn_founder(Vec3::new(100.0 + 60.0 * i as f32, 100.0, 0.0))
+                .expect("room");
+        }
+        let facing = world.agents().orientation[0];
+        let reference = world.params().body.size;
+        for (i, &(size, muscle, mouth)) in traits.iter().enumerate() {
+            let agents = world.agents_mut();
+            agents.size[i] = reference * size;
+            agents.muscle[i] = muscle;
+            agents.mouth[i] = mouth;
+            agents.orientation[i] = facing;
+            agents.velocity[i] = Vec3::ZERO;
+        }
+        world
+    }
+
+    #[test]
+    fn mass_slows_a_large_body_and_muscle_drives_it() {
+        // Acceleration is thrust × muscle / s² (spec §3.5). (relative size, muscle,
+        // velocity as a multiple of the reference body's)
+        let cases = [
+            (1.0, 1.0, 1.0),
+            (2.0, 1.0, 0.25),
+            (1.0, 2.0, 2.0),
+            (2.0, 4.0, 1.0),
+        ];
+        let mut params = SimParams::default();
+        params.world.max_agents = cases.len() as u32;
+        params.plants.max_plants = 0;
+        let traits: Vec<_> = cases.iter().map(|&(s, m, _)| (s, m, 1.0)).collect();
+        let mut world = bodies(params, &traits);
+        for i in 0..cases.len() {
+            world.intents_mut().thrust[i] = 3.0;
+        }
+        world.integrate_movement();
+        let reference = world.agents().velocity[0];
+        assert_ne!(reference, Vec3::ZERO, "nothing moved");
+        for (i, &(_, _, factor)) in cases.iter().enumerate() {
+            assert_eq!(world.agents().velocity[i], reference * factor, "body {i}");
+        }
+    }
+
+    #[test]
+    fn upkeep_charges_the_body_and_the_force_muscle_adds() {
+        // `k_move` charges the force muscle produced, not the drive that asked for it,
+        // and each trait pays `k · (trait² − 1)` at rest (spec §3.5, §5.2). Every value
+        // is exact in f32, so the charges are too.
+        let mut params = SimParams::default();
+        params.world.max_agents = 3;
+        params.plants.max_plants = 0;
+        params.metabolism = crate::params::MetabolismParams {
+            base: 0.0,
+            k_size: 0.0,
+            k_brain: 0.0,
+            k_sensor: 0.0,
+            k_move: 0.5,
+            k_muscle: 0.25,
+            k_mouth: 0.125,
+        };
+        let mut world = bodies(params, &[(1.0, 1.0, 1.0), (1.0, 2.0, 1.0), (1.0, 1.0, 2.0)]);
+        for i in 0..3 {
+            world.intents_mut().thrust[i] = 1.0;
+        }
+        let held = |world: &World, i: usize| {
+            energy::total(world.agents().energy[i], world.agents().energy_reserve[i])
+        };
+        let before: Vec<f64> = (0..3).map(|i| held(&world, i)).collect();
+        world.charge_metabolism();
+        let paid: Vec<f64> = (0..3).map(|i| before[i] - held(&world, i)).collect();
+        // 0.5 · 1²; 0.25 · 3 + 0.5 · 2²; 0.125 · 3 + 0.5 · 1².
+        assert_eq!(paid, [0.5, 2.75, 0.875]);
+    }
+
+    #[test]
+    fn intake_grows_with_the_square_of_gape() {
+        // Gape is mouth × relative size and intake is `feeding.rate · gape²` (spec
+        // §3.5): doubling either quadruples the bite, and halving the body undoes a
+        // doubled mouth. (relative size, mouth, intake per tick)
+        let cases = [
+            (1.0, 1.0, 1.0),
+            (1.0, 2.0, 4.0),
+            (2.0, 1.0, 4.0),
+            (0.5, 2.0, 1.0),
+        ];
+        let mut params = SimParams::default();
+        params.world.max_agents = cases.len() as u32;
+        params.plants.max_plants = 64;
+        params.feeding.rate = 1.0;
+        let traits: Vec<_> = cases.iter().map(|&(s, mouth, _)| (s, 1.0, mouth)).collect();
+        let mut world = bodies(params, &traits);
+        // Each agent sits on a different stocked plant, which is then nearer to it
+        // than any other food.
+        let stocked: Vec<usize> = (0..world.plants().position().len())
+            .filter(|&p| world.plants().alive()[p] != 0 && world.plants().energy()[p] > 8.0)
+            .take(cases.len())
+            .collect();
+        assert_eq!(stocked.len(), cases.len(), "too few stocked plants");
+        for (i, &plant) in stocked.iter().enumerate() {
+            world.agents_mut().position[i] = world.plants().position()[plant];
+            world.intents_mut().ingest[i] = 1.0;
+        }
+        world.rebuild_spatial_hash();
+        let held = |world: &World, i: usize| {
+            energy::total(world.agents().energy[i], world.agents().energy_reserve[i])
+        };
+        let before: Vec<f64> = (0..cases.len()).map(|i| held(&world, i)).collect();
+        world.resolve_feeding();
+        for (i, &(_, _, intake)) in cases.iter().enumerate() {
+            assert_eq!(held(&world, i) - before[i], intake, "body {i}");
+        }
     }
 }

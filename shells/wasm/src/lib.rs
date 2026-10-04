@@ -20,7 +20,7 @@
 //! views whenever `memory.buffer` is not the one it built them from. That check is a
 //! pointer comparison per frame.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use sim_core::checkpoint::{CHECKPOINT_FORMAT, CheckpointLimits};
@@ -43,6 +43,11 @@ mod complexity;
 mod history;
 #[path = "../../shared/history_event_wire.rs"]
 mod history_event_wire;
+// Native checks an archive's completeness against `LATER_PARAMS`; the browser checks
+// the same shape in JS before calling in.
+#[allow(dead_code)]
+#[path = "../../shared/later_params.rs"]
+mod later_params;
 // Native assembles manifests with `Manifest::new`; the browser builds them in JS.
 #[allow(dead_code)]
 #[path = "../../shared/saved_run.rs"]
@@ -65,6 +70,19 @@ fn parse_params(params_json: Option<&str>) -> Result<SimParams, JsError> {
         Some(json) => serde_json::from_str(json).map_err(|e| js_error("bad params", e))?,
         None => SimParams::default(),
     };
+    params
+        .validate()
+        .map_err(|e| js_error("invalid params", e))?;
+    Ok(params)
+}
+
+/// An archive's params as its run had them: a field the archive predates reads as that
+/// run's value, not today's default, exactly as the native history reader reads it.
+fn parse_archive_params(params_json: &str) -> Result<SimParams, JsError> {
+    let wire: serde_json::Value =
+        serde_json::from_str(params_json).map_err(|e| js_error("bad params", e))?;
+    let mut params = SimParams::deserialize(&wire).map_err(|e| js_error("bad params", e))?;
+    later_params::restore(&mut params, &wire);
     params
         .validate()
         .map_err(|e| js_error("invalid params", e))?;
@@ -104,7 +122,7 @@ pub fn compare_representatives(
     b_json: &str,
     params_json: &str,
 ) -> Result<String, JsError> {
-    let params = parse_params(Some(params_json))?;
+    let params = parse_archive_params(params_json)?;
     let genome = |json: &str| -> Result<Vec<sim_core::genome::Gene>, JsError> {
         let genes: Vec<sim_core::genome::Gene> =
             serde_json::from_str(json).map_err(|e| js_error("representative", e))?;

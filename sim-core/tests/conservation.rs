@@ -98,6 +98,42 @@ fn plant_ecology_conserves_energy() {
 }
 
 #[test]
+fn evolving_bodies_conserve_energy() {
+    // Mass, muscle, and gape change what an agent spends and takes, never the ledger:
+    // intake is a transfer and upkeep is dissipation at any trait (spec §3.5, §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 300;
+    params.plants.max_plants = 400;
+    // Earlier, cheaper breeding, so mutated bodies are born throughout the run.
+    params.reproduction.maturity_ticks = 100;
+    params.reproduction.threshold = 120.0;
+    params.feeding.reach = 8.0;
+    params.mutation.body_trait_rate = 1.0;
+    params.mutation.body_trait_sigma = 0.3;
+    let reference = params.body.size;
+    let mut world = World::new(13, params).expect("valid params");
+    world.seed_founders(200);
+    let mut evolved = false;
+    for t in 0..6_000 {
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+        let agents = world.agents();
+        evolved |= world.pool().iter_live().any(|id| {
+            let i = id.index();
+            agents.size[i] != reference && agents.muscle[i] != 1.0 && agents.mouth[i] != 1.0
+        });
+    }
+    assert!(
+        evolved,
+        "no body evolved; the test proved nothing about traits"
+    );
+}
+
+#[test]
 fn corpses_conserve_energy_as_they_form_feed_and_decay() {
     // A death splits an agent's energy between a corpse and dissipation; eating moves
     // corpse energy into agents; decomposition dissipates the rest (spec §5.1).

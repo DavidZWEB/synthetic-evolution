@@ -183,7 +183,7 @@ fn empty_spec() -> SpawnSpec {
         position: Default::default(),
         yaw: 0.0,
         energy: 0.0,
-        size: 1.0,
+        size: 3.0,
         signature: [0.5; 3].into(),
         parent_a: AgentId::NULL,
     }

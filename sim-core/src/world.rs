@@ -748,7 +748,7 @@ mod tests {
                 &SpawnSpec {
                     position: Vec3::new(3.0, 4.0, 0.0),
                     energy: 100.0,
-                    size: 1.0,
+                    size: 3.0,
                     signature: Vec3::ONE,
                     yaw: 0.0,
                     parent_a: founder,
@@ -885,7 +885,7 @@ mod tests {
             position: Vec3::ZERO,
             yaw: 0.0,
             energy: 1.0,
-            size: 1.0,
+            size: 3.0,
             signature: Vec3::ZERO,
             parent_a: AgentId::NULL,
         };
@@ -901,6 +901,111 @@ mod tests {
                 "the world leaked its arena blocks"
             );
         }
+    }
+
+    #[test]
+    fn a_public_spawn_refuses_a_body_outside_the_ranges() {
+        // Births clamp every body into the ranges, so an import must arrive inside them,
+        // or one agent could reach further than validation allowed (spec §3.5).
+        let mut w = small_world();
+        let founder = w.spawn_founder(Vec3::ZERO).unwrap();
+        let genes = w.genome(founder).to_vec();
+        let spec = SpawnSpec {
+            position: Vec3::new(5.0, 5.0, 0.0),
+            yaw: 0.0,
+            energy: 1.0,
+            size: w.params().body.size,
+            signature: Vec3::ONE,
+            parent_a: AgentId::NULL,
+        };
+        // The caller's size and colour count only where the genome carries no trait.
+        let bodiless: Vec<Gene> = genes
+            .iter()
+            .copied()
+            .filter(|gene| !matches!(gene, Gene::Body(_)))
+            .collect();
+        for (outside, message) in [
+            (
+                SpawnSpec {
+                    size: 100.0,
+                    ..spec
+                },
+                "size is outside body.size_range",
+            ),
+            (
+                SpawnSpec {
+                    signature: Vec3::new(1.0, 2.0, 0.0),
+                    ..spec
+                },
+                "signature is outside [0, 1]",
+            ),
+            (
+                SpawnSpec {
+                    signature: Vec3::splat(f32::NAN),
+                    ..spec
+                },
+                "signature is outside [0, 1]",
+            ),
+        ] {
+            assert_eq!(
+                w.spawn(&outside, &bodiless),
+                Err(SpawnError::BodyTraits(message))
+            );
+        }
+        for (trait_, value, message) in [
+            (BodyTrait::Size, 7.0, "size is outside body.size_range"),
+            (BodyTrait::Muscle, 5.0, "a body trait is outside its range"),
+            (BodyTrait::Mouth, 0.1, "a body trait is outside its range"),
+            (BodyTrait::SignatureG, 1.5, "signature is outside [0, 1]"),
+        ] {
+            let mut altered = genes.clone();
+            for gene in &mut altered {
+                if let Gene::Body(body) = gene
+                    && body.trait_ == trait_
+                {
+                    body.value = value;
+                }
+            }
+            assert_eq!(
+                w.spawn(&spec, &altered),
+                Err(SpawnError::BodyTraits(message)),
+                "{trait_:?}"
+            );
+        }
+        assert!(w.spawn(&spec, &genes).is_ok(), "the founder's own body");
+    }
+
+    #[test]
+    fn a_public_spawn_takes_carried_body_traits_from_the_genome() {
+        // As founders and births do, so an imported agent looks like the offspring it
+        // will have; the caller's size and colour stand in for traits it omits (§3.5).
+        let mut w = small_world();
+        let founder = w.spawn_founder(Vec3::ZERO).unwrap();
+        let genes = w.genome(founder).to_vec();
+        let spec = SpawnSpec {
+            position: Vec3::new(5.0, 5.0, 0.0),
+            yaw: 0.0,
+            energy: 1.0,
+            size: 2.0,
+            signature: Vec3::new(0.0, 0.5, 1.0),
+            parent_a: AgentId::NULL,
+        };
+        let carried = w.spawn(&spec, &genes).unwrap();
+        let agents = w.agents();
+        assert_eq!(agents.size[carried.index()], agents.size[founder.index()]);
+        assert_eq!(
+            agents.signature[carried.index()],
+            agents.signature[founder.index()]
+        );
+        let bodiless: Vec<Gene> = genes
+            .iter()
+            .copied()
+            .filter(|gene| !matches!(gene, Gene::Body(_)))
+            .collect();
+        let fallback = w.spawn(&spec, &bodiless).unwrap();
+        let agents = w.agents();
+        assert_eq!(agents.size[fallback.index()], spec.size);
+        assert_eq!(agents.signature[fallback.index()], spec.signature);
     }
 
     #[test]
@@ -1172,7 +1277,7 @@ mod tests {
             position: Vec3::ZERO,
             yaw: 0.0,
             energy: 0.0,
-            size: 1.0,
+            size: 3.0,
             signature: Vec3::ONE,
             parent_a: AgentId::NULL,
         };
