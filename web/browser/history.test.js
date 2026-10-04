@@ -434,11 +434,12 @@ test('quota errors keep the incomplete prefix in a saved run while the World kee
         };
       });
       // The World keeps stepping, so a periodic drain can hit the quota before this
-      // click lands; that ends the capture and removes the button. Either way the
-      // capture must end incomplete, which is what the rest of the test checks.
-      await panel.getByRole('button', { name: 'stop recording', exact: true })
-        .click({ timeout: 2_000 })
-        .catch(() => {});
+      // click lands; that ends the capture and removes the button. Only that race is
+      // excused: a button that is still there but cannot be clicked fails the test.
+      const stop = panel.getByRole('button', { name: 'stop recording', exact: true });
+      await stop.click({ timeout: 2_000 }).catch(async (error) => {
+        if (await stop.count() > 0) throw error;
+      });
       await page.getByText('history incomplete', { exact: true }).waitFor();
       await stepTo(page, 1);
       await page.evaluate(() => globalThis.restoreHistoryWrites());
