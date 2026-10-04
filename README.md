@@ -10,7 +10,7 @@ Rust simulation core compiled to WASM, Svelte 5 + WebGL2 client.
 across three seeds against randomized-at-birth controls. Phase 2, genetic
 architecture, is complete: it was accepted on 2026-10-04 by the coding agent, which
 the project owner asked to make that call
-([acceptance record](docs/phase-2-acceptance.md)). Phase 3, predation, is under way;
+([acceptance record](docs/phase-2-implementation-plan.md#m10---acceptance)). Phase 3, predation, is under way;
 dead agents already leave corpses that decompose and can be eaten. Phase 2 brought
 pooled variable-length world storage, explicit memory budgets, and
 runtime-tunable neural and sensor structural mutation, and configurable sparse
@@ -93,7 +93,7 @@ scripts/setup.sh one command to make a fresh machine work
 | Understand the design | [docs/synthetic-evolution-spec.md](docs/synthetic-evolution-spec.md) §1–§2 |
 | Set up, add a dependency, or bump a toolchain | [docs/development.md](docs/development.md) |
 | Follow Phase 3 implementation and remaining design decisions | [docs/phase-3-implementation-plan.md](docs/phase-3-implementation-plan.md) |
-| Read Phase 2 milestones and acceptance evidence | [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md), [docs/phase-2-acceptance.md](docs/phase-2-acceptance.md) |
+| Read Phase 2 milestones, acceptance, and evidence | [docs/phase-2-implementation-plan.md](docs/phase-2-implementation-plan.md), [docs/phase-2-m8-evidence.md](docs/phase-2-m8-evidence.md) |
 | Read Phase 1 milestones and acceptance evidence | [docs/phase-1-implementation-plan.md](docs/phase-1-implementation-plan.md) |
 | Change code in `sim-core` | [AGENTS.md](AGENTS.md) — the five invariants, first |
 
