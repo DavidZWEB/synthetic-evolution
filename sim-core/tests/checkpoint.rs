@@ -84,6 +84,45 @@ fn restored_worlds_continue_exactly_in_every_heredity_mode() {
 }
 
 #[test]
+fn plant_turnover_survives_a_checkpoint() {
+    // Reseeded sites and part-way starvation counts are not derivable from the seed,
+    // so a restore that regenerated them would diverge at the next death (spec §5.1).
+    let mut p = params();
+    p.plants.grazing_lag = 0.6;
+    p.plants.patchiness = 3.0;
+    p.plants.death_stock = 0.3;
+    p.plants.death_seconds = 0.5;
+    let mut original = World::new(77, p).unwrap();
+    original.seed_founders(32);
+    let mut events = SpeciesEventCounts::default();
+    while original.plants().reseeded() == 0 {
+        step(&mut original, &mut events);
+        assert!(original.tick_count() < 5_000, "no plant ever died");
+    }
+    for _ in 0..7 {
+        step(&mut original, &mut events);
+    }
+    let bytes = original.checkpoint();
+    let mut restored = World::from_checkpoint(&bytes, LIMITS).unwrap();
+    assert_eq!(restored.plants().position(), original.plants().position());
+    let reseeded = original.plants().reseeded();
+    let mut other = SpeciesEventCounts::default();
+    for tick in 0..2_000 {
+        step(&mut original, &mut events);
+        step(&mut restored, &mut other);
+        assert_eq!(
+            restored.state_hash(),
+            original.state_hash(),
+            "diverged {tick} ticks after restore"
+        );
+    }
+    assert!(
+        restored.plants().reseeded() > reseeded,
+        "no plant died after the restore, so the saved counts were not exercised"
+    );
+}
+
+#[test]
 fn saving_neither_advances_time_nor_draws_randomness() {
     let mut saved = churned(BrainInheritance::Evolving);
     let mut twin = churned(BrainInheritance::Evolving);

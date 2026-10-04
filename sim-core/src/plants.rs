@@ -13,17 +13,17 @@
 //! returns what it actually added so the ledger records the truth rather than the
 //! nominal rate.
 //!
-//! Plants are **fixed sites that regrow in place**, not wandering seeds. Spec §5.1's
-//! "get eaten, and reseed" is read here as regrowth, which is the weaker of the two
-//! meanings and the one Phase 1 needs; it also means positions never change, so the
-//! neighbour grid is built once rather than every tick. If a population ever evolves to
-//! camp on a plant rather than forage between them, relocating a depleted site is the
-//! small change that breaks it — see the note in the M7 plan.
+//! Plants are **a population, not scenery** (spec §5.1). Regrowth depends on what a
+//! plant still holds (`grazing_lag`): grass regrows from the leaf area and reserves
+//! left to it, so stripping a site has a cost that outlasts the meal. A plant that
+//! stays starved dies and reseeds elsewhere, usually near another plant, so patches
+//! drift as grazers wear them down. Sites follow a fertility map (`crate::fertility`,
+//! spec §5.3), so plants cluster on good ground. With every M9 field at zero this is
+//! Phase 1's plants exactly: fixed, uniform sites that refill at a constant rate.
 //!
-//! Regrowth depends on what a plant still holds (`grazing_lag`, spec §5.1): grass
-//! regrows from the leaf area and reserves left to it, so stripping a site has a cost
-//! that outlasts the meal. Sites follow a fertility map (`crate::fertility`, spec §5.3),
-//! so plants can cluster on good ground instead of scattering uniformly.
+//! The plant count never changes — a dead plant's slot re-establishes in the same
+//! tick — so there is no pool and no free list, and the neighbour grid is rebuilt only
+//! on a tick when some plant moved.
 //!
 //! Deliberately not here: being eaten. The plant-to-agent transfer is part of the energy
 //! ledger and lands with metabolism and death.
@@ -33,38 +33,58 @@ use glam::Vec3;
 use crate::chemo::ChemoField;
 use crate::energy;
 use crate::fertility::Fertility;
+use crate::math;
 use crate::params::{PlantParams, SimParams};
 use crate::rng::Rng;
-use crate::spatial::SpatialHash;
+use crate::spatial::{SpatialHash, wrap_scalar};
+
+/// A checkpoint's plant state, borrowed for validation and restore.
+pub(crate) struct SavedPlants<'a> {
+    pub position: &'a [Vec3],
+    pub energy: &'a [f32],
+    pub reserve: &'a [f64],
+    pub starved: &'a [u32],
+    pub reseeded: u64,
+}
 
 /// Every plant in the world: where it is and what it holds.
 ///
 /// Struct-of-arrays for the same reason agents are, though the arrays are much shorter.
-/// Every slot is always live — a plant is never destroyed, only emptied — so there is no
-/// pool and no free list here.
+/// Every slot is always live — a dead plant's slot reseeds in the same tick — so there
+/// is no pool and no free list here.
 #[derive(Clone, Debug)]
 pub struct Plants {
     position: Vec<Vec3>,
     energy: Vec<f32>,
     energy_reserve: Vec<f64>,
+    /// Consecutive ticks each plant has spent below `death_stock`. Stays zero while
+    /// turnover is off.
+    starved: Vec<u32>,
+    /// Plants that have died and reseeded since the world was built.
+    reseeded: u64,
     /// One byte per plant, all ones. The spatial hash takes a liveness mask and plants
     /// are always live; keeping the array rather than special-casing the hash is what
     /// lets the same well-tested grid serve both populations.
     alive: Vec<u8>,
+    /// Grid-cell scratch for rebuilding after a reseed, kept so a tick never allocates.
+    cells: Vec<u32>,
+    /// Where a reseeded plant may establish; drawn once with the world.
+    fertility: Fertility,
     hash: SpatialHash,
 }
 
 impl Plants {
     /// Scatters `max_plants` plants across the world, each stocked to `initial_fill`.
     ///
-    /// Positions are drawn once and never change, so the neighbour grid is built here
-    /// and not rebuilt again. Sites follow the fertility map (spec §5.3): uniform when
-    /// `patchiness` is zero, clustered on fertile ground otherwise.
+    /// Sites follow the fertility map (spec §5.3): uniform when `patchiness` is zero,
+    /// clustered on fertile ground otherwise.
     pub fn new(params: &SimParams, rng: &mut Rng) -> Self {
         let count = params.plants.max_plants as usize;
         let size = params.world.size;
         let fertility = Fertility::new(params, rng);
-        let position: Vec<Vec3> = (0..count).map(|_| fertility.site(rng)).collect();
+        let position: Vec<Vec3> = (0..count)
+            .map(|_| fertility.site(rng, |rng| fertility.anywhere(rng)))
+            .collect();
 
         let mut hash = SpatialHash::new(size, params.sensing.max_sense_radius(), count as u32);
         let alive = vec![1u8; count];
@@ -78,7 +98,11 @@ impl Plants {
             position,
             energy: vec![stock; count],
             energy_reserve: vec![0.0; count],
+            starved: vec![0; count],
+            reseeded: 0,
             alive,
+            cells,
+            fertility,
             hash,
         }
     }
@@ -129,6 +153,68 @@ impl Plants {
         }
     }
 
+    /// Kills plants that have starved too long and reseeds each at once, returning how
+    /// many died this tick (spec §5.1).
+    ///
+    /// A plant below `death_stock` of capacity for `death_seconds` dies. Its slot
+    /// re-establishes at a new site: with probability `local_dispersal` within
+    /// `dispersal_radius` of a uniformly chosen plant, otherwise anywhere, and either
+    /// way subject to the fertility map. Its remaining stock moves with the slot, so no
+    /// energy is created or destroyed and the count never changes. Resolved in
+    /// plant-index order and drawing from `rng` only when a plant dies; with
+    /// `death_stock` at zero nothing is read, counted, or drawn.
+    pub fn turn_over(&mut self, params: &SimParams, rng: &mut Rng) -> u32 {
+        let plants = &params.plants;
+        if plants.death_stock <= 0.0 {
+            return 0;
+        }
+        let threshold = plants.death_stock as f64 * plants.max_energy as f64;
+        let lifetime = plants.death_seconds as f64;
+        let dt = params.world.dt as f64;
+        let mut died = 0u32;
+        for i in 0..self.position.len() {
+            if energy::total(self.energy[i], self.energy_reserve[i]) >= threshold {
+                self.starved[i] = 0;
+                continue;
+            }
+            self.starved[i] = self.starved[i].saturating_add(1);
+            if self.starved[i] as f64 * dt < lifetime {
+                continue;
+            }
+            self.position[i] = self.seedling_site(plants, rng);
+            self.starved[i] = 0;
+            died += 1;
+        }
+        if died > 0 {
+            self.reseeded += u64::from(died);
+            self.hash
+                .rebuild(&self.position, &self.alive, &mut self.cells);
+        }
+        died
+    }
+
+    /// Where a dead plant's slot re-establishes: near a parent or anywhere, as the
+    /// fertility map allows.
+    fn seedling_site(&self, plants: &PlantParams, rng: &mut Rng) -> Vec3 {
+        let size = self.fertility.world_size();
+        let count = self.position.len() as u32;
+        self.fertility.site(rng, |rng| {
+            if !rng.chance(plants.local_dispersal) {
+                return self.fertility.anywhere(rng);
+            }
+            let parent = self.position[rng.below(count) as usize];
+            // Uniform over the disc: the square root keeps seeds from crowding the
+            // parent, and polar form needs no rejection loop.
+            let distance = plants.dispersal_radius * math::sqrt(rng.unit());
+            let angle = core::f32::consts::TAU * rng.unit();
+            Vec3::new(
+                wrap_scalar(parent.x + distance * math::cos(angle), size),
+                wrap_scalar(parent.y + distance * math::sin(angle), size),
+                0.0,
+            )
+        })
+    }
+
     /// Total energy held across every plant. The stock half of the conservation check.
     ///
     /// Values stay `f32` in world state, but the fixed-order sum is `f64`: ledger
@@ -167,26 +253,51 @@ impl Plants {
         &self.energy_reserve
     }
 
-    /// Restores saved stocks onto sites regenerated from the run's seed.
+    /// Restores saved plants over a world rebuilt from the run's seed.
     ///
-    /// Untrusted input: one finite, non-negative tank and one finite reserve per site.
-    /// A refused restore leaves the stock unchanged.
-    pub(crate) fn restore_stock(
-        &mut self,
-        energy: &[f32],
-        reserve: &[f64],
-    ) -> Result<(), &'static str> {
-        if energy.len() != self.len() || reserve.len() != self.len() {
-            return Err("plant stock does not match the plant count");
+    /// Untrusted input: per plant, a finite site on the plane inside the world, one
+    /// finite, non-negative tank, one finite reserve, and a starvation count. A refused
+    /// restore leaves the plants unchanged.
+    pub(crate) fn restore_state(&mut self, saved: SavedPlants<'_>) -> Result<(), &'static str> {
+        let count = self.len();
+        if saved.position.len() != count
+            || saved.energy.len() != count
+            || saved.reserve.len() != count
+            || saved.starved.len() != count
+        {
+            return Err("plant state does not match the plant count");
         }
-        if !energy.iter().all(|&e| e.is_finite() && e >= 0.0)
-            || !reserve.iter().all(|r| r.is_finite())
+        let size = self.fertility.world_size();
+        if !saved.position.iter().all(|p| {
+            p.is_finite() && p.z == 0.0 && (0.0..size).contains(&p.x) && (0.0..size).contains(&p.y)
+        }) {
+            return Err("plant sites must lie on the world's plane");
+        }
+        if !saved.energy.iter().all(|&e| e.is_finite() && e >= 0.0)
+            || !saved.reserve.iter().all(|r| r.is_finite())
         {
             return Err("plant stock must be finite and non-negative");
         }
-        self.energy.copy_from_slice(energy);
-        self.energy_reserve.copy_from_slice(reserve);
+        self.position.copy_from_slice(saved.position);
+        self.energy.copy_from_slice(saved.energy);
+        self.energy_reserve.copy_from_slice(saved.reserve);
+        self.starved.copy_from_slice(saved.starved);
+        self.reseeded = saved.reseeded;
+        self.hash
+            .rebuild(&self.position, &self.alive, &mut self.cells);
         Ok(())
+    }
+
+    /// Consecutive ticks each plant has spent starving.
+    #[inline]
+    pub(crate) fn starved(&self) -> &[u32] {
+        &self.starved
+    }
+
+    /// Plants that have died and reseeded since the world was built.
+    #[inline]
+    pub fn reseeded(&self) -> u64 {
+        self.reseeded
     }
 
     #[inline]
@@ -221,7 +332,7 @@ impl Plants {
         &self.alive
     }
 
-    /// Neighbour grid over the plants, built once at construction.
+    /// Neighbour grid over the plants, rebuilt whenever a plant reseeds.
     #[inline]
     pub fn hash(&self) -> &SpatialHash {
         &self.hash
@@ -243,13 +354,12 @@ impl Plants {
 #[cfg(test)]
 impl Plants {
     /// Moves plants to exact positions and rebuilds the grid, for tests that need to
-    /// know where the scenery is. Not a runtime operation: plant sites are fixed once
-    /// seeded, which is what lets the grid be built once.
+    /// know where the scenery is. At runtime only turnover moves a plant.
     pub fn place_for_test(&mut self, positions: &[Vec3]) {
         assert_eq!(positions.len(), self.position.len(), "wrong plant count");
         self.position.copy_from_slice(positions);
-        let mut cells = vec![0u32; self.position.len()];
-        self.hash.rebuild(&self.position, &self.alive, &mut cells);
+        self.hash
+            .rebuild(&self.position, &self.alive, &mut self.cells);
     }
 }
 
@@ -385,6 +495,127 @@ mod tests {
         let slow = lagged.grow(&params.plants, dt);
         let fast = even.grow(&plain.plants, dt);
         assert!((slow - fast * 0.5).abs() < fast * 1e-4, "{slow} vs {fast}");
+    }
+
+    /// A world whose plants die after `seconds` below `stock`, with local dispersal.
+    fn mortal(stock: f32, seconds: f32) -> (Plants, SimParams) {
+        let (plants, mut params) = filled(1.0);
+        params.plants.death_stock = stock;
+        params.plants.death_seconds = seconds;
+        params.plants.local_dispersal = 1.0;
+        params.plants.dispersal_radius = 10.0;
+        (plants, params)
+    }
+
+    #[test]
+    fn turnover_off_reads_counts_and_draws_nothing() {
+        let (mut plants, params) = filled(0.0);
+        let mut rng = Rng::from_seed(2);
+        let before = rng.state_fingerprint();
+        let sites = plants.position().to_vec();
+        for _ in 0..10_000 {
+            assert_eq!(plants.turn_over(&params, &mut rng), 0);
+        }
+        assert_eq!(rng.state_fingerprint(), before, "turnover drew while off");
+        assert_eq!(plants.position(), &sites[..]);
+        assert!(plants.starved().iter().all(|&ticks| ticks == 0));
+    }
+
+    #[test]
+    fn a_plant_dies_after_starving_for_death_seconds_and_keeps_its_stock() {
+        // 0.5 s at 60 ticks per second is 30 ticks of starving.
+        let (mut plants, params) = mortal(0.1, 0.5);
+        let mut rng = Rng::from_seed(2);
+        plants.take(5, 1e9);
+        plants.energy[5] = 1.0;
+        let site = plants.position()[5];
+        let before = plants.total_energy();
+        for _ in 0..29 {
+            assert_eq!(plants.turn_over(&params, &mut rng), 0);
+        }
+        assert_eq!(plants.position()[5], site, "died early");
+        assert_eq!(plants.turn_over(&params, &mut rng), 1);
+        assert_ne!(plants.position()[5], site, "did not reseed elsewhere");
+        assert_eq!(plants.starved()[5], 0, "a seedling starts its own count");
+        assert_eq!(
+            plants.energy()[5],
+            1.0,
+            "the stock did not move with the slot"
+        );
+        assert_eq!(
+            plants.total_energy(),
+            before,
+            "turnover changed the energy held"
+        );
+        assert_eq!(plants.reseeded(), 1);
+    }
+
+    #[test]
+    fn recovering_past_death_stock_resets_the_count() {
+        let (mut plants, params) = mortal(0.1, 0.5);
+        let mut rng = Rng::from_seed(2);
+        plants.take(5, 1e9);
+        for _ in 0..20 {
+            plants.turn_over(&params, &mut rng);
+        }
+        plants.energy[5] = 30.0;
+        plants.turn_over(&params, &mut rng);
+        assert_eq!(plants.starved()[5], 0);
+    }
+
+    #[test]
+    fn local_seed_lands_within_the_dispersal_radius_of_a_plant() {
+        let (mut plants, params) = mortal(0.1, 0.0);
+        let size = params.world.size;
+        let mut rng = Rng::from_seed(9);
+        for round in 0..50 {
+            let index = round % plants.len();
+            let parents = plants.position().to_vec();
+            plants.take(index, 1e9);
+            assert_eq!(plants.turn_over(&params, &mut rng), 1);
+            let landed = plants.position()[index];
+            let nearest = parents
+                .iter()
+                .map(|&p| crate::spatial::min_image(landed - p, size).length())
+                .fold(f32::INFINITY, f32::min);
+            assert!(nearest <= 10.0 + 1e-3, "landed {nearest} from every parent");
+            plants.energy[index] = 60.0;
+        }
+    }
+
+    #[test]
+    fn the_grid_follows_a_reseeded_plant() {
+        let (mut plants, params) = mortal(0.1, 0.0);
+        let mut rng = Rng::from_seed(4);
+        plants.take(0, 1e9);
+        plants.energy[0] = 2.0;
+        plants.turn_over(&params, &mut rng);
+        let site = plants.position()[0];
+        let mut found = false;
+        plants
+            .hash()
+            .for_each_within(plants.position(), site, 0.5, |index, _, _| {
+                found |= index == 0;
+            });
+        assert!(found, "the grid still placed the plant at its old site");
+    }
+
+    #[test]
+    fn turnover_is_deterministic() {
+        let run = || {
+            let (mut plants, params) = mortal(0.5, 0.1);
+            let mut rng = Rng::from_seed(13);
+            for index in 0..plants.len() {
+                if index % 3 == 0 {
+                    plants.take(index, 1e9);
+                }
+            }
+            for _ in 0..20 {
+                plants.turn_over(&params, &mut rng);
+            }
+            plants.position().to_vec()
+        };
+        assert_eq!(run(), run());
     }
 
     #[test]

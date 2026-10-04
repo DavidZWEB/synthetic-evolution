@@ -71,6 +71,33 @@ fn energy_is_conserved_over_ten_thousand_ticks() {
 }
 
 #[test]
+fn plant_ecology_conserves_energy() {
+    // Stock-dependent regrowth absorbs less than the nominal input, and turnover moves
+    // stock with its slot; the ledger must account for both exactly (spec §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 200;
+    params.plants.max_plants = 400;
+    params.plants.grazing_lag = 0.6;
+    params.plants.patchiness = 3.0;
+    params.plants.death_stock = 0.2;
+    params.plants.death_seconds = 1.0;
+    let mut world = World::new(5, params).expect("valid params");
+    world.seed_founders(200);
+    for t in 0..10_000 {
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+    }
+    assert!(
+        world.plants().reseeded() > 0,
+        "no plant ever died; the test proved nothing about turnover"
+    );
+}
+
+#[test]
 fn fractional_growth_in_a_large_plant_pool_is_recorded_exactly() {
     let mut params = SimParams::default();
     params.world.max_agents = 1;

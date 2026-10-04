@@ -219,7 +219,15 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             ),
             (
                 &["plants"][..],
-                &["grazing_lag", "patchiness", "patch_scale"][..],
+                &[
+                    "grazing_lag",
+                    "patchiness",
+                    "patch_scale",
+                    "death_stock",
+                    "death_seconds",
+                    "local_dispersal",
+                    "dispersal_radius",
+                ][..],
             ),
         ] {
             let mut object = Some(&mut *params);
@@ -881,7 +889,14 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("grazing_lag");
-        for field in ["patchiness", "patch_scale"] {
+        for field in [
+            "patchiness",
+            "patch_scale",
+            "death_stock",
+            "death_seconds",
+            "local_dispersal",
+            "dispersal_radius",
+        ] {
             records[0]["data"]["params"]["plants"]
                 .as_object_mut()
                 .unwrap()
@@ -901,6 +916,9 @@ mod tests {
         assert_eq!(data.header.params.plants.grazing_lag, 0.0);
         assert_eq!(data.header.params.plants.patchiness, 0.0);
         assert_eq!(data.header.params.plants.patch_scale, 0.0);
+        assert_eq!(data.header.params.plants.death_seconds, 0.0);
+        assert_eq!(data.header.params.plants.local_dispersal, 0.0);
+        assert_eq!(data.header.params.plants.dispersal_radius, 0.0);
         assert_eq!(
             data.samples[0]
                 .evolving

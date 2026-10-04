@@ -613,6 +613,31 @@ pub struct PlantParams {
     /// **150 until M9 calibration**: several times `chemo_radius`, so one nose cannot
     /// see from patch to patch, and well under the world's 1,000, so there are dozens.
     pub patch_scale: f32,
+    /// Fraction of [`Self::max_energy`] below which a plant is starving, in `[0, 1)`
+    /// (spec §5.1). A plant that starves for [`Self::death_seconds`] dies and its slot
+    /// reseeds elsewhere, carrying what stock it had left.
+    ///
+    /// **0 until M9 calibration**, which disables death entirely: Phase 1's sites are
+    /// permanent, and nothing is counted or drawn.
+    pub death_stock: f32,
+    /// Seconds a plant may starve before it dies. Should outlast one grazer's meal, so
+    /// only sustained overgrazing kills, and exceed the time an ungrazed seedling takes
+    /// to regrow past [`Self::death_stock`], or seedlings die before they establish.
+    ///
+    /// **30 until M9 calibration**, about one idle founder's lifetime.
+    pub death_seconds: f32,
+    /// Probability that a reseeded plant lands near a parent rather than anywhere, in
+    /// `[0, 1]`. Seed mostly falls near the plant that dropped it, which is what lets a
+    /// patch creep instead of vanishing and reappearing at random.
+    ///
+    /// **0.9 until M9 calibration.**
+    pub local_dispersal: f32,
+    /// How far from its parent a locally dispersed seed can land, in world units, in
+    /// `[0, world.size / 2]`; uniform over that disc.
+    ///
+    /// **40 until M9 calibration**: about `chemo_radius`, so a patch creeps rather than
+    /// jumps.
+    pub dispersal_radius: f32,
     /// Collision and ingest radius.
     pub radius: f32,
     /// Concentration deposited into chemo channel 0 per unit of stored energy, per
@@ -1078,6 +1103,24 @@ impl SimParams {
                 "plants.patch_scale must be finite and non-negative",
             ));
         }
+        if !(0.0..1.0).contains(&self.plants.death_stock) {
+            return Err(ParamError(
+                "plants.death_stock must be in [0, 1); a full plant cannot be starving",
+            ));
+        }
+        if !(self.plants.death_seconds >= 0.0) || !self.plants.death_seconds.is_finite() {
+            return Err(ParamError(
+                "plants.death_seconds must be finite and non-negative",
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.plants.local_dispersal) {
+            return Err(ParamError("plants.local_dispersal must be in [0, 1]"));
+        }
+        if !(0.0..=self.world.size * 0.5).contains(&self.plants.dispersal_radius) {
+            return Err(ParamError(
+                "plants.dispersal_radius must be in [0, world.size / 2]",
+            ));
+        }
         if self.plants.patchiness > 0.0 {
             if !(self.plants.patch_scale > 0.0) {
                 return Err(ParamError(
@@ -1262,6 +1305,10 @@ impl Default for PlantParams {
             grazing_lag: 0.0,
             patchiness: 0.0,
             patch_scale: 150.0,
+            death_stock: 0.0,
+            death_seconds: 30.0,
+            local_dispersal: 0.9,
+            dispersal_radius: 40.0,
             radius: 2.0,
             scent_rate: 0.02,
             initial_fill: 1.0,
@@ -1670,6 +1717,23 @@ mod tests {
             ("patches finer than the lattice cap", |p| {
                 p.plants.patchiness = 2.0;
                 p.plants.patch_scale = 0.5;
+            }),
+            ("a full plant starving", |p| p.plants.death_stock = 1.0),
+            ("negative death stock", |p| p.plants.death_stock = -0.1),
+            ("negative starvation time", |p| {
+                p.plants.death_seconds = -1.0
+            }),
+            ("endless starvation time", |p| {
+                p.plants.death_seconds = f32::INFINITY
+            }),
+            ("dispersal above certainty", |p| {
+                p.plants.local_dispersal = 1.5
+            }),
+            ("seeds thrown past half the world", |p| {
+                p.plants.dispersal_radius = 600.0
+            }),
+            ("unrepresentable dispersal radius", |p| {
+                p.plants.dispersal_radius = f32::NAN
             }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
             ("sense radius too small for the world", |p| {

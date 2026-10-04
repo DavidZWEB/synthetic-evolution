@@ -804,7 +804,7 @@ Autotrophs (plants) should be simple non-brained entities that grow where nutrie
 - **Plants die and reseed elsewhere.** A plant whose stock stays below `death_stock · max_energy` for `death_seconds` dies, and its slot re-establishes at once. With probability `local_dispersal` the new site lies within `dispersal_radius` of a uniformly chosen plant (seed falls near parents); otherwise it can be anywhere. Either way the site must pass the fertility test in §5.3. The dead plant's remaining stock moves with its slot, so turnover neither creates nor destroys energy, and the plant count never changes. Patches drift as overgrazed plants die and their neighbours spread.
 - **Fertility is patchy** (§5.3), so plants cluster where the soil allows.
 
-Deaths are found after growth in step 8 (§2.4) and resolved in plant-index order. Reseeding draws from the world RNG only when a plant dies. Plant positions and starvation timers are world state: hashed, checkpointed (§7.10), and sent in the render snapshot every frame.
+Deaths are found after growth in step 8 (§2.4) and resolved in plant-index order. Reseeding draws from the world RNG only when a plant dies. Plant positions, starvation timers, and the count of reseeded plants are world state: hashed and checkpointed (§7.10); positions are also sent in the render snapshot every frame.
 
 ### 5.2 Metabolic costs
 
@@ -1368,7 +1368,7 @@ identity), and a postcard-encoded record. It stores the construction seed, curre
 params, heredity mode, RNG, tick, innovation/birth counters, ledger, pool free order
 and incarnations, every live agent's physical and identity fields, genome and exact
 arena placements, recurrent neuron values, the parts arena, plant stocks, plant
-positions and starvation timers, chemo concentrations, active species with their
+positions, starvation timers and reseed count, chemo concentrations, active species with their
 representatives and blocks, queued commands, the spatial grid's cell count, and the
 saved `state_hash`. It does not store derived data: compiled neurons, synapses,
 sensors, and effectors are recompiled from validated genomes, and the seed-derived
@@ -1389,8 +1389,9 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 4 since M9
-added `patchiness` and `patch_scale` to the encoded params; earlier formats are refused), the originating run's
+manifest records the container and checkpoint formats (checkpoint format 5 since M9
+plant turnover added its params and saved plant sites, starvation timers, and reseed
+count; earlier formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a

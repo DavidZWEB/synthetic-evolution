@@ -140,8 +140,8 @@ impl Snapshot {
             self.part_count[i] = agents.parts[i].len();
         }
 
-        // Every plant, every frame. There is no alive flag to respect: a site that has
-        // been eaten to nothing is still there and still regrows (spec §5.1).
+        // Every plant, every frame. There is no alive flag to respect: an eaten plant
+        // regrows, and a dead one has already reseeded at its new site (spec §5.1).
         let plants = world.plants();
         for (i, (&position, &energy)) in plants
             .position()

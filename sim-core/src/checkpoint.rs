@@ -17,6 +17,7 @@ use crate::ids::{BirthId, NULL_ID, SpeciesId};
 use crate::ledger::EnergyLedger;
 use crate::params::SimParams;
 use crate::perceive;
+use crate::plants::SavedPlants;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
 use crate::spawn;
@@ -27,7 +28,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 4;
+pub const CHECKPOINT_FORMAT: u32 = 5;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -152,8 +153,11 @@ struct Checkpoint {
     pool_free: Vec<u32>,
     agents: Vec<AgentState>,
     parts: Arena<f32>,
+    plant_position: Vec<Vec3>,
     plant_energy: Vec<f32>,
     plant_reserve: Vec<f64>,
+    plant_starved: Vec<u32>,
+    plants_reseeded: u64,
     chemo: Vec<f32>,
     species_next_id: u32,
     species: Vec<SpeciesState>,
@@ -249,8 +253,11 @@ impl World {
             pool_free: self.pool.free_indices().to_vec(),
             agents,
             parts: self.parts.clone(),
+            plant_position: self.plants.position().to_vec(),
             plant_energy: self.plants.energy().to_vec(),
             plant_reserve: self.plants.energy_reserve().to_vec(),
+            plant_starved: self.plants.starved().to_vec(),
+            plants_reseeded: self.plants.reseeded(),
             chemo: self.field.concentrations().to_vec(),
             species_next_id: self.classifier.next_id(),
             species,
@@ -315,7 +322,8 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         _ => return Err(invalid("unknown brain inheritance")),
     };
     // Construction validates params and the core budget, and regenerates the
-    // seed-derived plant sites and founding topology that the hash then confirms.
+    // seed-derived fertility map and founding topology that the hash then confirms.
+    // Plant sites are saved: turnover moves them (spec §5.1).
     let mut world = World::new_with_brain_inheritance(c.seed, c.params, brain_inheritance)
         .map_err(CheckpointError::Build)?;
     let capacity = world.pool.capacity();
@@ -476,7 +484,13 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
 
     world
         .plants
-        .restore_stock(&c.plant_energy, &c.plant_reserve)
+        .restore_state(SavedPlants {
+            position: &c.plant_position,
+            energy: &c.plant_energy,
+            reserve: &c.plant_reserve,
+            starved: &c.plant_starved,
+            reseeded: c.plants_reseeded,
+        })
         .map_err(invalid)?;
     world
         .field

@@ -294,7 +294,7 @@ impl AllocationRequests {
     }
 
     fn plants(&mut self, cells: u64, plants: u64, fertility_cells: u64) -> Result<(), ParamError> {
-        // The fertility lattice lives only while the sites are drawn.
+        // The fertility lattice is kept for reseeding (spec §5.1).
         self.buffer::<f32>(
             fertility_cells
                 .checked_mul(fertility_cells)
@@ -304,8 +304,8 @@ impl AllocationRequests {
         self.buffer::<f32>(plants)?;
         self.buffer::<f64>(plants)?;
         self.buffer::<u8>(plants)?;
-        // The constructor's per-plant grid-cell array is dropped after rebuilding.
-        self.buffer::<u32>(plants)?;
+        // Grid-cell scratch, kept for rebuilding after reseeds, and starvation counts.
+        self.buffers::<u32>(plants, 2)?;
         self.spatial_hash(cells, plants)
     }
 }
