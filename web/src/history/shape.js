@@ -58,7 +58,9 @@ const PARAMS = {
     effectors_per_slot: u, max_genes: u, max_neurons: u, max_connections: u,
     max_sensors: u, max_vision_rays: u, max_effectors: u, max_memory_bytes: 'integer',
   },
-  body: { size: f },
+  body: {
+    size: f, size_range: ['finite', 2], muscle_range: ['finite', 2], mouth_range: ['finite', 2],
+  },
   metabolism: { base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f },
   movement: { max_thrust: f, max_turn_rate: f, drag: f, max_speed: f },
   sensing: {
@@ -81,7 +83,8 @@ const PARAMS = {
       energy_weight: f, neuron_bias: f,
     },
     weight_perturb_rate: f, weight_perturb_sigma: f, weight_reset_rate: f, weight_limit: f,
-    neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f,
+    neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f, body_trait_rate: f,
+    body_trait_sigma: f,
   },
   distance: { disjoint_coefficient: f, excess_coefficient: f, weight_coefficient: f },
   species: { capacity: u, threshold: f },
@@ -105,6 +108,7 @@ const PARAMS = {
 const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
+  'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
 ]);
 
 export function integerParam(path) {

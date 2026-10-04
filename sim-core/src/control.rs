@@ -3,12 +3,13 @@
 //! Each control is a separate world with the same seed and [`SimParams`]. The scalar
 //! control redraws neural scalars instead of inheriting a mutated parent brain; the
 //! structural null replaces the inherited topology with a living donor's while keeping
-//! the parent's scalars on shared genes. All modes use the same mutation rules (spec
-//! §7.8, §10). Choosing which world runs which mode is the shells' concern.
+//! the parent's scalars on shared genes. All modes use the same mutation rules, and
+//! every child's body mutates alike (spec §3.5, §7.8, §10). Choosing which world runs
+//! which mode is the shells' concern.
 
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
-use crate::mutate::{self, MutationState, organs, structural};
+use crate::mutate::{self, MutationState, body, organs, structural};
 use crate::params::SimParams;
 use crate::pool::SlotPool;
 use crate::{AgentId, Rng};
@@ -56,6 +57,10 @@ impl BrainInheritance {
         if redraws {
             plan.randomize_brain(state.rng, params, genes, state.neuron_scratch);
         }
+        // Last, in every mode: the controls disturb neural heredity, not bodies, so a
+        // control child's body inherits and mutates as an evolving child's does. A zero
+        // rate draws nothing, so the stream stays exactly Phase 2's (spec §3.5).
+        body::apply(genes, params, state.rng);
     }
 }
 
@@ -172,6 +177,69 @@ mod tests {
         assert_eq!(non_neural(&actual), non_neural(&expected));
         assert_ne!(actual, expected);
         assert_eq!(a_next, b_next);
+    }
+
+    #[test]
+    fn every_mode_mutates_the_body_after_its_neural_passes() {
+        // The same child by hand: the mode's passes with the body pass off, then the
+        // body pass on the same stream. Any other order would draw differently (spec
+        // §3.5).
+        let mut params = SimParams::default().without_structural_mutation();
+        params.mutation.body_trait_rate = 1.0;
+        let mut without_body = params.clone();
+        without_body.mutation.body_trait_rate = 0.0;
+        let mut next = 0;
+        let plan = FounderPlan::new(&params, &mut Rng::from_seed(0), || {
+            let id = InnovationId::new(next);
+            next += 1;
+            id
+        })
+        .unwrap();
+        let mut initial = vec![Gene::default(); plan.len()];
+        plan.instantiate(&mut Rng::from_seed(1), &params, &mut initial);
+        let body_of = |genes: &[Gene]| {
+            genes
+                .iter()
+                .copied()
+                .filter(|gene| matches!(gene, Gene::Body(_)))
+                .collect::<Vec<_>>()
+        };
+        for mode in [
+            BrainInheritance::Evolving,
+            BrainInheritance::RandomizedAtBirth,
+            BrainInheritance::StructuralNull,
+        ] {
+            let child = |params: &SimParams, rng: &mut Rng| {
+                let mut genes = Vec::with_capacity(params.storage.max_genes as usize);
+                genes.extend_from_slice(&initial);
+                let mut next = 1_000;
+                let mut scratch = vec![0; params.storage.max_neurons as usize];
+                mode.prepare_offspring(
+                    &plan,
+                    &mut genes,
+                    params,
+                    &mut MutationState {
+                        rng,
+                        next_innovation: &mut next,
+                        neuron_scratch: &mut scratch,
+                    },
+                    |_| {},
+                );
+                genes
+            };
+            let mut by_hand = Rng::from_seed(23);
+            let mut expected = child(&without_body, &mut by_hand);
+            body::apply(&mut expected, &params, &mut by_hand);
+            let mut rng = Rng::from_seed(23);
+            let actual = child(&params, &mut rng);
+            assert_eq!(actual, expected, "{mode:?}");
+            assert_eq!(rng.state_fingerprint(), by_hand.state_fingerprint());
+            assert_ne!(
+                body_of(&actual),
+                body_of(&initial),
+                "{mode:?} kept the body"
+            );
+        }
     }
 
     #[test]

@@ -50,6 +50,14 @@ mod birth_case;
 #[path = "../../../sim-core/tests/common/structural_null_case.rs"]
 mod structural_null_case;
 
+#[path = "../../../sim-core/tests/common/bodies_case.rs"]
+mod bodies_case;
+
+#[wasm_bindgen_test]
+fn body_trait_mutation_agrees_with_native_in_every_mode() {
+    bodies_case::check_body_runs();
+}
+
 #[wasm_bindgen_test]
 fn structural_null_agrees_with_native() {
     structural_null_case::check_structural_null_run();

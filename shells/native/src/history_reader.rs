@@ -232,6 +232,11 @@ const LATER_PARAMS: &[&str] = &[
     "corpses",
     "k_muscle",
     "k_mouth",
+    "body_trait_rate",
+    "body_trait_sigma",
+    "size_range",
+    "muscle_range",
+    "mouth_range",
 ];
 
 /// Serde fills an omitted later field from today's default; reset it to the zero the
@@ -274,6 +279,23 @@ fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result
     }
     if absent("/data/params/metabolism/k_mouth") {
         params.metabolism.k_mouth = 0.0;
+    }
+    if absent("/data/params/mutation/body_trait_rate") {
+        params.mutation.body_trait_rate = 0.0;
+    }
+    if absent("/data/params/mutation/body_trait_sigma") {
+        params.mutation.body_trait_sigma = 0.0;
+    }
+    // Bodies did not evolve before Phase 3, so a one-point range at the founders'
+    // traits is exactly such a run, whatever body.size it used.
+    if absent("/data/params/body/size_range") {
+        params.body.size_range = [params.body.size; 2];
+    }
+    if absent("/data/params/body/muscle_range") {
+        params.body.muscle_range = [1.0; 2];
+    }
+    if absent("/data/params/body/mouth_range") {
+        params.body.mouth_range = [1.0; 2];
     }
     Ok(())
 }
@@ -612,6 +634,9 @@ mod tests {
                 assert_ne!(header.params.corpses.energy_fraction, 0.0);
                 assert_ne!(header.params.metabolism.k_muscle, 0.0);
                 assert_ne!(header.params.metabolism.k_mouth, 0.0);
+                assert_ne!(header.params.mutation.body_trait_sigma, 0.0);
+                // Stand in for the nonzero rate calibration will ship.
+                header.params.mutation.body_trait_rate = 0.1;
                 assert_ne!(header.params.plants.patch_scale, 0.0);
                 assert_ne!(header.params.plants.death_seconds, 0.0);
             }
@@ -625,10 +650,19 @@ mod tests {
                 assert_eq!(header.params.corpses.max_corpses, 0);
                 assert_eq!(header.params.metabolism.k_muscle, 0.0);
                 assert_eq!(header.params.metabolism.k_mouth, 0.0);
+                assert_eq!(header.params.mutation.body_trait_rate, 0.0);
+                assert_eq!(header.params.mutation.body_trait_sigma, 0.0);
+                let size = header.params.body.size;
+                assert_eq!(header.params.body.size_range, [size, size]);
+                assert_eq!(header.params.body.muscle_range, [1.0, 1.0]);
+                assert_eq!(header.params.body.mouth_range, [1.0, 1.0]);
             } else {
                 // A field the archive wrote is its own value, not one to reset.
                 assert_eq!(header.params.metabolism.k_muscle, 0.008);
                 assert_eq!(header.params.metabolism.k_mouth, 0.008);
+                assert_eq!(header.params.mutation.body_trait_sigma, 0.05);
+                assert_eq!(header.params.body.size_range, [1.5, 6.0]);
+                assert_eq!(header.params.body.muscle_range, [0.25, 4.0]);
             }
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);

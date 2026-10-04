@@ -869,3 +869,45 @@ fn corpse_creation_decay_and_feeding_never_allocate() {
     );
     assert_eq!(observed, 0, "corpses allocated {observed} times");
 }
+
+#[test]
+fn body_trait_births_and_the_bodies_they_make_never_allocate() {
+    // Births step every body gene in place in each heredity mode, and the tick then
+    // moves, feeds, and charges the bodies they made (spec §3.5).
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    params.mutation.body_trait_rate = 1.0;
+    params.mutation.body_trait_sigma = 0.5;
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
+    ] {
+        let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
+        let parent = world.spawn_founder(Vec3::ZERO).unwrap();
+        let mut evolved = false;
+        let observed = count_allocations(|| {
+            for _ in 0..20 {
+                world.agents_mut().energy[parent.index()] = 300.0;
+                world.intents_mut().reproduce[parent.index()] = 1.0;
+                assert_eq!(
+                    world.resolve_births_with_observer(|_| panic!("birth refused")),
+                    1
+                );
+                world.step();
+                for child in world.pool().iter_live().filter(|&id| id != parent) {
+                    evolved |= world.agents().muscle[child.index()] != 1.0;
+                }
+                loop {
+                    let next = world.pool().iter_live().find(|&id| id != parent);
+                    let Some(child) = next else { break };
+                    world.despawn(child);
+                }
+            }
+        });
+        assert!(evolved, "{mode:?}: no child's body changed");
+        assert_eq!(observed, 0, "{mode:?} bodies allocated {observed} times");
+    }
+}

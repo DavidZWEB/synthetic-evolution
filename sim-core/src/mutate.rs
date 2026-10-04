@@ -7,13 +7,14 @@
 //! capped at the f32 representation boundary. `structural` owns bounded topology
 //! changes, and the heredity policy that combines them lives in `control`.
 //!
-//! Neural and organ operators have separate owners and share bounded editing
-//! primitives. Gene duplication and meta-gene mutation remain outside this milestone.
+//! Neural, organ, and body operators have separate owners; the first two share bounded
+//! editing primitives. Gene duplication and meta-gene mutation remain later work.
 
 use crate::genome::{Activation, Gene};
 use crate::params::MutationParams;
 use crate::rng::Rng;
 
+pub(crate) mod body;
 pub(crate) mod edit;
 mod events;
 pub(crate) mod organs;
@@ -65,9 +66,9 @@ pub fn mutate(genes: &mut [Gene], rng: &mut Rng, params: &MutationParams) {
                     }
                 }
             }
-            // Body and meta traits are inherited but not yet mutable, and sensor and
-            // effector params are fixed this phase. Their operators arrive with the
-            // phases that need them (spec §3.3).
+            // Body traits have their own pass, which every heredity mode runs (spec
+            // §3.5). Meta traits, sensor params, and effector bindings are fixed this
+            // phase; their operators arrive with the phases that need them (spec §3.3).
             Gene::Sensor(_) | Gene::Effector(_) | Gene::Body(_) | Gene::Meta(_) => {}
         }
     }
@@ -168,8 +169,9 @@ mod tests {
 
     #[test]
     fn structural_genes_are_untouched_this_phase() {
-        // Sensor params, effector bindings, body and meta traits have no operator in
-        // Phase 1. If one grows, this test should be updated deliberately (spec §3.3).
+        // Sensor params, effector bindings, and meta traits have no operator, and body
+        // traits have their own pass, so the neural scalar pass must leave all four
+        // alone. If that changes, update this test deliberately (spec §3.3, §3.5).
         let mut genes = tiny();
         let before = genes.clone();
         let mut rng = Rng::from_seed(5);

@@ -173,12 +173,29 @@ pub struct WorldParams {
     pub founder_spread: f32,
 }
 
-/// Fixed body traits. Genetic from Phase 2; one value for everyone in Phase 1.
+/// The reference body, and the ranges body-trait mutation keeps every body within
+/// (spec §3.5).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct BodyParams {
-    /// Collision and rendering radius, in world units.
+    /// The founders' collision and rendering radius, in world units, and the size every
+    /// body's mass and gape are measured against (spec §3.5).
     pub size: f32,
+    /// Bounds on an evolved radius, which must contain `size`.
+    ///
+    /// **[1.5, 6] (spec §5.5)**: half to double the founder radius, room for a size
+    /// refuge while staying far below the spatial grid's cell.
+    pub size_range: [f32; 2],
+    /// Bounds on muscle, which must contain the founders' 1.
+    ///
+    /// **[0.25, 4] (spec §5.5)**: a quarter to four times the reference. At the floor
+    /// the trait saves `k_muscle · 0.9375 = 0.0075` of upkeep, so even the weakest body
+    /// still pays a positive cost.
+    pub muscle_range: [f32; 2],
+    /// Bounds on mouth, which must contain the founders' 1.
+    ///
+    /// **[0.25, 4] (spec §5.5)**, as for muscle.
+    pub mouth_range: [f32; 2],
 }
 
 /// Per-tick energy costs. Spec §5.2.
@@ -437,6 +454,19 @@ pub struct MutationParams {
     /// Multiplicative, so tau explores across orders of magnitude rather than
     /// random-walking off the bottom of its range.
     pub tau_perturb_factor: f32,
+    /// Per-gene chance, per birth, that a body trait (size, muscle, mouth, or a colour
+    /// channel) steps (spec §3.5).
+    ///
+    /// **0, against spec §5.5's starting value of 0.1.** Phase 3 lands each mechanism
+    /// reproducing Phase 2's dynamics, and a zero rate draws nothing. Calibration
+    /// switches it on with multi-seed evidence.
+    pub body_trait_rate: f32,
+    /// Scale of that step. Size, muscle, and mouth are multiplied by `exp(σ·N(0, 1))`,
+    /// and colour channels take `σ·N(0, 1)` (spec §3.5).
+    ///
+    /// **0.05 (spec §5.5)**: a trait drifts a few percent per mutation, which shows
+    /// over thousands of births rather than in one generation.
+    pub body_trait_sigma: f32,
 }
 
 /// Per-offspring structural edits, disabled by default while preserving the accepted
@@ -1039,6 +1069,7 @@ impl SimParams {
             self.mutation.weight_perturb_rate,
             self.mutation.weight_reset_rate,
             self.mutation.neuron_perturb_rate,
+            self.mutation.body_trait_rate,
         ]
         .iter()
         .any(|value| !(0.0..=1.0).contains(value))
@@ -1050,6 +1081,7 @@ impl SimParams {
             self.mutation.weight_perturb_sigma,
             self.mutation.bias_perturb_sigma,
             self.mutation.tau_perturb_factor,
+            self.mutation.body_trait_sigma,
         ]
         .iter()
         .any(|&value| !(value >= 0.0) || !value.is_finite())
@@ -1276,6 +1308,38 @@ impl SimParams {
                 "metabolism costs must be finite and non-negative",
             ));
         }
+        // Positive because mass and force divide by them, and holding the founders'
+        // traits so a first mutation cannot jump a body to a bound (spec §3.5).
+        for (range, founder, message) in [
+            (
+                self.body.size_range,
+                self.body.size,
+                "body.size_range must be positive, finite, and contain body.size",
+            ),
+            (
+                self.body.muscle_range,
+                1.0,
+                "body.muscle_range must be positive, finite, and contain 1",
+            ),
+            (
+                self.body.mouth_range,
+                1.0,
+                "body.mouth_range must be positive, finite, and contain 1",
+            ),
+        ] {
+            let [low, high] = range;
+            if !(low > 0.0) || !high.is_finite() || !(low <= founder && founder <= high) {
+                return Err(ParamError(message));
+            }
+        }
+        // The largest body's feeding query must fit in half the world, as every
+        // spatial query must for the minimum image to be unambiguous (spec §2.3).
+        let food_radius = self.plants.radius.max(self.corpses.radius);
+        if (self.body.size_range[1] + self.feeding.reach + food_radius) * 2.0 > self.world.size {
+            return Err(ParamError(
+                "the largest body's feeding reach exceeds half the world; the hash cannot wrap",
+            ));
+        }
         Ok(())
     }
 }
@@ -1293,7 +1357,12 @@ impl Default for WorldParams {
 
 impl Default for BodyParams {
     fn default() -> Self {
-        Self { size: 3.0 }
+        Self {
+            size: 3.0,
+            size_range: [1.5, 6.0],
+            muscle_range: [0.25, 4.0],
+            mouth_range: [0.25, 4.0],
+        }
     }
 }
 
@@ -1393,6 +1462,8 @@ impl Default for MutationParams {
             neuron_perturb_rate: 0.00625,
             bias_perturb_sigma: 0.1,
             tau_perturb_factor: 0.1,
+            body_trait_rate: 0.0,
+            body_trait_sigma: 0.05,
         }
     }
 }
@@ -1613,7 +1684,7 @@ mod tests {
             // Mass and gape are measured against body.size, so a retune would change
             // them for every living body at once (spec §3.5).
             let (current, mut next) = pair();
-            next.body.size = 1.0;
+            next.body.size = 2.0;
             assert_eq!(
                 current.check_retune(&next, GRID_CELL),
                 Err(ParamError(
@@ -1953,6 +2024,12 @@ mod tests {
             ("non-finite neuron perturbation probability", |p| {
                 p.mutation.neuron_perturb_rate = f32::NAN
             }),
+            ("body trait rate above certainty", |p| {
+                p.mutation.body_trait_rate = 1.5
+            }),
+            ("negative body trait step", |p| {
+                p.mutation.body_trait_sigma = -0.1
+            }),
             ("chemo sizing overflows u64", |p| {
                 p.chemo.cells = [u32::MAX, u32::MAX, 1];
                 p.chemo.decay.push(0.5);
@@ -1966,6 +2043,36 @@ mod tests {
                 "should have been rejected: {name}"
             );
         }
+    }
+
+    #[test]
+    fn body_ranges_are_positive_and_hold_the_founders() {
+        // Each break must fail on its own check, not on whichever runs first.
+        type BreakIt = fn(&mut SimParams);
+        let size = "body.size_range must be positive, finite, and contain body.size";
+        let muscle = "body.muscle_range must be positive, finite, and contain 1";
+        let mouth = "body.mouth_range must be positive, finite, and contain 1";
+        let reach = "the largest body's feeding reach exceeds half the world; the hash cannot wrap";
+        let cases: Vec<(&str, BreakIt)> = vec![
+            (size, |p| p.body.size_range = [0.0, 6.0]),
+            (size, |p| p.body.size_range = [4.0, 6.0]),
+            (size, |p| p.body.size_range = [1.5, f32::INFINITY]),
+            (muscle, |p| p.body.muscle_range = [f32::NAN, 4.0]),
+            (muscle, |p| p.body.muscle_range = [2.0, 4.0]),
+            (mouth, |p| p.body.mouth_range = [4.0, 0.25]),
+            (mouth, |p| p.body.mouth_range = [0.25, 0.5]),
+            (reach, |p| p.feeding.reach = 500.0),
+            (reach, |p| p.body.size_range = [1.5, 495.0]),
+        ];
+        for (message, break_it) in cases {
+            let mut params = SimParams::default();
+            break_it(&mut params);
+            assert_eq!(params.validate(), Err(ParamError(message)));
+        }
+        // A one-point range is a trait that cannot evolve, which is allowed.
+        let mut params = SimParams::default();
+        params.body.muscle_range = [1.0, 1.0];
+        assert_eq!(params.validate(), Ok(()));
     }
 
     #[test]
