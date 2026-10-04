@@ -125,6 +125,10 @@ pub struct StorageParams {
     pub max_connections: u32,
     pub max_sensors: u32,
     pub max_vision_rays: u32,
+    /// Maximum effectors in one organism.
+    ///
+    /// **5**: a founder carrying the bite (`founder.bite`) drives thrust, turn, ingest,
+    /// reproduce, and bite (spec §4.2), so the limit admits it without a storage edit.
     pub max_effectors: u32,
     /// Portable upper bound on cumulative requested heap bytes for one core construction.
     ///
@@ -147,7 +151,7 @@ impl Default for StorageParams {
             max_connections: 1_024,
             max_sensors: 32,
             max_vision_rays: 32,
-            max_effectors: 4,
+            max_effectors: 5,
             max_memory_bytes: 100_663_296,
         }
     }
