@@ -426,6 +426,26 @@ test('quota errors keep the incomplete prefix in a saved run while the World kee
   { timeout: 60_000 }, async () => {
     await withPage('development', async (page) => {
       const panel = await openCapture(page);
+      // Exhaust the quota only once a drain has committed the founder origins, or there
+      // is no prefix for the test to keep.
+      await page.waitForFunction(() => new Promise((resolve) => {
+        const opening = indexedDB.open('synthetic-evolution-history');
+        opening.onerror = () => resolve(false);
+        opening.onsuccess = () => {
+          const db = opening.result;
+          try {
+            const reading = db.transaction('archives').objectStore('archives').getAll();
+            reading.onerror = () => { db.close(); resolve(false); };
+            reading.onsuccess = () => {
+              db.close();
+              resolve(reading.result.some((archive) => archive.rows.length > 0));
+            };
+          } catch {
+            db.close();
+            resolve(false);
+          }
+        };
+      }), null, { polling: 100 });
       await page.evaluate(() => {
         const put = IDBObjectStore.prototype.put;
         globalThis.restoreHistoryWrites = () => { IDBObjectStore.prototype.put = put; };
@@ -433,7 +453,13 @@ test('quota errors keep the incomplete prefix in a saved run while the World kee
           throw new DOMException('test quota exhausted', 'QuotaExceededError');
         };
       });
-      await panel.getByRole('button', { name: 'stop recording', exact: true }).click();
+      // The World keeps stepping, so a periodic drain can hit the quota before this
+      // click lands; that ends the capture and removes the button. Only that race is
+      // excused: a button that is still there but cannot be clicked fails the test.
+      const stop = panel.getByRole('button', { name: 'stop recording', exact: true });
+      await stop.click({ timeout: 2_000 }).catch(async (error) => {
+        if (await stop.count() > 0) throw error;
+      });
       await page.getByText('history incomplete', { exact: true }).waitFor();
       await stepTo(page, 1);
       await page.evaluate(() => globalThis.restoreHistoryWrites());
