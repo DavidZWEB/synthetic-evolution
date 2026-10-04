@@ -804,3 +804,35 @@ fn writing_the_render_snapshot_never_allocates() {
         "everything died; nothing was written"
     );
 }
+
+#[test]
+fn plant_ecology_never_allocates() {
+    // Turnover moves plants and rebuilds their grid mid-tick (spec §5.1); the scratch
+    // for that rebuild, and the fertility map a seedling consults, must already exist.
+    let mut params = SimParams::default();
+    params.world.max_agents = 256;
+    params.plants.max_plants = 400;
+    params.plants.grazing_lag = 0.6;
+    params.plants.patchiness = 3.0;
+    // Starving below 90% for half a second keeps plants dying throughout the window.
+    params.plants.death_stock = 0.9;
+    params.plants.death_seconds = 0.5;
+    params.plants.initial_fill = 0.5;
+    let mut world = World::new(29, params).expect("valid params");
+    world.seed_founders(200);
+    for _ in 0..600 {
+        world.step();
+    }
+    let before = world.plants().reseeded();
+    let observed = count_allocations(|| {
+        for _ in 0..600 {
+            world.step();
+        }
+        std::hint::black_box(&world);
+    });
+    assert!(
+        world.plants().reseeded() > before,
+        "no plant reseeded while counting, so turnover was not exercised"
+    );
+    assert_eq!(observed, 0, "plant ecology allocated {observed} times");
+}

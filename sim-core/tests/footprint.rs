@@ -132,8 +132,9 @@ fn world_species_storage_is_charged_without_increasing_the_core_budget() {
 fn birth_identity_arrays_are_charged_and_fit_the_shipped_budget() {
     let mut params = SimParams::default();
     let current = params.estimated_construction_bytes().unwrap();
-    // The shipped minimal founder's construction total.
-    assert_eq!(current, 88_588_988);
+    // The shipped minimal founder's construction total, including one plant
+    // starvation count per plant (M9 turnover).
+    assert_eq!(current, 88_604_988);
     assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
     // One birth ID and two parent references per slot are part of the estimate.
     params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);

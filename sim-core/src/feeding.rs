@@ -19,9 +19,9 @@ use crate::plants::Plants;
 
 /// The nearest plant within `reach` of `at`, or `None` if there is nothing to eat.
 ///
-/// Ties go to whichever the grid visits first. The plant grid is built once and never
-/// rebuilt, so that is stable for the life of the world rather than an artifact of when
-/// the query happened to run.
+/// Ties go to whichever the grid visits first. The plant grid is rebuilt from positions
+/// in plant-index order whenever a plant reseeds, so that is a function of where the
+/// plants are rather than an artifact of when the query happened to run.
 pub fn nearest(at: Vec3, reach: f32, plants: &Plants) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     plants

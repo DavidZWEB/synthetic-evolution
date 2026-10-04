@@ -225,6 +225,10 @@ const LATER_PARAMS: &[&str] = &[
     "grazing_lag",
     "patchiness",
     "patch_scale",
+    "death_stock",
+    "death_seconds",
+    "local_dispersal",
+    "dispersal_radius",
 ];
 
 /// Serde fills an omitted later field from today's default; reset it to the zero the
@@ -243,6 +247,18 @@ fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result
     }
     if absent("/data/params/plants/patch_scale") {
         params.plants.patch_scale = 0.0;
+    }
+    if absent("/data/params/plants/death_stock") {
+        params.plants.death_stock = 0.0;
+    }
+    if absent("/data/params/plants/death_seconds") {
+        params.plants.death_seconds = 0.0;
+    }
+    if absent("/data/params/plants/local_dispersal") {
+        params.plants.local_dispersal = 0.0;
+    }
+    if absent("/data/params/plants/dispersal_radius") {
+        params.plants.dispersal_radius = 0.0;
     }
     Ok(())
 }
@@ -577,14 +593,20 @@ mod tests {
                 // serde will fill once calibration ships one.
                 header.params.plants.grazing_lag = 0.5;
                 header.params.plants.patchiness = 2.0;
+                header.params.plants.death_stock = 0.2;
                 assert_ne!(header.params.plants.patch_scale, 0.0);
+                assert_ne!(header.params.plants.death_seconds, 0.0);
             }
             restore_later_params(&mut header.params, line).unwrap();
             assert_eq!(header.params.mutation.structural.add_oscillator_rate, 0.0);
             assert_eq!(header.params.plants.grazing_lag, 0.0);
             assert_eq!(header.params.plants.patchiness, 0.0);
+            assert_eq!(header.params.plants.death_stock, 0.0);
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);
+                assert_eq!(header.params.plants.death_seconds, 0.0);
+                assert_eq!(header.params.plants.local_dispersal, 0.0);
+                assert_eq!(header.params.plants.dispersal_radius, 0.0);
             }
         }
     }

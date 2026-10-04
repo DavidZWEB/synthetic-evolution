@@ -103,21 +103,30 @@ impl Fertility {
         rng.unit() < odds
     }
 
-    /// A uniformly drawn site that this map accepts. After [`MAX_TRIES`] rejections the
-    /// last candidate is kept, so the loop always ends.
-    pub(crate) fn site(&self, rng: &mut Rng) -> Vec3 {
-        let size = self.world_size;
+    /// A site drawn by `propose` that this map accepts. After [`MAX_TRIES`] rejections
+    /// the last candidate is kept, so the loop always ends.
+    pub(crate) fn site(&self, rng: &mut Rng, mut propose: impl FnMut(&mut Rng) -> Vec3) -> Vec3 {
         let mut candidate = Vec3::ZERO;
         for _ in 0..MAX_TRIES {
-            // x before y, matching Phase 1's uniform scatter draw for draw.
-            let x = rng.range(0.0, size);
-            let y = rng.range(0.0, size);
-            candidate = Vec3::new(x, y, 0.0);
+            candidate = propose(rng);
             if self.accepts(candidate, rng) {
                 break;
             }
         }
         candidate
+    }
+
+    /// A uniform candidate anywhere on the torus.
+    pub(crate) fn anywhere(&self, rng: &mut Rng) -> Vec3 {
+        // x before y, matching Phase 1's uniform scatter draw for draw.
+        let x = rng.range(0.0, self.world_size);
+        let y = rng.range(0.0, self.world_size);
+        Vec3::new(x, y, 0.0)
+    }
+
+    #[inline]
+    pub(crate) fn world_size(&self) -> f32 {
+        self.world_size
     }
 }
 
@@ -162,7 +171,7 @@ mod tests {
         let size = params.world.size;
         for _ in 0..100 {
             let expected = Vec3::new(theirs.range(0.0, size), theirs.range(0.0, size), 0.0);
-            assert_eq!(map.site(&mut ours), expected);
+            assert_eq!(map.site(&mut ours, |rng| map.anywhere(rng)), expected);
         }
     }
 
@@ -194,7 +203,10 @@ mod tests {
         let (map, params) = patchy(4.0, 150.0);
         let size = params.world.size;
         let mut rng = Rng::from_seed(21);
-        let placed: f32 = (0..2_000).map(|_| map.at(map.site(&mut rng))).sum::<f32>() / 2_000.0;
+        let placed: f32 = (0..2_000)
+            .map(|_| map.at(map.site(&mut rng, |rng| map.anywhere(rng))))
+            .sum::<f32>()
+            / 2_000.0;
         let anywhere: f32 = (0..2_000)
             .map(|_| map.at(Vec3::new(rng.range(0.0, size), rng.range(0.0, size), 0.0)))
             .sum::<f32>()

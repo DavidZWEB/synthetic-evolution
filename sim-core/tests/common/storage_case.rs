@@ -9,8 +9,8 @@ use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{AgentId, Rng, SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xa0a2_3fd4_eb0a_17ed;
-pub const CONTROL_GOLDEN: u64 = 0x2544_0d46_7ce5_a7c8;
+pub const EVOLVING_GOLDEN: u64 = 0x4b2b_621b_3f5c_499d;
+pub const CONTROL_GOLDEN: u64 = 0x50aa_d738_8059_aa78;
 
 const EXTRA: usize = 8;
 

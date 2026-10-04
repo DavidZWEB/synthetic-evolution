@@ -230,16 +230,19 @@ impl World {
         );
     }
 
-    /// Grows the plants by one tick and scents the field. Part of step 8, and the only
-    /// place energy enters the world (spec §5.1).
+    /// Grows the plants by one tick, resolves plant deaths and reseeds, and scents the
+    /// field. Part of step 8, and the only place energy enters the world (spec §5.1).
     ///
     /// What the plants *actually* absorbed goes into the ledger, not the nominal input
     /// rate: at carrying capacity the surplus never enters, and conservation has to be
-    /// measured rather than inferred.
+    /// measured rather than inferred. Deaths come after growth, so a plant that just
+    /// regrew past starving survives, and before scent, so the field follows the plants
+    /// to their new sites.
     pub fn grow_plants(&mut self) -> f64 {
         let dt = self.params.world.dt;
         let absorbed = self.plants.grow(&self.params.plants, dt);
         self.ledger.record_input(absorbed);
+        self.plants.turn_over(&self.params, &mut self.rng);
         self.plants.scent(&mut self.field, &self.params.plants, dt);
         absorbed
     }
