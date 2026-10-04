@@ -6,7 +6,11 @@
     "base": 200.0
   },
   "plants": {
-    "max_plants": 8
+    "max_plants": 8,
+    "energy_input_rate": 12000.0,
+    "grazing_lag": 0.0,
+    "patchiness": 0.0,
+    "death_stock": 0.0
   },
   "chemo": {
     "cells": [

@@ -43,7 +43,10 @@
     "max_plants": 400,
     "energy_input_rate": 2400.0,
     "max_energy": 60.0,
-    "initial_fill": 1.0
+    "initial_fill": 1.0,
+    "grazing_lag": 0.0,
+    "patchiness": 0.0,
+    "death_stock": 0.0
   },
   "chemo": {
     "cells": [

@@ -154,7 +154,8 @@ mod tests {
 
     #[test]
     fn a_uniform_world_draws_nothing_and_accepts_everywhere() {
-        let params = SimParams::default();
+        let mut params = SimParams::default();
+        params.plants.patchiness = 0.0;
         let mut rng = Rng::from_seed(5);
         let before = rng.state_fingerprint();
         let map = Fertility::new(&params, &mut rng);

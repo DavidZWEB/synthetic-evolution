@@ -578,6 +578,13 @@ pub struct PlantParams {
     /// close to the minimum upkeep of the web profile's 2,000 founders. Plant caps mean
     /// unused supply never enters, while the observed carrying regime remains far below
     /// the agent ceiling and the random-brain control collapses to a few agents.
+    ///
+    /// **24,000 after M9 calibration.** With grazing lag on, a grazed plant refuses most
+    /// of its share, so this is a ceiling the world never approaches: shipped worlds
+    /// captured 23–25% of it on seeds 42/117/314 (about 96 energy/tick, against 138 at
+    /// 12,000 before M9) and settled at 824–964 agents. At 12,000 the same ecology
+    /// settled at 416–468, too thin for the web profile; 18,000 gave 669–736
+    /// (`docs/phase-2-m8-evidence.md`, plant ecology calibration).
     pub energy_input_rate: f32,
     /// Plant pool capacity.
     pub max_plants: u32,
@@ -592,8 +599,10 @@ pub struct PlantParams {
     /// overgrazed world absorbs less of its input. Below 1 so an emptied plant always
     /// regrows.
     ///
-    /// **0 until M9 calibration**, which reproduces Phase 1's plants: every plant takes
-    /// its full share until it is full, however hard it was grazed.
+    /// **0.8 after M9 calibration**: a stripped plant regrows at a fifth of the rate of
+    /// a full one. Zero reproduces Phase 1's plants, where every plant takes its full
+    /// share until it is full however hard it was grazed. At 0.9 together with
+    /// patchiness 8 every calibration world went extinct.
     pub grazing_lag: f32,
     /// How strongly plants cluster on fertile ground, in `[0, MAX_PATCHINESS]`
     /// (spec §5.3).
@@ -604,38 +613,45 @@ pub struct PlantParams {
     /// ground and pack plants onto the best of it. Fixed for the life of a world, since
     /// the map and the sites are drawn when it is built.
     ///
-    /// **0 until M9 calibration**, which reproduces Phase 1's uniform scatter exactly.
+    /// **4 after M9 calibration**: Clark–Evans ratios of 0.68–0.76 in shipped worlds,
+    /// clearly clustered without emptying most of the map. Zero reproduces Phase 1's
+    /// uniform scatter exactly. Patchiness alone makes food easier to find — random
+    /// brains survived in the hundreds — which is why it ships with grazing lag and
+    /// turnover rather than by itself.
     pub patchiness: f32,
     /// Feature size of the fertility map, in world units: the lattice spacing of the
     /// value noise, rounded so a whole number of cells spans the torus. Ignored while
     /// `patchiness` is zero; fixed for the life of a world.
     ///
-    /// **150 until M9 calibration**: several times `chemo_radius`, so one nose cannot
+    /// **150 after M9 calibration**: several times `chemo_radius`, so one nose cannot
     /// see from patch to patch, and well under the world's 1,000, so there are dozens.
     pub patch_scale: f32,
     /// Fraction of [`Self::max_energy`] below which a plant is starving, in `[0, 1)`
     /// (spec §5.1). A plant that starves for [`Self::death_seconds`] dies and its slot
     /// reseeds elsewhere, carrying what stock it had left.
     ///
-    /// **0 until M9 calibration**, which disables death entirely: Phase 1's sites are
-    /// permanent, and nothing is counted or drawn.
+    /// **0.1 after M9 calibration**: a plant grazed below a tenth of capacity is
+    /// starving. Shipped worlds reseeded 3,000–7,600 plants over 300,000 ticks, a
+    /// sustained turnover rather than a churn. Zero disables death entirely: Phase 1's
+    /// sites are permanent, and nothing is counted or drawn.
     pub death_stock: f32,
     /// Seconds a plant may starve before it dies. Should outlast one grazer's meal, so
     /// only sustained overgrazing kills, and exceed the time an ungrazed seedling takes
     /// to regrow past [`Self::death_stock`], or seedlings die before they establish.
     ///
-    /// **30 until M9 calibration**, about one idle founder's lifetime.
+    /// **30 after M9 calibration**, about one idle founder's lifetime. 15 together with
+    /// grazing lag 0.9 and patchiness 8 drove every calibration world extinct.
     pub death_seconds: f32,
     /// Probability that a reseeded plant lands near a parent rather than anywhere, in
     /// `[0, 1]`. Seed mostly falls near the plant that dropped it, which is what lets a
     /// patch creep instead of vanishing and reappearing at random.
     ///
-    /// **0.9 until M9 calibration.**
+    /// **0.9 after M9 calibration.**
     pub local_dispersal: f32,
     /// How far from its parent a locally dispersed seed can land, in world units, in
     /// `[0, world.size / 2]`; uniform over that disc.
     ///
-    /// **40 until M9 calibration**: about `chemo_radius`, so a patch creeps rather than
+    /// **40 after M9 calibration**: about `chemo_radius`, so a patch creeps rather than
     /// jumps.
     pub dispersal_radius: f32,
     /// Collision and ingest radius.
@@ -1299,13 +1315,13 @@ impl Default for MutationParams {
 impl Default for PlantParams {
     fn default() -> Self {
         Self {
-            energy_input_rate: 12_000.0,
+            energy_input_rate: 24_000.0,
             max_plants: 4_000,
             max_energy: 60.0,
-            grazing_lag: 0.0,
-            patchiness: 0.0,
+            grazing_lag: 0.8,
+            patchiness: 4.0,
             patch_scale: 150.0,
-            death_stock: 0.0,
+            death_stock: 0.1,
             death_seconds: 30.0,
             local_dispersal: 0.9,
             dispersal_radius: 40.0,

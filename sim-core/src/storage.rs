@@ -608,7 +608,8 @@ mod tests {
 
     #[test]
     fn a_patchy_world_charges_its_fertility_lattice() {
-        let uniform = SimParams::default();
+        let mut uniform = SimParams::default();
+        uniform.plants.patchiness = 0.0;
         let mut patchy = uniform.clone();
         patchy.plants.patchiness = 2.0;
         patchy.plants.patch_scale = 100.0;

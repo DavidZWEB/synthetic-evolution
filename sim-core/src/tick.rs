@@ -689,7 +689,9 @@ mod tests {
 
     #[test]
     fn random_control_breaks_neural_heredity_at_birth() {
-        let mut params = SimParams::default();
+        // Fixed topology, so the genomes line up gene for gene: this is about the
+        // scalar redraw, and a structural edit would misalign the comparison.
+        let mut params = SimParams::default().without_structural_mutation();
         params.world.max_agents = 4;
         params.plants.max_plants = 8;
         params.reproduction.maturity_ticks = 0;

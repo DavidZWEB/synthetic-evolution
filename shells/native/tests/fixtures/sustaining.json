@@ -36,7 +36,10 @@
     "energy_input_rate": 100.0,
     "max_plants": 100,
     "max_energy": 10.0,
-    "radius": 2.0
+    "radius": 2.0,
+    "grazing_lag": 0.0,
+    "patchiness": 0.0,
+    "death_stock": 0.0
   },
   "chemo": {
     "cells": [
