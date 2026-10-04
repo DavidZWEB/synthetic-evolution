@@ -216,6 +216,20 @@ pub fn random_control(seed: u64, params_json: Option<String>) -> Result<Sim, JsE
     )
 }
 
+/// Builds the structural null (spec §7.8): each child takes a random survivor's
+/// topology with its parent's scalars where the two share genes, then mutates like an
+/// evolving child. The browser can watch it beside the evolving world; like the native
+/// shell, it records no history and saves no runs, whose formats carry the scalar
+/// control.
+#[wasm_bindgen]
+pub fn structural_null(seed: u64, params_json: Option<String>) -> Result<Sim, JsError> {
+    Sim::with_brain_inheritance(
+        seed,
+        params_json.as_deref(),
+        BrainInheritance::StructuralNull,
+    )
+}
+
 /// Where one snapshot array lives in WASM memory, right now.
 #[derive(Serialize)]
 struct Span {

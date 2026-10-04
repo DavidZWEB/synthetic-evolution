@@ -15,7 +15,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use sim_core::genome::Gene;
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
-use wasm::{Sim, random_control, validate_params};
+use wasm::{Sim, random_control, structural_null, validate_params};
 
 fn structural_params() -> SimParams {
     serde_json::from_str(include_str!("../../native/tests/fixtures/structural.json")).unwrap()
@@ -85,6 +85,36 @@ fn random_control_matches_founders_then_breaks_neural_inheritance() {
     assert!(control.descendants() > 0);
     assert_eq!(mutations(&evolving), StructuralMutationCounts::default());
     assert_eq!(mutations(&control), StructuralMutationCounts::default());
+}
+
+#[wasm_bindgen_test]
+fn structural_null_matches_founders_then_reshuffles_topology() {
+    let mut params = serde_json::from_str::<serde_json::Value>(include_str!(
+        "../../native/tests/fixtures/sustaining.json"
+    ))
+    .unwrap();
+    // Donor topology only differs from the parent's once structure varies.
+    params["mutation"]["structural"]["add_connection_rate"] = serde_json::json!(1.0);
+    let params = params.to_string();
+    let mut evolving = Sim::new(7, Some(params.clone())).expect("valid params");
+    let mut null = structural_null(7, Some(params)).expect("valid params");
+    assert_eq!(null.heredity(), "structural_null");
+    assert_eq!(evolving.seed_founders(8), 8);
+    assert_eq!(null.seed_founders(8), 8);
+    assert_eq!(
+        evolving.state_hash(),
+        null.state_hash(),
+        "null founders must match"
+    );
+
+    evolving.step_many(200);
+    null.step_many(200);
+    assert!(null.descendants() > 0, "the null never bred");
+    assert_ne!(
+        evolving.state_hash(),
+        null.state_hash(),
+        "null births did not change heredity"
+    );
 }
 
 #[wasm_bindgen_test]
