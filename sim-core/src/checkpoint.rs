@@ -404,12 +404,16 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
             .into_iter()
             .all(finite3)
             || !agent.orientation.is_finite()
-            || !agent.energy.is_finite()
-            || !agent.energy_reserve.is_finite()
+            // Neither half of an energy pair is ever negative (`energy::add`); a negative
+            // one would hand dissipation a negative amount on death.
+            || !(agent.energy.is_finite() && agent.energy >= 0.0)
+            || !(agent.energy_reserve.is_finite() && agent.energy_reserve >= 0.0)
             || !agent.health.is_finite()
             || !(agent.size.is_finite() && agent.size > 0.0)
         {
-            return Err(invalid("agent physical state must be finite"));
+            return Err(invalid(
+                "agent physical state must be finite, with non-negative energy",
+            ));
         }
         if agent.birth_id != BirthId::NULL.raw() && agent.birth_id >= c.next_birth {
             return Err(invalid("an agent birth ID was never issued"));
@@ -660,7 +664,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 11] = [
+        let cases: [(&str, Corrupt); 13] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -684,6 +688,10 @@ mod tests {
                 c.agents[0].species_id = 999
             }),
             ("unknown heredity", |c| c.brain_inheritance = 7),
+            ("negative agent energy", |c| c.agents[0].energy = -1.0),
+            ("negative agent reserve", |c| {
+                c.agents[0].energy_reserve = -0.5
+            }),
             ("unissued birth ID", |c| c.next_birth = 0),
         ];
         for (name, corrupt) in cases {
