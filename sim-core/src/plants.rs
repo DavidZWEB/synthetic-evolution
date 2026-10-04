@@ -256,8 +256,8 @@ impl Plants {
     /// Restores saved plants over a world rebuilt from the run's seed.
     ///
     /// Untrusted input: per plant, a finite site on the plane inside the world, one
-    /// finite, non-negative tank, one finite reserve, and a starvation count. A refused
-    /// restore leaves the plants unchanged.
+    /// finite, non-negative tank and reserve, and a starvation count. A refused restore
+    /// leaves the plants unchanged.
     pub(crate) fn restore_state(&mut self, saved: SavedPlants<'_>) -> Result<(), &'static str> {
         let count = self.len();
         if saved.position.len() != count
@@ -278,8 +278,10 @@ impl Plants {
         }) {
             return Err("plant sites must lie on the world's plane");
         }
+        // `energy::add` never leaves either half negative; a negative one could only
+        // let a later take report a negative amount and unwind the ledger.
         if !saved.energy.iter().all(|&e| e.is_finite() && e >= 0.0)
-            || !saved.reserve.iter().all(|r| r.is_finite())
+            || !saved.reserve.iter().all(|&r| r.is_finite() && r >= 0.0)
         {
             return Err("plant stock must be finite and non-negative");
         }
@@ -646,6 +648,24 @@ mod tests {
                 .restore_state(saved(&position, &energy, &reserve, &starved))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn restore_refuses_a_negative_reserve() {
+        let (mut plants, _) = world();
+        let position = plants.position().to_vec();
+        let energy = vec![0.0; plants.len()];
+        let mut reserve = vec![0.0; plants.len()];
+        let starved = plants.starved().to_vec();
+        reserve[0] = -0.5;
+        let saved = SavedPlants {
+            position: &position,
+            energy: &energy,
+            reserve: &reserve,
+            starved: &starved,
+            reseeded: 0,
+        };
+        assert!(plants.restore_state(saved).is_err());
     }
 
     #[test]
