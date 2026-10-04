@@ -49,6 +49,16 @@ pub struct RunHeader {
     pub sample_every: u64,
     pub params: SimParams,
     pub control: String,
+    /// A mid-run intervention: from `at_tick` on, both worlds ran with `params`.
+    /// Absent for an ordinary run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retune: Option<Retune>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Retune {
+    pub at_tick: u64,
+    pub params: SimParams,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -130,9 +130,19 @@ impl SpatialHash {
         debug_assert!(min_cell_size > 0.0, "cells must have extent");
         Self::with_cells_per_axis(
             world_size,
-            ((world_size / min_cell_size) as u32).max(1),
+            Self::cells_per_axis_for(world_size, min_cell_size),
             capacity,
         )
+    }
+
+    /// The [`Self::cell_size`] that [`Self::new`] would produce, without allocating the
+    /// grid — for readers that only need the retune ceiling a world's params imply.
+    pub fn cell_size_for(world_size: f32, min_cell_size: f32) -> f32 {
+        world_size / Self::cells_per_axis_for(world_size, min_cell_size) as f32
+    }
+
+    fn cells_per_axis_for(world_size: f32, min_cell_size: f32) -> u32 {
+        ((world_size / min_cell_size) as u32).max(1)
     }
 
     /// Cells along each horizontal axis.
@@ -396,6 +406,11 @@ mod tests {
                 "grid does not tile"
             );
             assert_eq!(nx, ny);
+            assert_eq!(
+                SpatialHash::cell_size_for(WORLD, min_cell).to_bits(),
+                h.cell_size().to_bits(),
+                "the allocation-free estimate must match the built grid"
+            );
         }
     }
 

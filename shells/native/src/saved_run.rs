@@ -224,6 +224,7 @@ pub fn resume(args: ResumeArgs) -> Result<()> {
             sample_every: args.drain_every,
             params: worlds[0].1.params().clone(),
             control: provenance.control.clone(),
+            retune: None,
         };
         history::validate_export(&run, args.history_capacity, representative_genes)?;
         let capture = Capture::new(args.history_capacity, representative_genes)?;

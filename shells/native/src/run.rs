@@ -11,7 +11,7 @@ use sim_core::world::World;
 use crate::Result;
 use crate::cli::RunArgs;
 use crate::history::{self, ArchiveWriter, Capture, CohortCapture};
-use crate::metrics::{MetricsRecord, RunHeader, SCHEMA_VERSION, sample_pair};
+use crate::metrics::{MetricsRecord, Retune, RunHeader, SCHEMA_VERSION, sample_pair};
 use crate::saved_run::{self, Cohort, Decimal, Provenance};
 
 pub fn run(args: RunArgs) -> Result<()> {
@@ -30,6 +30,7 @@ pub fn run(args: RunArgs) -> Result<()> {
 
     crate::output::validate(&args)?;
     let params = load_params(args.params.as_deref())?;
+    let retune = load_retune(&args, &params)?;
     let header = RunHeader {
         schema_version: SCHEMA_VERSION,
         sim_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -41,6 +42,7 @@ pub fn run(args: RunArgs) -> Result<()> {
         sample_every: args.sample_every,
         params: params.clone(),
         control: args.control.protocol().to_owned(),
+        retune: retune.clone(),
     };
     if args.history.is_some() {
         history::validate_export(&header, args.history_capacity, args.representative_genes())?;
@@ -48,6 +50,14 @@ pub fn run(args: RunArgs) -> Result<()> {
     let mut evolving = World::new(args.seed, params.clone())?;
     let mut random_control =
         World::new_with_brain_inheritance(args.seed, params, args.control.heredity())?;
+    // Refused now rather than at its tick, so a long run cannot fail at the end.
+    if let Some(retune) = &retune {
+        for world in [&evolving, &random_control] {
+            world.check_retune(&retune.params).map_err(|error| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("--retune: {error}"))
+            })?;
+        }
+    }
     let mut spawn_failures = args
         .metrics
         .as_ref()
@@ -113,6 +123,7 @@ pub fn run(args: RunArgs) -> Result<()> {
         final_sample = Some(sample);
     }
 
+    apply_retune(&retune, 0, &mut evolving, &mut random_control)?;
     for _ in 0..args.ticks {
         step(
             &mut evolving,
@@ -132,6 +143,7 @@ pub fn run(args: RunArgs) -> Result<()> {
             capture.check()?;
         }
         let tick = evolving.tick_count();
+        apply_retune(&retune, tick, &mut evolving, &mut random_control)?;
         if tick % args.sample_every == 0 || tick == args.ticks {
             if let (Some(archive), Some(capture)) = (&mut archive, &mut capture) {
                 archive.drain(capture)?;
@@ -218,6 +230,59 @@ fn save_run(
         vec![history],
     )?;
     saved_run::write(path, &bytes)
+}
+
+/// Applies a scheduled retune to both worlds at the boundary after `tick`.
+fn apply_retune(
+    retune: &Option<Retune>,
+    tick: u64,
+    evolving: &mut World,
+    control: &mut World,
+) -> Result<()> {
+    if let Some(retune) = retune.as_ref().filter(|retune| retune.at_tick == tick) {
+        evolving.set_params(retune.params.clone())?;
+        control.set_params(retune.params.clone())?;
+    }
+    Ok(())
+}
+
+/// The run's params with `--retune`'s partial document laid over them, field by field.
+fn load_retune(args: &RunArgs, base: &SimParams) -> Result<Option<Retune>> {
+    let (Some(path), Some(at_tick)) = (args.retune.as_deref(), args.retune_at) else {
+        return Ok(None);
+    };
+    if at_tick > args.ticks {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "--retune-at must be at most --ticks",
+        )
+        .into());
+    }
+    let json = std::fs::read_to_string(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("could not read retune {}: {error}", path.display()),
+        )
+    })?;
+    let mut merged = serde_json::to_value(base)?;
+    overlay(&mut merged, serde_json::from_str(&json)?);
+    Ok(Some(Retune {
+        at_tick,
+        params: serde_json::from_value(merged)?,
+    }))
+}
+
+/// Replaces `base`'s fields with `top`'s, recursing into objects; arrays and scalars
+/// are replaced whole.
+fn overlay(base: &mut serde_json::Value, top: serde_json::Value) {
+    match (base, top) {
+        (serde_json::Value::Object(base), serde_json::Value::Object(top)) => {
+            for (key, value) in top {
+                overlay(base.entry(key).or_insert(serde_json::Value::Null), value);
+            }
+        }
+        (base, top) => *base = top,
+    }
 }
 
 fn load_params(path: Option<&std::path::Path>) -> Result<SimParams> {

@@ -347,9 +347,15 @@ impl World {
     /// what they sized — is `SimParams::check_retune`, where it can be read and tested
     /// without a world to hand.
     pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
-        self.params.check_retune(&params, self.hash.cell_size())?;
+        self.check_retune(&params)?;
         self.params = params;
         Ok(())
+    }
+
+    /// Whether [`Self::set_params`] would accept `params`, without applying them, so a
+    /// shell can refuse a scheduled retune before a long run rather than at its tick.
+    pub fn check_retune(&self, params: &SimParams) -> Result<(), ParamError> {
+        self.params.check_retune(params, self.hash.cell_size())
     }
 
     /// Every joule the world currently holds, in plants, agents, corpses, and the

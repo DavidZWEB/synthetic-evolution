@@ -70,6 +70,13 @@ pub struct RunArgs {
     /// Heredity of the paired control world. The structural null supports metrics only.
     #[arg(long, value_enum, default_value_t = Control::Scalar)]
     pub control: Control,
+    /// Partial SimParams JSON to apply to both worlds at `--retune-at`, for
+    /// interventions such as silencing perception mid-run. Must be a legal live retune.
+    #[arg(long, requires = "retune_at")]
+    pub retune: Option<PathBuf>,
+    /// Tick after which `--retune` is applied; at most `--ticks`.
+    #[arg(long, requires = "retune")]
+    pub retune_at: Option<u64>,
 }
 
 /// The paired control world's heredity protocol (spec section 7.8).

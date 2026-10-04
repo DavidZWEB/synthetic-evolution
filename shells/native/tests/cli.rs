@@ -753,3 +753,191 @@ fn half_founder_slot(params: &str) -> String {
     value["storage"]["genes_per_slot"] = (founder / 2).into();
     value.to_string()
 }
+
+fn retune_run(
+    retune: Option<(&str, &str)>,
+    extra: &[&str],
+) -> (std::process::Output, std::path::PathBuf) {
+    let params = temporary("retune-params.json");
+    fs::write(&params, include_str!("fixtures/sustaining.json")).expect("write params");
+    let metrics = temporary("retune.jsonl");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_native"));
+    command
+        .args([
+            "--seed",
+            "7",
+            "--ticks",
+            "40",
+            "--sample-every",
+            "10",
+            "--founders",
+            "8",
+        ])
+        .arg("--params")
+        .arg(&params)
+        .arg("--metrics")
+        .arg(&metrics);
+    let file = retune.map(|(json, at)| {
+        let file = temporary("retune.json");
+        fs::write(&file, json).expect("write retune");
+        command.arg("--retune").arg(&file).args(["--retune-at", at]);
+        file
+    });
+    // "RETUNE" in the extra arguments stands for the retune file's own path.
+    for arg in extra {
+        match (*arg, &file) {
+            ("RETUNE", Some(file)) => command.arg(file),
+            _ => command.arg(arg),
+        };
+    }
+    let output = command.output().expect("run native shell");
+    fs::remove_file(params).expect("remove params");
+    if let Some(file) = file {
+        fs::remove_file(file).expect("remove retune");
+    }
+    (output, metrics)
+}
+
+fn samples(metrics: &std::path::Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(metrics)
+        .expect("metrics file")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("JSON line"))
+        .collect()
+}
+
+#[test]
+fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
+    // Silencing food scent at tick 20: the founders' only sense of food.
+    let knockout = r#"{"plants":{"scent_rate":0.0}}"#;
+    let (plain, plain_metrics) = retune_run(None, &[]);
+    let (retuned, retuned_metrics) = retune_run(Some((knockout, "20")), &[]);
+    for output in [&plain, &retuned] {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let (plain, retuned) = (samples(&plain_metrics), samples(&retuned_metrics));
+    let retune = &retuned[0]["data"]["retune"];
+    assert_eq!(retune["at_tick"], 20);
+    assert_eq!(retune["params"]["plants"]["scent_rate"], 0.0);
+    assert_eq!(
+        retune["params"]["plants"]["max_plants"],
+        plain[0]["data"]["params"]["plants"]["max_plants"],
+        "fields the retune did not name keep the run's values"
+    );
+    assert!(
+        plain[0]["data"].get("retune").is_none(),
+        "a plain run records no retune"
+    );
+    // Samples at ticks 0, 10, and 20 precede any effect of the retune.
+    for index in 1..=3 {
+        assert_eq!(
+            plain[index], retuned[index],
+            "sample {index} differs before the retune acted"
+        );
+    }
+    let last = plain.len() - 1;
+    assert_ne!(
+        plain[last]["data"]["final_state_hashes"], retuned[last]["data"]["final_state_hashes"],
+        "the retune changed nothing"
+    );
+    for path in [plain_metrics, retuned_metrics] {
+        fs::remove_file(path).expect("remove metrics");
+    }
+}
+
+#[test]
+fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
+    let cases: [(&str, &str, &[&str], &str); 4] = [
+        (
+            r#"{"plants":{"max_plants":7}}"#,
+            "10",
+            &[],
+            "--retune: invalid SimParams: plants.max_plants is fixed",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "41",
+            &[],
+            "--retune-at must be at most --ticks",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "10",
+            &["--history", "-"],
+            "cannot be combined with --history",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "10",
+            &["--save-run", "RETUNE"],
+            "must not overwrite --retune input",
+        ),
+    ];
+    for (json, at, extra, message) in cases {
+        let (output, metrics) = retune_run(Some((json, at)), extra);
+        assert!(
+            !output.status.success(),
+            "{json} at {at} {extra:?} was accepted"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{stderr}");
+        let _ = fs::remove_file(metrics);
+    }
+}
+
+#[test]
+fn diagnose_refuses_a_retuned_run_and_readers_refuse_an_impossible_retune() {
+    let (output, metrics) = retune_run(Some((r#"{"plants":{"scent_rate":0.0}}"#, "20")), &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnosis = Command::new(env!("CARGO_BIN_EXE_native"))
+        .arg("diagnose")
+        .arg(&metrics)
+        .output()
+        .expect("diagnose");
+    assert!(!diagnosis.status.success(), "diagnose read a retuned run");
+    assert!(String::from_utf8_lossy(&diagnosis.stderr).contains("does not read retuned runs"));
+
+    // Edit the recorded retune into two the run could not have applied.
+    let text = fs::read_to_string(&metrics).expect("metrics");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for (edit, message) in [
+        (
+            ("at_tick", serde_json::json!(41)),
+            "after the run's last tick",
+        ),
+        (
+            ("max_plants", serde_json::json!(7)),
+            "not a legal live retune",
+        ),
+    ] {
+        let mut edited = lines.clone();
+        let retune = &mut edited[0]["data"]["retune"];
+        match edit.0 {
+            "at_tick" => retune["at_tick"] = edit.1,
+            _ => retune["params"]["plants"]["max_plants"] = edit.1,
+        }
+        let path = temporary("bad-retune.jsonl");
+        let body: Vec<String> = edited.iter().map(|value| value.to_string()).collect();
+        fs::write(&path, body.join("\n") + "\n").expect("write edited metrics");
+        let read = summarize(&[&path]);
+        assert!(!read.status.success(), "an impossible retune was accepted");
+        assert!(
+            String::from_utf8_lossy(&read.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+        fs::remove_file(path).expect("remove edited metrics");
+    }
+    fs::remove_file(metrics).expect("remove metrics");
+}

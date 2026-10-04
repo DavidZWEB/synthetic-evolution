@@ -358,6 +358,7 @@ mod tests {
             sample_every: 10,
             params: SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            retune: None,
         }
     }
 

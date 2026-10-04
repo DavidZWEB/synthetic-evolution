@@ -275,6 +275,34 @@ seed, params, and founders as the scalar-control run it is compared with. In the
 browser, choose "structural null" under heredity to watch the same comparison; like
 the native shell it records no history and saves no runs.
 
+### Mid-run interventions
+
+`--retune PARAMS.json --retune-at TICK` lays a partial params document over the run's
+params and applies it to both worlds after tick `TICK`. It must be a legal live retune
+(the same rules as the browser's), checked before the run starts, and it is recorded
+in the metrics header. Two runs of one seed, with and without the retune, are
+identical up to that tick, so the difference afterwards is the intervention's effect.
+
+A retune changes world params, not genomes: a sensor's range lives in its gene, so
+shrinking `sensing.vision_range` does not blind eyes that already exist. What a retune
+can silence is a signal. Stopping food scent removes the shipped founders' only sense
+of food (they have no eyes; eyes appear only by mutation):
+
+```bash
+echo '{"plants":{"scent_rate":0.0}}' > no-scent.json
+cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
+  --sample-every 5000 --metrics intact.jsonl
+cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
+  --sample-every 5000 --metrics no-scent.jsonl --retune no-scent.json --retune-at 300000
+```
+
+`summarize` treats a retuned run as its own configuration and measures supply and
+plant capacity under the params in force; `diagnose` refuses retuned runs, whose
+thresholds would assume one set of params, and every reader refuses a recorded retune
+the run could not have applied. `--retune` cannot be combined with
+`--history`, whose archive records a single set of params, and no output may overwrite
+the retune file.
+
 ### Multi-seed experiments (M8)
 
 `scripts/experiment.sh` runs each params file for every listed seed under both
