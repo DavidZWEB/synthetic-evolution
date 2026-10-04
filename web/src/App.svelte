@@ -191,7 +191,12 @@
       if (!keepsHistory(activeRun.brainInheritance)) {
         throw new Error('The structural null is watch-only: saved runs carry the evolving world or the scalar control');
       }
-      const wasm = await wasmModule();
+      // Take the run and claim the snapshot boundary before any await. A reseed clicked
+      // meanwhile waits for the boundary, then may replace the run while this save is
+      // still encoding, so nothing below reads the live run state again.
+      const run = activeRun;
+      const origin = runOrigin;
+      const historyId = activeHistoryId;
       let saved;
       let archive = null;
       if (historySession?.active) {
@@ -199,30 +204,31 @@
         archive = { text: saved.archive, end: saved.tick };
       } else {
         saved = await requestCheckpoint();
-        if (activeHistoryId) {
-          const text = await (await getHistoryStore()).exportArchive(activeHistoryId);
+        if (historyId) {
+          const text = await (await getHistoryStore()).exportArchive(historyId);
           archive = { text, end: (await parseArchive(text)).completion.data.ticks };
         }
       }
+      const wasm = await wasmModule();
       const segments = segmentsFor({
-        restored: runOrigin.restored, startTick: runOrigin.startTick, tick: saved.tick, archive,
+        restored: origin.restored, startTick: origin.startTick, tick: saved.tick, archive,
       });
       const writer = { sim_version: wasm.version(), source_revision: __SOURCE_REVISION__ };
       const manifest = manifestFor({
-        provenance: runOrigin.provenance ?? {
-          ...writer, phase: 2, seed: activeRun.seed, founders: activeRun.founders,
-          control: 'randomized_at_birth_v3', run_id: runOrigin.runId,
+        provenance: origin.provenance ?? {
+          ...writer, phase: 2, seed: run.seed, founders: run.founders,
+          control: 'randomized_at_birth_v3', run_id: origin.runId,
         },
         writer,
         checkpointFormat: wasm.checkpoint_format(),
         tick: saved.tick,
-        cohort: cohortFor(activeRun.brainInheritance),
+        cohort: cohortFor(run.brainInheritance),
         stateHash: saved.stateHash,
         checkpoint: saved.checkpoint,
         segments,
       });
       const bytes = wasm.encode_saved_run(JSON.stringify(manifest), sectionsFor(saved.checkpoint, segments));
-      download(bytes, `synthetic-evolution-seed-${activeRun.seed}-tick-${saved.tick}.sevrun`);
+      download(bytes, `synthetic-evolution-seed-${run.seed}-tick-${saved.tick}.sevrun`);
       historyMessage = `Saved run at tick ${saved.tick}.`;
     });
   }
