@@ -68,6 +68,7 @@ impl World {
         };
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
+        spawn::validate_effector_parameters(genes, self.params.world.size)?;
         spawn::validate_body(genes, spec.size, spec.signature, &self.params.body)?;
         let id = self.spawn_validated(spec, genes, on_species, on_history)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep

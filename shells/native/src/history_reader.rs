@@ -567,6 +567,8 @@ mod tests {
                 assert_ne!(header.params.mutation.body_trait_sigma, 0.0);
                 // Stand in for the nonzero rate calibration will ship.
                 header.params.mutation.body_trait_rate = 0.1;
+                // And for founders that bite, should calibration ship that default.
+                header.params.founder.bite = true;
                 assert_ne!(header.params.plants.patch_scale, 0.0);
                 assert_ne!(header.params.plants.death_seconds, 0.0);
             }
@@ -586,6 +588,7 @@ mod tests {
                 assert_eq!(header.params.body.size_range, [size, size]);
                 assert_eq!(header.params.body.muscle_range, [1.0, 1.0]);
                 assert_eq!(header.params.body.mouth_range, [1.0, 1.0]);
+                assert!(!header.params.founder.bite, "a pre-Phase-3 founder bit");
             } else {
                 // A field the archive wrote is its own value, not one to reset.
                 assert_eq!(header.params.metabolism.k_muscle, 0.008);

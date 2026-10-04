@@ -189,6 +189,9 @@ impl World {
                     turn: &mut self.intents.turn[i],
                     ingest: &mut self.intents.ingest[i],
                     reproduce: &mut self.intents.reproduce[i],
+                    bite: &mut self.intents.bite[i],
+                    bite_azimuth: &mut self.intents.bite_azimuth[i],
+                    bite_reach: &mut self.intents.bite_reach[i],
                 },
             );
         }

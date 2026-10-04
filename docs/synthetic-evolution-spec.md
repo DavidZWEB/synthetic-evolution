@@ -1453,10 +1453,10 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 7 since
-Phase 3's evolvable bodies added trait ranges, trait upkeep, and trait mutation to the
-params; format 6 had added corpses' params, slots, energies, and free order; earlier
-formats are refused), the originating run's
+manifest records the container and checkpoint formats (checkpoint format 8 since
+Phase 3's bite added combat and founder params; format 7 had added evolvable bodies'
+trait ranges, trait upkeep, and trait mutation, and format 6 corpses' params, slots,
+energies, and free order; earlier formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a

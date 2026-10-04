@@ -29,7 +29,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 7;
+pub const CHECKPOINT_FORMAT: u32 = 8;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -373,6 +373,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         if genome::validate(genes).is_err()
             || spawn::validate_limits(genes, &world.params.storage).is_err()
             || spawn::validate_sensor_parameters(genes, grid_cell, channels).is_err()
+            || spawn::validate_effector_parameters(genes, world.params.world.size).is_err()
         {
             return Err(invalid(
                 "an agent genome is incoherent or exceeds its limits",
@@ -679,7 +680,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 16] = [
+        let cases: [(&str, Corrupt); 17] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -711,6 +712,14 @@ mod tests {
             ("body outside its range", |c| c.agents[0].size = 100.0),
             ("size unlike its gene", |c| c.agents[0].size *= 1.5),
             ("colour unlike its gene", |c| c.agents[0].signature.x = 0.0),
+            ("bite aimed off the plane", |c| {
+                for gene in &mut c.agents[0].genome.values {
+                    if let Gene::Effector(effector) = gene {
+                        effector.action = crate::genome::Action::Bite;
+                        effector.params[1] = 0.5;
+                    }
+                }
+            }),
         ];
         for (name, corrupt) in cases {
             let mut c = checkpoint();

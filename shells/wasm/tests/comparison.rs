@@ -71,6 +71,9 @@ fn an_archive_from_before_evolving_bodies_reads_as_the_run_it_recorded() {
     for field in ["body_trait_rate", "body_trait_sigma"] {
         older["mutation"].as_object_mut().unwrap().remove(field);
     }
+    for section in ["combat", "founder"] {
+        older.as_object_mut().unwrap().remove(section);
+    }
     let older = older.to_string();
     let same: Value =
         serde_json::from_str(&compare_representatives(&genes, &genes, &older).unwrap()).unwrap();

@@ -76,6 +76,15 @@ test('numeric parameter budgets outside JavaScript precision are rejected, never
   }, /params\.storage\.max_memory_bytes/);
 });
 
+test('a founder bite is true or false, and an archive from before it may omit it', async () => {
+  await rejects((archive) => {
+    archive.header.data.params.founder = { bite: 1 };
+  }, /params\.founder\.bite must be true or false/);
+  const biting = fixtureArchive();
+  biting.header.data.params.founder = { bite: true };
+  await validateArchive(biting);
+});
+
 test('every required parameter field, including explicit nullable fields, must be present', async () => {
   const visit = async (value, path = []) => {
     for (const [key, child] of Object.entries(value)) {

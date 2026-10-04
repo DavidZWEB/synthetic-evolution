@@ -252,8 +252,9 @@ impl AllocationRequests {
         self.buffers::<f32>(agents, 6)?;
         self.buffers::<u32>(agents, 6)?;
         self.buffers::<Block>(agents, 6)?;
-        // Intents: thrust, turn, ingest, reproduce.
-        self.buffers::<f32>(agents, 4)?;
+        // Intents: thrust, turn, ingest, reproduce, and the bite's drive, azimuth, and
+        // reach.
+        self.buffers::<f32>(agents, 7)?;
         // Fixed-stride parts: one f32 and one free-list index per slot (spec §9.1).
         self.buffer::<f32>(agents)?;
         self.buffer::<u32>(agents)?;

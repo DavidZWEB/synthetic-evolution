@@ -315,6 +315,17 @@ fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>
                 .or_insert_with(|| serde_json::json!([1.0, 1.0]));
         }
     }
+    // Nor could their founders bite, whatever a later default says. Without a bite no
+    // agent swings, so an absent `combat` is inert and keeps today's values.
+    if let Some(founder) = params
+        .entry("founder")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        founder
+            .entry("bite")
+            .or_insert_with(|| serde_json::json!(false));
+    }
 }
 
 /// A recorded retune must be one the run could have applied: within the run, and a
@@ -996,6 +1007,18 @@ mod tests {
     }
 
     #[test]
+    fn founders_written_before_the_bite_read_as_biteless() {
+        // Explicitly, so a later default cannot give an older run a bite it never had,
+        // while a value the file wrote stays its own.
+        let mut params = serde_json::Map::new();
+        backfill_later_params(&mut params);
+        assert_eq!(params["founder"]["bite"], false);
+        let mut written = serde_json::json!({"founder": {"bite": true}});
+        backfill_later_params(written.as_object_mut().unwrap());
+        assert_eq!(written["founder"]["bite"], true);
+    }
+
+    #[test]
     fn rates_and_counts_older_schema_eight_files_omit_are_zero_and_unknown() {
         let mut records = final_records();
         records[0]["data"]["params"]["mutation"]["structural"]
@@ -1006,10 +1029,12 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("add_sensor_rate");
-        records[0]["data"]["params"]
-            .as_object_mut()
-            .unwrap()
-            .remove("corpses");
+        for section in ["corpses", "combat", "founder"] {
+            records[0]["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+        }
         records[0]["data"]["params"]["plants"]
             .as_object_mut()
             .unwrap()
@@ -1072,6 +1097,7 @@ mod tests {
         assert_eq!(data.header.params.body.size_range, [size, size]);
         assert_eq!(data.header.params.body.muscle_range, [1.0, 1.0]);
         assert_eq!(data.header.params.body.mouth_range, [1.0, 1.0]);
+        assert!(!data.header.params.founder.bite);
         assert_eq!(
             data.samples[0]
                 .evolving

@@ -25,6 +25,8 @@ pub const LATER_PARAMS: &[&str] = &[
     "size_range",
     "muscle_range",
     "mouth_range",
+    "combat",
+    "founder",
 ];
 
 /// Serde fills an omitted later field from today's default; this resets it to what the
@@ -87,5 +89,10 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) {
     }
     if absent("/body/mouth_range") {
         params.body.mouth_range = [1.0; 2];
+    }
+    // Founders could not bite before Phase 3, whatever a later default says. Without a
+    // bite no agent swings, so an absent `combat` is inert and keeps today's values.
+    if absent("/founder") {
+        params.founder.bite = false;
     }
 }
