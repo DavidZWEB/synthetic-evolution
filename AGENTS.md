@@ -178,17 +178,6 @@ A phase is complete when **both** hold:
 
 The second cannot be self-certified. Phase success criteria are about whether something *interesting* evolved, which no test asserts. Report what you observe and let the human make the call. Never mark a phase done on mechanical tests alone.
 
-**One recorded exception.** The project owner may hand one named phase's watching and
-decision to an agent. That happened once: Phase 2's M10, delegated by David Webster on
-2026-10-04. The rule stands for every other phase. A delegation is not standing
-permission, and it does not carry over to a later phase. A delegated decision must:
-
-- say so in its record,
-- state that no human watched,
-- and set out the case against it, so a human can overturn it.
-
-[`docs/phase-2-acceptance.md`](docs/phase-2-acceptance.md) is that record.
-
 ## Tuning vs. code change
 
 These are separate loops and must stay separate.

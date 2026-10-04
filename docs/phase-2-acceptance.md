@@ -15,9 +15,6 @@ itself. So the decision below is the agent's, not a human's. The agent watched a
 evolved world in the browser and read the multi-seed metrics. No human watched these
 runs for this decision.
 
-`AGENTS.md` requires a human to watch and judge a phase's success. It records this
-delegation as its single exception, so the rule stands for every later phase.
-
 The record is written so that a human reviewer can check the reasoning against the
 evidence and overturn the call. What would change it is listed under
 [Decision](#decision).
