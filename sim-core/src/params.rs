@@ -811,7 +811,7 @@ pub struct CombatParams {
     /// **0.25 (spec §5.5)**: several bites to kill, so prey can escape.
     pub attack_damage: f32,
     /// Seconds after a swing before the same agent can swing again, counted in whole
-    /// ticks.
+    /// ticks. A retune of `world.dt` keeps each running cooldown's remaining time.
     ///
     /// **0.5 (spec §5.5)**: a held drive costs `attack_cost` per swing rather than per
     /// tick, so a biter cannot drain its own tank in a burst.

@@ -1145,4 +1145,41 @@ mod tests {
         world.step();
         assert!(world.agents().cooldown.iter().any(|&ticks| ticks > 0));
     }
+
+    #[test]
+    fn a_retuned_timestep_keeps_a_running_cooldown_s_time() {
+        // A swing at 60 ticks a second leaves half a second of cooldown; halving the
+        // timestep mid-cooldown must leave the same time, not the same tick count.
+        let mut world = duel(
+            duel_params(1),
+            &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.resolve_bites();
+        world.recover_from_bites();
+        assert_eq!(world.agents().cooldown[0], 29);
+        let mut finer = world.params().clone();
+        finer.world.dt = 1.0 / 120.0;
+        world.set_params(finer).unwrap();
+        assert_eq!(
+            world.agents().cooldown[0],
+            58,
+            "29 sixtieths are 58 hundred-twentieths"
+        );
+        let mut ticks = 0;
+        loop {
+            ask_to_bite(&mut world, 4.0);
+            let before = world.ledger().dissipated();
+            world.resolve_bites();
+            if world.ledger().dissipated() > before {
+                break;
+            }
+            world.recover_from_bites();
+            ticks += 1;
+        }
+        assert_eq!(
+            ticks, 58,
+            "the next swing came after the time that was left"
+        );
+    }
 }

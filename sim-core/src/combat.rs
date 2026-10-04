@@ -40,6 +40,13 @@ pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
     libm::ceilf(combat.cooldown_seconds / dt) as u32
 }
 
+/// A cooldown's remaining ticks after the timestep changes from `from_dt` to `to_dt`:
+/// the same remaining time, rounded up so a retune never shortens it (spec §4.2).
+pub(crate) fn rescale_cooldown(ticks: u32, from_dt: f32, to_dt: f32) -> u32 {
+    // `as` saturates, and validation keeps both timesteps positive and finite.
+    libm::ceil(f64::from(ticks) * f64::from(from_dt) / f64::from(to_dt)) as u32
+}
+
 /// Where a swing comes from and points.
 pub(crate) struct Aim {
     pub position: Vec3,
@@ -154,6 +161,19 @@ mod tests {
         assert!(!swings(0.9, 1, 100.0, 0.0, &c), "still cooling down");
         assert!(!swings(0.9, 0, 7.5, 0.25, &c), "short of the cost");
         assert!(swings(0.9, 0, 7.5, 0.5, &c), "the reserve counts");
+    }
+
+    #[test]
+    fn a_new_timestep_keeps_each_cooldown_s_remaining_time() {
+        let sixtieth = 1.0 / 60.0;
+        assert_eq!(rescale_cooldown(29, sixtieth, 1.0 / 120.0), 58);
+        assert_eq!(
+            rescale_cooldown(29, sixtieth, 1.0 / 30.0),
+            15,
+            "14.5 rounds up"
+        );
+        assert_eq!(rescale_cooldown(0, sixtieth, 1.0 / 120.0), 0);
+        assert_eq!(rescale_cooldown(u32::MAX, 1.0, 0.5), u32::MAX, "saturates");
     }
 
     #[test]

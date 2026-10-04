@@ -352,6 +352,15 @@ impl World {
     /// without a world to hand.
     pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
         self.check_retune(&params)?;
+        // Cooldowns count ticks, so a new timestep would change the time left on each
+        // running one; keep that time instead (spec §4.2).
+        let (from, to) = (self.params.world.dt, params.world.dt);
+        if from != to {
+            for id in self.pool.iter_live() {
+                let cooldown = &mut self.agents.cooldown[id.index()];
+                *cooldown = crate::combat::rescale_cooldown(*cooldown, from, to);
+            }
+        }
         self.params = params;
         Ok(())
     }
