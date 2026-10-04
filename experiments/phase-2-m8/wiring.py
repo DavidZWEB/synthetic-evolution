@@ -70,11 +70,15 @@ def analyse(genes):
     }
 
 
-def main(path, bins):
+def main(path, bins=None):
     rows = defaultdict(list)
     for line in open(path):
         r = json.loads(line)
         d = r.get("data", {})
+        if bins is None and r.get("kind") == "header":
+            # Founders, then the run in quarters.
+            ticks = int(d["ticks"])
+            bins = [1] + [ticks * q // 4 for q in (1, 2, 3)] + [ticks + 1]
         rep = d.get("representative")
         if r.get("kind") != "event" or not rep or rep.get("status") != "recorded":
             continue
@@ -92,5 +96,4 @@ def main(path, bins):
 
 
 if __name__ == "__main__":
-    edges = [1, 50_000, 100_000, 200_000, 300_000, 400_001]
-    main(sys.argv[1], edges)
+    main(sys.argv[1])
