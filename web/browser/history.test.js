@@ -426,6 +426,26 @@ test('quota errors keep the incomplete prefix in a saved run while the World kee
   { timeout: 60_000 }, async () => {
     await withPage('development', async (page) => {
       const panel = await openCapture(page);
+      // Exhaust the quota only once a drain has committed the founder origins, or there
+      // is no prefix for the test to keep.
+      await page.waitForFunction(() => new Promise((resolve) => {
+        const opening = indexedDB.open('synthetic-evolution-history');
+        opening.onerror = () => resolve(false);
+        opening.onsuccess = () => {
+          const db = opening.result;
+          try {
+            const reading = db.transaction('archives').objectStore('archives').getAll();
+            reading.onerror = () => { db.close(); resolve(false); };
+            reading.onsuccess = () => {
+              db.close();
+              resolve(reading.result.some((archive) => archive.rows.length > 0));
+            };
+          } catch {
+            db.close();
+            resolve(false);
+          }
+        };
+      }), null, { polling: 100 });
       await page.evaluate(() => {
         const put = IDBObjectStore.prototype.put;
         globalThis.restoreHistoryWrites = () => { IDBObjectStore.prototype.put = put; };
