@@ -4,9 +4,7 @@ use std::fs;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sim_core::control::{
-    RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL,
-};
+use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -617,19 +615,13 @@ fn unsafe_params_are_reported_before_a_run_starts() {
 }
 
 #[test]
-fn structural_null_controls_write_metrics_that_diagnose_names() {
-    for (control, protocol, label) in [
-        (
+fn the_structural_null_control_writes_metrics_that_diagnose_names() {
+    {
+        let (control, protocol, label) = (
             "structural-null",
-            STRUCTURAL_NULL_V2_PROTOCOL,
-            "structural null v2",
-        ),
-        (
-            "structural-null-v1",
             STRUCTURAL_NULL_PROTOCOL,
-            "structural null v1",
-        ),
-    ] {
+            "structural null",
+        );
         let metrics = temporary("null.jsonl");
         let run = Command::new(env!("CARGO_BIN_EXE_native"))
             .args(["--seed", "7", "--ticks", "10", "--sample-every", "5"])
@@ -731,7 +723,7 @@ fn summarize_pairs_seeds_and_reports_every_cohort_unranked() {
         [
             ("evolving".into(), serde_json::json!(["1", "2"])),
             ("scalar control".into(), serde_json::json!(["1", "2"])),
-            ("structural null v2".into(), serde_json::json!(["1"])),
+            ("structural null".into(), serde_json::json!(["1"])),
         ]
     );
 

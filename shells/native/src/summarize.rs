@@ -10,9 +10,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use serde::Serialize;
-use sim_core::control::{
-    RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL,
-};
+use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 use crate::Result;
 use crate::cli::SummarizeArgs;
@@ -115,11 +113,7 @@ struct Group {
 }
 
 /// Phase 2 control protocols a summary can pair, in output order.
-const CONTROLS: [&str; 3] = [
-    RANDOMIZED_AT_BIRTH_PROTOCOL,
-    STRUCTURAL_NULL_PROTOCOL,
-    STRUCTURAL_NULL_V2_PROTOCOL,
-];
+const CONTROLS: [&str; 2] = [RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL];
 
 #[derive(Default)]
 struct SeedRuns {

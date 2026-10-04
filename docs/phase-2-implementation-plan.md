@@ -11,8 +11,8 @@ coloring, schema 8 complexity/history telemetry, representative-genome archives
 delivered exact save/resume as saved-run bundles in both shells. M8's multi-seed
 evidence is reported in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md): founder
 viability (the minimal chemo-led founder now ships), the scalar control, and the
-human-approved structural null v2 (v1 proved uninformative). v2 grew genomes as much
-as the evolving world, so growth is not yet evidence of useful inherited structure;
+human-approved structural null. The null grew genomes as much as the evolving world,
+so growth is not yet evidence of useful inherited structure;
 the evidence awaits human review, and M9 acceptance needs human judgment.
 Distance/deletion-default calibration remains pending. The agreed scope
 includes add/remove sensors, basic manual checkpoints,
@@ -94,8 +94,8 @@ reason to promise Phase 7 scale here.
 **Including sensor addition/removal, basic manual checkpoints, and a structural-null
 comparison before acceptance in Phase 2** is settled by this planning discussion.
 The approved checkpoint and evidence requirements are in spec sections 7.10 and 7.8;
-the structural-null protocol was approved as donor topology (spec section 7.8,
-`structural_null_v1`). Recommendations in this
+the structural-null protocol is donor topology with parent scalars (spec section 7.8,
+`structural_null_v2`). Recommendations in this
 section deliberately expose the choices that
 would otherwise become accidental selection pressures or misleading measurements.
 Approve them before the dependent milestone, and record the resulting contracts in
@@ -227,9 +227,7 @@ An arbitrary rewiring or founder reset is not automatically a valid null.
 
 M8 implements and reports that experiment alongside the scalar-heredity comparison,
 with distinct protocol identities and results. **Approved protocol:** donor
-topology, `structural_null_v1`, recorded in spec section 7.8: each child takes a
-random living non-parent's neural and sensory structure with its parent's body, then
-the scalar control's redraw. Early founder-viability runs may proceed
+topology with parent scalars, `structural_null_v2`, recorded in spec section 7.8. Early founder-viability runs may proceed
 without it, but they cannot establish useful structural adaptation or complete M8's
 evidence. A missing or inconclusive comparison is not a pass based on human
 impressions alone; human judgment remains necessary once the evidence is available.

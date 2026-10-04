@@ -2,10 +2,9 @@
 //!
 //! Each control is a separate world with the same seed and [`SimParams`]. The scalar
 //! control redraws neural scalars instead of inheriting a mutated parent brain; the
-//! structural nulls replace the inherited topology with a living donor's, v1 redrawing
-//! scalars and v2 keeping the parent's on shared genes. All modes use the same mutation
-//! rules (spec §7.8, §10). Choosing which world runs which
-//! mode is the shells' concern.
+//! structural null replaces the inherited topology with a living donor's while keeping
+//! the parent's scalars on shared genes. All modes use the same mutation rules (spec
+//! §7.8, §10). Choosing which world runs which mode is the shells' concern.
 
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
@@ -18,11 +17,9 @@ use structural::StructuralMutationEvent;
 /// Telemetry distinguishes topology-aware controls from Phase 1's fixed-topology run.
 pub const RANDOMIZED_AT_BIRTH_PROTOCOL: &str = "randomized_at_birth_v3";
 
-/// Telemetry identity of the donor-topology, redrawn-scalar structural null (spec §7.8).
-pub const STRUCTURAL_NULL_PROTOCOL: &str = "structural_null_v1";
-
 /// Telemetry identity of the donor-topology, parent-scalar structural null (spec §7.8).
-pub const STRUCTURAL_NULL_V2_PROTOCOL: &str = "structural_null_v2";
+/// Versioned because an earlier, retired null redrew scalars instead.
+pub const STRUCTURAL_NULL_PROTOCOL: &str = "structural_null_v2";
 
 /// What offspring inherit from the parent's brain: scalars and topology, topology only, or
 /// neither.
@@ -34,20 +31,11 @@ pub enum BrainInheritance {
     Evolving = 0,
     /// Apply structural edits, then redraw weights, biases, taus, and oscillator periods.
     RandomizedAtBirth = 1,
-    /// Start from a living donor's topology with the parent's body, then proceed as
-    /// [`Self::RandomizedAtBirth`]. Breaks parent-to-child structural inheritance.
-    StructuralNull = 2,
     /// Start from a living donor's topology with the parent's body and the parent's
     /// neural scalars on every gene the two share, then mutate as [`Self::Evolving`].
     /// Decouples a lineage's structure from its weights while keeping brains working.
-    StructuralNullV2 = 3,
-}
-
-impl BrainInheritance {
-    /// Whether children start from a donor's topology rather than the parent's.
-    pub fn takes_donor_topology(self) -> bool {
-        matches!(self, Self::StructuralNull | Self::StructuralNullV2)
-    }
+    /// Discriminant 3 because checkpoints encode it; 2 was the retired scalar-redraw null.
+    StructuralNull = 3,
 }
 
 impl BrainInheritance {
@@ -59,7 +47,7 @@ impl BrainInheritance {
         state: &mut MutationState<'_>,
         mut on_event: impl FnMut(StructuralMutationEvent),
     ) {
-        let redraws = matches!(self, Self::RandomizedAtBirth | Self::StructuralNull);
+        let redraws = self == Self::RandomizedAtBirth;
         if !redraws {
             mutate::mutate(genes, state.rng, &params.mutation);
         }
@@ -209,10 +197,10 @@ mod tests {
             let mut b = Rng::from_seed(17);
             let mut expected_scratch = vec![0; params.storage.max_neurons as usize];
             match mode {
-                BrainInheritance::Evolving | BrainInheritance::StructuralNullV2 => {
+                BrainInheritance::Evolving | BrainInheritance::StructuralNull => {
                     mutate::mutate(&mut expected, &mut a, &params.mutation)
                 }
-                BrainInheritance::RandomizedAtBirth | BrainInheritance::StructuralNull => {
+                BrainInheritance::RandomizedAtBirth => {
                     plan.randomize_brain(&mut a, &params, &mut expected, &mut expected_scratch)
                 }
             }

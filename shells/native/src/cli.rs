@@ -3,10 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sim_core::control::{
-    BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL,
-    STRUCTURAL_NULL_V2_PROTOCOL,
-};
+use sim_core::control::{BrainInheritance, RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 #[derive(Debug, Parser)]
 #[command(version, about = "Headless Synthetic Evolution experiments")]
@@ -84,25 +81,20 @@ pub enum Control {
     /// Take a living donor's topology, keep the parent's neural scalars on shared genes
     /// (`structural_null_v2`).
     StructuralNull,
-    /// The superseded v1 null: donor topology, neural scalars redrawn
-    /// (`structural_null_v1`). Kept to reproduce published results.
-    StructuralNullV1,
 }
 
 impl Control {
     pub fn heredity(self) -> BrainInheritance {
         match self {
             Self::Scalar => BrainInheritance::RandomizedAtBirth,
-            Self::StructuralNull => BrainInheritance::StructuralNullV2,
-            Self::StructuralNullV1 => BrainInheritance::StructuralNull,
+            Self::StructuralNull => BrainInheritance::StructuralNull,
         }
     }
 
     pub fn protocol(self) -> &'static str {
         match self {
             Self::Scalar => RANDOMIZED_AT_BIRTH_PROTOCOL,
-            Self::StructuralNull => STRUCTURAL_NULL_V2_PROTOCOL,
-            Self::StructuralNullV1 => STRUCTURAL_NULL_PROTOCOL,
+            Self::StructuralNull => STRUCTURAL_NULL_PROTOCOL,
         }
     }
 }

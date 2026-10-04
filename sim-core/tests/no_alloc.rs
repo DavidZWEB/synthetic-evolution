@@ -298,7 +298,6 @@ fn variable_world_births_refusals_and_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
-        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(7, params.clone(), mode).unwrap();
         let parent = world
@@ -359,7 +358,6 @@ fn neural_structural_births_and_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
-        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
@@ -395,12 +393,7 @@ fn neural_structural_births_and_observers_never_allocate() {
 
 #[test]
 fn structural_null_donor_births_never_allocate() {
-    for mode in [
-        BrainInheritance::StructuralNull,
-        BrainInheritance::StructuralNullV2,
-    ] {
-        donor_births_never_allocate(mode);
-    }
+    donor_births_never_allocate(BrainInheritance::StructuralNull);
 }
 
 fn donor_births_never_allocate(mode: BrainInheritance) {
@@ -454,7 +447,6 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
         BrainInheritance::Evolving,
         BrainInheritance::RandomizedAtBirth,
         BrainInheritance::StructuralNull,
-        BrainInheritance::StructuralNullV2,
     ] {
         let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
