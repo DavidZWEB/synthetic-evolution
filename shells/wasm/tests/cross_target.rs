@@ -53,6 +53,14 @@ mod structural_null_case;
 #[path = "../../../sim-core/tests/common/bodies_case.rs"]
 mod bodies_case;
 
+#[path = "../../../sim-core/tests/common/combat_case.rs"]
+mod combat_case;
+
+#[wasm_bindgen_test]
+fn bites_agree_with_native_in_every_mode() {
+    combat_case::check_combat_runs();
+}
+
 #[wasm_bindgen_test]
 fn body_trait_mutation_agrees_with_native_in_every_mode() {
     bodies_case::check_body_runs();
