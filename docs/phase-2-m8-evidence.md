@@ -246,9 +246,18 @@ nutrient heterogeneity, is a design change for discussion, not tuning.
 
 Spec §5.1 and §5.3's plant ecology, calibrated before shipping. Seeds 42/117/314,
 2,000 founders, 300,000 ticks, both controls, revision `257114b` (the mechanisms in
-place, defaults still off). Every configuration file states all eight plant-ecology
-fields explicitly, so it reproduces on later revisions whatever the defaults are.
-Configs, summaries, and wall-clock times:
+place, defaults still off), run as
+
+```bash
+JOBS=9 scripts/experiment.sh OUT 300000 2000 5000 "42 117 314" \
+  experiments/plant-ecology/<config>.json ...
+```
+
+Each configuration file states the input rate and all seven M9 plant fields, so its
+plant settings stay fixed when plant defaults change. Every other param comes from
+the running revision's defaults, so exact reproduction needs revision `257114b`; at
+that revision each file resolves to exactly the params its runs used (checked
+against the run headers). Configs, summaries, and wall-clock times:
 [`experiments/plant-ecology/`](../experiments/plant-ecology/).
 
 | Config | Plants |
@@ -269,6 +278,12 @@ sustained reseeding, unsaturated stock); ecology values from spec §5.5's
 relationships; and the lowest tested input that keeps the evolving population near
 half the baseline. Wired sensors and the evolving-versus-null gaps were not criteria:
 they are what this section reports.
+
+Reseeding in the shipped configuration is sustained rather than an early burst. Per
+quarter of the run, from the evolving worlds' per-sample metrics: seed 42 reseeded
+914, 1,400, 1,675, 1,688; seed 117 436, 792, 888, 833; seed 314 2,189, 1,902, 1,765,
+1,719. Most land far from where the plant died, near a randomly chosen plant on
+fertile ground, so the patch map itself shifts slowly.
 
 | Per seed (42, 117, 314) | evolving population | null population | scalar control | evolving supply captured | null supply captured | plant clustering | plants reseeded (evolving) |
 |---|---|---|---|---|---|---|---|
@@ -350,7 +365,8 @@ need the baseline config (`experiments/plant-ecology/baseline.json`) to reproduc
 ## Limitations
 
 - Three seeds per configuration; final samples only. Trajectories are reproducible
-  from the command above but are not committed (`*.jsonl` is ignored).
+  from the M8 and M9 commands above, at their stated revisions, but are not committed
+  (`*.jsonl` is ignored).
 - The M8 functional-wiring table covers one seed and species-founding genomes; the
   perception sweep's population-wide `wired_*` metrics cover three seeds, at the final
   sample only.
