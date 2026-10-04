@@ -472,11 +472,17 @@ impl World {
                 // shared genes' scalars stay the parent's (spec §7.8).
                 let donor = control::pick_donor(&self.pool, parent, &mut self.rng);
                 let parent_genes = self.genes.get(genome);
-                control::donor_topology(
+                if let Err(error) = control::donor_topology(
                     parent_genes,
                     self.genes.get(self.agents.genome[donor.index()]),
+                    self.params.storage.max_genes,
                     &mut scratch,
-                );
+                ) {
+                    // Refused like any birth: the parent stays whole.
+                    self.genome_scratch = scratch;
+                    on_refusal(error);
+                    continue;
+                }
                 control::parent_scalars(parent_genes, &mut scratch);
             } else {
                 scratch.extend_from_slice(self.genes.get(genome));

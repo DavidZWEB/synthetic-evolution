@@ -396,6 +396,76 @@ fn structural_null_donor_births_never_allocate() {
     donor_births_never_allocate(BrainInheritance::StructuralNull);
 }
 
+#[test]
+fn a_structural_null_birth_too_long_to_build_is_refused_without_allocating() {
+    // A bodiless donor whose structure fills the genome limit: the founder's child would
+    // not fit and is refused, and each birth the other way round still copies into the
+    // scratch genome the refusal handed back.
+    use sim_core::SpawnSpec;
+    use sim_core::genome::{Activation, Gene, NeuronGene};
+    use sim_core::ids::InnovationId;
+    let mut params = SimParams::default();
+    params.world.max_agents = 8;
+    params.plants.max_plants = 8;
+    params.reproduction.maturity_ticks = 0;
+    let founder_length = {
+        let mut world =
+            World::new_with_brain_inheritance(42, params.clone(), BrainInheritance::StructuralNull)
+                .unwrap();
+        let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+        world.genome(founder).len()
+    };
+    params.storage.max_genes = founder_length as u32;
+    let mut world =
+        World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNull).unwrap();
+    let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+    let mut filled: Vec<Gene> = world
+        .genome(founder)
+        .iter()
+        .copied()
+        .filter(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+        .collect();
+    let spare = founder_length - filled.len();
+    filled.extend((0..spare as u32).map(|offset| {
+        Gene::Neuron(NeuronGene {
+            id: InnovationId::new(1_000_000 + offset),
+            bias: 0.0,
+            tau: 1.0,
+            activation: Activation::Tanh,
+            period: 0.0,
+        })
+    }));
+    filled.sort_by_key(Gene::sort_key);
+    let spec = SpawnSpec {
+        position: Vec3::ONE,
+        yaw: 0.0,
+        energy: 0.0,
+        size: 3.0,
+        signature: Vec3::ONE,
+        parent_a: AgentId::NULL,
+    };
+    let bodiless = world.spawn(&spec, &filled).unwrap();
+    let mut refused = 0;
+    let observed = count_allocations(|| {
+        for _ in 0..20 {
+            for (parent, born) in [(founder, 0), (bodiless, 1)] {
+                world.agents_mut().energy[parent.index()] = 300.0;
+                world.intents_mut().reproduce[parent.index()] = 1.0;
+                assert_eq!(world.resolve_births_with_observer(|_| refused += 1), born);
+                world.intents_mut().reproduce[parent.index()] = 0.0;
+            }
+            let child = world
+                .pool()
+                .iter_live()
+                .find(|&id| id != founder && id != bodiless)
+                .unwrap();
+            world.despawn(child);
+        }
+    });
+    assert_eq!(observed, 0, "a refused donor birth allocated");
+    assert_eq!(refused, 20);
+}
+
 fn donor_births_never_allocate(mode: BrainInheritance) {
     let mut params = SimParams::default();
     params.world.max_agents = 8;

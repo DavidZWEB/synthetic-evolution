@@ -5,8 +5,9 @@
 
 use glam::Vec3;
 use sim_core::control::BrainInheritance;
-use sim_core::genome::{BodyTrait, Gene};
+use sim_core::genome::{Activation, BodyTrait, Gene, NeuronGene};
 use sim_core::ids::{AgentId, InnovationId};
+use sim_core::spawn::SpawnError;
 use sim_core::{SimParams, SpawnSpec, World};
 
 fn breeder_params() -> SimParams {
@@ -222,4 +223,92 @@ fn a_lone_parent_is_its_own_donor_and_reduces_to_the_evolving_child() {
         null.rng_mut().state_fingerprint(),
         evolving.rng_mut().state_fingerprint()
     );
+}
+
+#[test]
+fn parents_and_donors_carrying_different_body_traits_breed_both_ways() {
+    // Founders carry every body and meta trait, but a spawned genome need not: one
+    // written before muscle and mouth existed carries neither. Each child takes its
+    // donor's structure and whichever traits its own parent carries (spec §7.8).
+    let mut world =
+        World::new_with_brain_inheritance(42, breeder_params(), BrainInheritance::StructuralNull)
+            .unwrap();
+    let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+    let older: Vec<Gene> = world
+        .genome(founder)
+        .iter()
+        .copied()
+        .filter(|gene| {
+            !matches!(gene, Gene::Body(body)
+                if matches!(body.trait_, BodyTrait::Muscle | BodyTrait::Mouth))
+        })
+        .collect();
+    let other = spawn_with(&mut world, &older, 1.0);
+    let traits = |genes: &[Gene]| body(genes).iter().map(Gene::sort_key).collect::<Vec<_>>();
+    // With two agents alive, each is the other's only donor.
+    for (parent, donor) in [(founder, other), (other, founder)] {
+        let child = breed(&mut world, parent);
+        assert_eq!(topology(world.genome(child)), topology(world.genome(donor)));
+        assert_eq!(traits(world.genome(child)), traits(world.genome(parent)));
+        assert!(world.despawn(child));
+    }
+}
+
+#[test]
+fn a_child_too_long_for_the_genome_limit_is_refused_and_its_parent_kept_whole() {
+    // A bodiless donor whose structure fills the limit lends a topology that the
+    // founder's body would push past it, so that birth is refused rather than built.
+    let founder_genes = |params: SimParams| {
+        let mut world =
+            World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNull)
+                .unwrap();
+        let founder = world.spawn_founder(Vec3::ZERO).unwrap();
+        (world.genome(founder).to_vec(), world, founder)
+    };
+    let length = founder_genes(breeder_params()).0.len();
+    let mut params = breeder_params();
+    params.storage.max_genes = length as u32;
+    let (full, mut world, founder) = founder_genes(params);
+    assert_eq!(full.len(), length);
+    let mut filled: Vec<Gene> = full
+        .iter()
+        .copied()
+        .filter(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+        .collect();
+    let body_genes = length - filled.len();
+    filled.extend((0..body_genes as u32).map(|offset| {
+        Gene::Neuron(NeuronGene {
+            id: InnovationId::new(1_000_000 + offset),
+            bias: 0.0,
+            tau: 1.0,
+            activation: Activation::Tanh,
+            period: 0.0,
+        })
+    }));
+    filled.sort_by_key(Gene::sort_key);
+    let donor = spawn_with(&mut world, &filled, 1.0);
+
+    world.agents_mut().energy[founder.index()] = 300.0;
+    world.intents_mut().reproduce[founder.index()] = 1.0;
+    let mut refusals = Vec::new();
+    assert_eq!(
+        world.resolve_births_with_observer(|error| refusals.push(error)),
+        0
+    );
+    assert_eq!(
+        refusals,
+        [SpawnError::GenomeLimit {
+            kind: "genes",
+            count: length + body_genes,
+            limit: length as u32,
+        }]
+    );
+    assert_eq!(world.agents().energy[founder.index()], 300.0);
+    assert_eq!(world.population(), 2);
+    // The other way round fits: the bodiless parent's child is the founder's structure
+    // with no body genes at all.
+    world.intents_mut().reproduce[founder.index()] = 0.0;
+    let child = breed(&mut world, donor);
+    assert_eq!(topology(world.genome(child)), topology(&full));
+    assert!(body(world.genome(child)).is_empty());
 }

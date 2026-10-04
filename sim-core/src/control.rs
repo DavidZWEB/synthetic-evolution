@@ -12,6 +12,7 @@ use crate::genome::Gene;
 use crate::mutate::{self, MutationState, body, organs, structural};
 use crate::params::SimParams;
 use crate::pool::SlotPool;
+use crate::spawn::SpawnError;
 use crate::{AgentId, Rng};
 use structural::StructuralMutationEvent;
 
@@ -81,14 +82,36 @@ pub(crate) fn pick_donor(pool: &SlotPool, parent: AgentId, rng: &mut Rng) -> Age
 }
 
 /// A structural-null child's starting genome: the donor's neurons, sensors, effectors,
-/// and connections with the parent's body and meta genes. Every genome carries one gene
-/// per body and meta trait, so the result has the donor's length and stays sorted.
-pub(crate) fn donor_topology(parent: &[Gene], donor: &[Gene], out: &mut Vec<Gene>) {
-    let is_body = |gene: &&Gene| matches!(gene, Gene::Body(_) | Gene::Meta(_));
+/// and connections with the parent's body and meta genes, whichever traits the parent
+/// carries (spec §7.8). Body and meta genes sort after every other class, so the result
+/// stays sorted.
+///
+/// Founders and their descendants carry one gene per trait, so the child has the
+/// donor's length; but a spawned genome may omit traits, and a child that would then
+/// outgrow `max_genes` is refused before anything is copied, as any over-long genome is.
+pub(crate) fn donor_topology(
+    parent: &[Gene],
+    donor: &[Gene],
+    max_genes: u32,
+    out: &mut Vec<Gene>,
+) -> Result<(), SpawnError> {
+    let split = |genes: &[Gene]| {
+        genes.partition_point(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+    };
+    let topology = &donor[..split(donor)];
+    let body = &parent[split(parent)..];
+    let count = topology.len() + body.len();
+    if count > max_genes as usize {
+        return Err(SpawnError::GenomeLimit {
+            kind: "genes",
+            count,
+            limit: max_genes,
+        });
+    }
     out.clear();
-    out.extend(donor.iter().filter(|gene| !is_body(gene)));
-    out.extend(parent.iter().filter(is_body));
-    debug_assert_eq!(out.len(), donor.len());
+    out.extend_from_slice(topology);
+    out.extend_from_slice(body);
+    Ok(())
 }
 
 /// Gives a donor-topology genome the parent's neural scalars (weights, biases, taus,
@@ -291,5 +314,36 @@ mod tests {
             assert_eq!(counter, next);
             assert_eq!(events, 0);
         }
+    }
+
+    #[test]
+    fn a_donor_topology_takes_whatever_body_the_parent_carries() {
+        // A spawned genome may omit body and meta traits, so parent and donor need not
+        // carry the same ones; the child still takes the donor's structure and the
+        // parent's body (spec §7.8), and its length is the donor's no longer.
+        let full = crate::genome::fixtures::tiny();
+        let bare: Vec<Gene> = full
+            .iter()
+            .copied()
+            .filter(|gene| !matches!(gene, Gene::Body(_) | Gene::Meta(_)))
+            .collect();
+        assert!(bare.len() < full.len(), "the fixture carries a body");
+        let mut out = Vec::new();
+        donor_topology(&full, &bare, 64, &mut out).unwrap();
+        assert_eq!(out, full);
+        donor_topology(&bare, &full, 64, &mut out).unwrap();
+        assert_eq!(out, bare);
+        // A child that would outgrow the genome limit is refused before it is built.
+        let limit = bare.len() as u32;
+        out.clear();
+        assert_eq!(
+            donor_topology(&full, &bare, limit, &mut out),
+            Err(SpawnError::GenomeLimit {
+                kind: "genes",
+                count: full.len(),
+                limit,
+            })
+        );
+        assert!(out.is_empty());
     }
 }
