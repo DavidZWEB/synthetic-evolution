@@ -1361,19 +1361,28 @@ impl SimParams {
         // The strongest, lightest, and widest-mouthed bodies the ranges allow must keep
         // acceleration, upkeep, and intake finite, computed as the tick computes them: an
         // infinite acceleration becomes NaN velocity at the speed limit (spec §3.5).
-        // Neuron outputs lie in [-1, 1], and every thrust effector adds its drive.
+        // Neuron outputs lie in [-1, 1], and every thrust effector adds its drive. The
+        // bill is the tick's own sum at the largest of every term, the storage limits
+        // bounding brain and senses; each term only grows with its input, so no agent's
+        // bill can exceed it.
         let body = &self.body;
         let force =
             self.movement.max_thrust * self.storage.max_effectors as f32 * body.muscle_range[1];
         let lightest = body.size_range[0] / body.size;
         let gape = body.mouth_range[1] * (body.size_range[1] / body.size);
-        let square = |value: f32| value * value;
         let worst = [
             force / (lightest * lightest),
-            self.metabolism.k_size * square(body.size_range[1])
-                + self.metabolism.k_muscle * (square(body.muscle_range[1]) - 1.0)
-                + self.metabolism.k_mouth * (square(body.mouth_range[1]) - 1.0)
-                + self.metabolism.k_move * force * force,
+            crate::metabolism::cost_per_tick(
+                body.size_range[1],
+                body.muscle_range[1],
+                body.mouth_range[1],
+                self.storage
+                    .max_neurons
+                    .saturating_add(self.storage.max_connections),
+                self.storage.max_sensors as f32 * genome::SENSOR_CHANNELS as f32,
+                force,
+                &self.metabolism,
+            ),
             self.feeding.rate * gape * gape,
         ];
         if worst.iter().any(|value| !value.is_finite()) {
@@ -2139,6 +2148,16 @@ mod tests {
             (overflow, |p| p.body.muscle_range = [1.0, f32::MAX]),
             (overflow, |p| p.body.size_range = [1e-30, 6.0]),
             (overflow, |p| p.body.mouth_range = [1.0, 1e30]),
+            // The whole bill counts, not only its body terms: each of these terms is
+            // finite alone, and the tick's sum is not.
+            (overflow, |p| {
+                p.metabolism.base = 2e38;
+                p.metabolism.k_muscle = 1e37;
+            }),
+            (overflow, |p| {
+                p.metabolism.base = 2e38;
+                p.metabolism.k_brain = 2e35;
+            }),
         ];
         for (message, break_it) in cases {
             let mut params = SimParams::default();
