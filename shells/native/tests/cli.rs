@@ -776,14 +776,20 @@ fn retune_run(
         .arg("--params")
         .arg(&params)
         .arg("--metrics")
-        .arg(&metrics)
-        .args(extra);
+        .arg(&metrics);
     let file = retune.map(|(json, at)| {
         let file = temporary("retune.json");
         fs::write(&file, json).expect("write retune");
         command.arg("--retune").arg(&file).args(["--retune-at", at]);
         file
     });
+    // "RETUNE" in the extra arguments stands for the retune file's own path.
+    for arg in extra {
+        match (*arg, &file) {
+            ("RETUNE", Some(file)) => command.arg(file),
+            _ => command.arg(arg),
+        };
+    }
     let output = command.output().expect("run native shell");
     fs::remove_file(params).expect("remove params");
     if let Some(file) = file {
@@ -802,8 +808,8 @@ fn samples(metrics: &std::path::Path) -> Vec<serde_json::Value> {
 
 #[test]
 fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
-    // Silencing food scent and sight at tick 20: a sensory knockout.
-    let knockout = r#"{"plants":{"scent_rate":0.0},"sensing":{"vision_range":0.001}}"#;
+    // Silencing food scent at tick 20: the founders' only sense of food.
+    let knockout = r#"{"plants":{"scent_rate":0.0}}"#;
     let (plain, plain_metrics) = retune_run(None, &[]);
     let (retuned, retuned_metrics) = retune_run(Some((knockout, "20")), &[]);
     for output in [&plain, &retuned] {
@@ -817,7 +823,6 @@ fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
     let retune = &retuned[0]["data"]["retune"];
     assert_eq!(retune["at_tick"], 20);
     assert_eq!(retune["params"]["plants"]["scent_rate"], 0.0);
-    assert_eq!(retune["params"]["sensing"]["vision_range"], 0.001);
     assert_eq!(
         retune["params"]["plants"]["max_plants"],
         plain[0]["data"]["params"]["plants"]["max_plants"],
@@ -846,7 +851,7 @@ fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
 
 #[test]
 fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
-    let cases: [(&str, &str, &[&str], &str); 3] = [
+    let cases: [(&str, &str, &[&str], &str); 4] = [
         (
             r#"{"plants":{"max_plants":7}}"#,
             "10",
@@ -864,6 +869,12 @@ fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
             "10",
             &["--history", "-"],
             "cannot be combined with --history",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "10",
+            &["--save-run", "RETUNE"],
+            "must not overwrite --retune input",
         ),
     ];
     for (json, at, extra, message) in cases {

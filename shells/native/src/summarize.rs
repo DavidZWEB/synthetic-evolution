@@ -15,7 +15,7 @@ use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 use crate::Result;
 use crate::cli::SummarizeArgs;
 use crate::diagnose::control_label;
-use crate::metrics::{RunHeader, RunSample, WorldMetrics};
+use crate::metrics::{Retune, RunHeader, RunSample, WorldMetrics};
 use crate::metrics_reader::read_metrics;
 
 /// Final-sample metrics reported per cohort, in output order.
@@ -212,9 +212,14 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         .final_state_hashes
         .as_ref()
         .map(|hashes| hashes.evolving.clone());
-    let evolving = cohort_values(&run.samples, header.ticks, &header.params, |sample| {
-        &sample.evolving
-    });
+    let retune = header.retune.as_ref();
+    let evolving = cohort_values(
+        &run.samples,
+        header.ticks,
+        &header.params,
+        retune,
+        |sample| &sample.evolving,
+    );
     // Every control run repeats the same evolving world; disagreement means the runs
     // are not a matched comparison (different source or params).
     match &runs.evolving {
@@ -226,9 +231,13 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         Some(_) => {}
         None => runs.evolving = Some((evolving, hash)),
     }
-    let control = cohort_values(&run.samples, header.ticks, &header.params, |sample| {
-        &sample.random_control
-    });
+    let control = cohort_values(
+        &run.samples,
+        header.ticks,
+        &header.params,
+        retune,
+        |sample| &sample.random_control,
+    );
     let Some(index) = CONTROLS
         .iter()
         .position(|&protocol| protocol == header.control)
@@ -345,15 +354,46 @@ fn stats(name: &'static str, values: Vec<Option<f64>>) -> MetricStats {
     }
 }
 
-/// One cohort's metric vector in `METRICS` order.
+/// Nominal plant input per tick, which a retune can change partway through a run.
+struct Supply {
+    before: f64,
+    /// The tick after which the retuned rate applies, and that rate.
+    after: Option<(u64, f64)>,
+}
+
+impl Supply {
+    fn new(params: &sim_core::SimParams, retune: Option<&Retune>) -> Self {
+        let per_tick = |p: &sim_core::SimParams| f64::from(p.plants.energy_input_rate * p.world.dt);
+        Self {
+            before: per_tick(params),
+            after: retune.map(|retune| (retune.at_tick, per_tick(&retune.params))),
+        }
+    }
+
+    /// Nominal input offered by the steps after `from` up to and including `to`.
+    fn offered(&self, from: u64, to: u64) -> f64 {
+        match self.after {
+            None => self.before * (to - from) as f64,
+            Some((at, after)) => {
+                let split = at.clamp(from, to);
+                self.before * (split - from) as f64 + after * (to - split) as f64
+            }
+        }
+    }
+}
+
+/// One cohort's metric vector in `METRICS` order. A retune changes the nominal supply
+/// from its tick on and the plant capacity the final sample is measured against.
 fn cohort_values(
     samples: &[RunSample],
     ticks: u64,
     params: &sim_core::SimParams,
+    retune: Option<&Retune>,
     select: impl Fn(&RunSample) -> &WorldMetrics,
 ) -> Vec<Option<f64>> {
-    let plants = &params.plants;
-    let supply = f64::from(plants.energy_input_rate * params.world.dt);
+    let supply = Supply::new(params, retune);
+    // A retune is applied by the final tick, so the final sample saw its params.
+    let plants = &retune.map_or(params, |retune| &retune.params).plants;
     let capacity = f64::from(plants.max_energy) * f64::from(plants.max_plants);
     let last = select(samples.last().expect("checked non-empty"));
     let complexity = last.complexity.as_ref();
@@ -361,7 +401,7 @@ fn cohort_values(
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
-    let captured = supply_captured(samples, ticks, supply, &select);
+    let captured = supply_captured(samples, ticks, &supply, &select);
     let values: Vec<Option<f64>> = vec![
         Some(f64::from(u8::from(last.population == 0))),
         Some(f64::from(last.population)),
@@ -433,12 +473,12 @@ fn cohort_values(
 fn supply_captured(
     samples: &[RunSample],
     ticks: u64,
-    supply: f64,
+    supply: &Supply,
     select: &impl Fn(&RunSample) -> &WorldMetrics,
 ) -> Option<f64> {
     let first = samples.iter().find(|s| s.tick >= ticks / 2)?;
     let last = samples.last()?;
-    let offered = supply * (last.tick - first.tick) as f64;
+    let offered = supply.offered(first.tick, last.tick);
     if offered <= 0.0 {
         return None;
     }
@@ -705,12 +745,47 @@ mod tests {
         // The first half's feeding is excluded; the second half eats 300 (+100 held,
         // +200 dissipated) of the 5 x 100 offered.
         let samples = [at(0, 0.0, 0.0), at(100, 500.0, 0.0), at(200, 600.0, 200.0)];
-        let captured = supply_captured(&samples, 200, 5.0, &|s| &s.evolving);
+        let flat = Supply {
+            before: 5.0,
+            after: None,
+        };
+        let captured = supply_captured(&samples, 200, &flat, &|s| &s.evolving);
         assert_eq!(captured, Some(0.6));
         assert_eq!(
-            supply_captured(&samples[..1], 200, 5.0, &|s| &s.evolving),
+            supply_captured(&samples[..1], 200, &flat, &|s| &s.evolving),
             None
         );
+        // Retuned to 1 per tick after tick 150: 50 x 5 + 50 x 1 offered.
+        let retuned = Supply {
+            before: 5.0,
+            after: Some((150, 1.0)),
+        };
+        assert_eq!(retuned.offered(100, 200), 300.0);
+        assert_eq!(retuned.offered(0, 100), 500.0, "before the retune");
+        assert_eq!(retuned.offered(160, 200), 40.0, "after the retune");
+        assert_eq!(
+            supply_captured(&samples, 200, &retuned, &|s| &s.evolving),
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn plant_stock_is_measured_against_the_retuned_capacity() {
+        let mut last = sample(100, &[1]);
+        last.evolving.plant_energy = 1_000.0;
+        let params = sim_core::SimParams::default();
+        let mut halved = params.clone();
+        halved.plants.max_energy = params.plants.max_energy / 2.0;
+        let stock = |retune: Option<&Retune>| {
+            cohort_values(&[last.clone()], 100, &params, retune, |s| &s.evolving)
+                [METRICS.iter().position(|&m| m == "plant_stock").unwrap()]
+            .unwrap()
+        };
+        let retune = Retune {
+            at_tick: 50,
+            params: halved,
+        };
+        assert_eq!(stock(Some(&retune)), stock(None) * 2.0);
     }
 
     #[test]
@@ -719,6 +794,7 @@ mod tests {
             &[sample(0, &[1])],
             0,
             &sim_core::SimParams::default(),
+            None,
             |s| &s.evolving,
         );
         assert_eq!(values.len(), METRICS.len());

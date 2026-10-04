@@ -32,6 +32,7 @@ pub(crate) fn validate(args: &RunArgs) -> Result<()> {
     let metrics = args.metrics.as_deref().map(identity).transpose()?;
     let history = args.history.as_deref().map(identity).transpose()?;
     let params = args.params.as_deref().map(file_identity).transpose()?;
+    let retune = args.retune.as_deref().map(file_identity).transpose()?;
     if let (Some(a), Some(b)) = (&metrics, &history)
         && a.aliases(b)
     {
@@ -55,6 +56,9 @@ pub(crate) fn validate(args: &RunArgs) -> Result<()> {
     for output in [metrics, history, save_run].into_iter().flatten() {
         if params.as_ref().is_some_and(|params| output.aliases(params)) {
             return Err(conflict("output must not overwrite --params input").into());
+        }
+        if retune.as_ref().is_some_and(|retune| output.aliases(retune)) {
+            return Err(conflict("output must not overwrite --retune input").into());
         }
     }
     Ok(())
