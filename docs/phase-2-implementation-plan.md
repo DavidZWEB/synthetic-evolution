@@ -21,7 +21,7 @@ are not evidence that useful complexity evolved.
 | M5 Phylogeny | Done: lifetime identities, bounded native/browser history archives |
 | M6 Observation and sharing | Done: schema 8 telemetry, species browser, origin graph, representative comparison |
 | M7 Manual checkpoints | Done: saved-run bundles with exact continuation in both shells |
-| M8 Founder experiments | Evidence reported in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md); awaiting human review |
+| M8 Founder experiments | Evidence reported, including the shipped-configuration rerun and species calibration; awaiting human review |
 | M9 Acceptance | Not started |
 
 ## Delivered
@@ -53,17 +53,22 @@ are not evidence that useful complexity evolved.
 
 ## Open work
 
-1. **Structural evidence for the shipped configuration.** The reported null comparison
-   ran before oscillators and deletion shipped. Rerun the scalar control and the
-   structural null on today's defaults (at least three seeds, 400k ticks) before M9
-   relies on it.
-2. **Distance and threshold calibration (D4).** The 0.5 species threshold is a
-   provisional measurement scale, and deletion now ships before calibration:
-   remove-and-re-add churn mints fresh innovation IDs, which can split species labels
-   without functional divergence. Measure label turnover under deletion against
-   toggling, and record which species reflect marker churn, before any species claim
-   at M9. Do not hide the effect by matching IDs on endpoints.
-3. **M9 acceptance**, below.
+The shipped-configuration rerun and species calibration are reported in
+[`phase-2-m8-evidence.md`](phase-2-m8-evidence.md): growth is still not distinguished
+from the structural null, evolving lineages shed perception, the threshold (not
+deletion) sets species counts.
+
+1. **Make perception pay, then re-measure.** The leading explanation for growth that
+   the null cannot distinguish is an environment where a blind, clock-driven grazer
+   does as well as a forager. Investigate with parameters first (food input,
+   density, and patchiness; sensor and brain costs), across seeds, reporting
+   functional wiring alongside size. This is tuning, not a mechanism change.
+2. **Functional-complexity telemetry.** Add to the metrics how much structure lies on
+   a sensor-to-effector path (`experiments/phase-2-m8/wiring.py` is the prototype),
+   so growth can be judged by what is wired in rather than gene counts.
+3. **Species reporting.** Report persistent species at more than one threshold; the
+   0.5 default stays a provisional scale.
+4. **M9 acceptance**, below.
 
 ## M9 - Acceptance
 

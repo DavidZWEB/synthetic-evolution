@@ -6,11 +6,16 @@ measured. It is not a judgment: whether anything interesting evolved is for a hu
 watching the sim to decide (spec §7.8 tier 3). Nothing here is ranked.
 
 **Headline.** Every evolving world was viable, and the minimal chemo-led founder was
-the most viable configuration, so it now ships. Genomes grew on every seed, but the
-structural null (spec §7.8) grew them as much, so **genome growth here is not
-evidence that lineages inherit useful structure**. The one consistent gap is
-population in the dense configuration, where the evolving world ended 7–16% larger
-than the null on all three seeds.
+the most viable configuration, so it now ships. Brains grow, and on the shipped
+configuration that growth is still **not distinguished from the structural null**
+(spec §7.8): lineages that inherit their own structure grow no more than lineages
+given a random survivor's. The clearest consistent signal points elsewhere:
+**evolving lineages shed perception**. They keep fewer sensors than the null on
+every seed, and late species increasingly have no sensor wired to any effector,
+running clock-driven, open-loop behavior instead. The likely reason is that the
+environment barely rewards perception; that, not the genetic machinery, is the next
+thing to investigate. Species counts are set mostly by the threshold; deletion's
+marker churn is a minor effect.
 
 ## Provenance
 
@@ -80,23 +85,92 @@ Per seed (42, 117, 314), final sample, evolving vs structural null:
   sparse worlds' counts are partly threshold labelling on small genomes.
 - No capacity refusals; peak arena use at most about 40%.
 
+## Shipped configuration rerun
+
+Today's shipped defaults (minimal founder with two oscillators, every structural and
+sensor mutation enabled, including deletion), revision `9ae8c0a`, seeds 42/117/314,
+2,000 founders, 400,000 ticks, both controls. Summaries:
+[`experiments/phase-2-m8/shipped/`](../experiments/phase-2-m8/shipped/).
+
+| Per seed (42, 117, 314) | evolving | structural null | scalar control |
+|---|---|---|---|
+| population | 1450, 1809, 1665 | 1412, 1477, 1971 | 20, 18, 30 |
+| genome genes, mean | 36.9, 26.6, 27.0 | 32.0, 28.9, 35.1 | 25 |
+| genome genes, max | 51, 36, 40 | 40, 41, 43 | 25–26 |
+| connections, mean | 12.6, 6.2, 6.2 | 9.1, 7.2, 10.5 | 4 |
+| **sensor load, mean** | **1.78, 0.17, 0.43** | **2.61, 1.46, 2.96** | 3 |
+| mean agent energy | 127, 137, 211 | 1056, 1796, 151 | ~20,000 |
+| active / persistent species | 37/8, 66/34, 68/24 | 33/27, 40/39, 23/14 | 5–7 |
+
+- **Growth is still not distinguished from the null**: genome size and population go
+  each way across seeds.
+- **Evolving lineages shed sensors on every seed**, keeping 12–68% of the null's sensor
+  load. Sensors cost metabolism; dropping them is selected when perception does not
+  pay its way.
+- Evolving agents hold far less energy each and turn over faster (1.2–2.4× the
+  null's structural edits, which track births): they spend energy on reproduction.
+- No capacity refusals; peak arena use at most 39%.
+
+## Functional wiring
+
+What the added structure does, measured on species-founding genomes recorded in one
+shipped run (seed 42, 400k ticks, `--history --representatives`, 80 evolving
+species) with [`wiring.py`](../experiments/phase-2-m8/wiring.py); output in
+[`wiring-seed42.txt`](../experiments/phase-2-m8/wiring-seed42.txt). A neuron is
+*functional* when it lies on an enabled path from an input (sensor target or
+oscillator) to an output (effector source).
+
+| Species founded at | genes | hidden neurons | functional hidden | functional connections | sensors wired to an output | effectors driven |
+|---|---|---|---|---|---|---|
+| tick 0 (founders) | 25 | 0 | 0 | 4 | 1.00 | 4.0 |
+| 100k–200k | 35.7 | 3.2 | 2.6 | 7.1 | 1.00 | 3.5 |
+| 200k–300k | 37.7 | 4.5 | 2.8 | 7.2 | 0.67 | 2.9 |
+| 300k–400k | 36.5 | 4.1 | 1.8 | 5.4 | 0.62 | 2.3 |
+
+Early growth is mostly functional (about 80% of added hidden neurons sit on a working
+path through 200k). Later, functional structure shrinks while genomes stay large:
+about 38% of the last period's species have no sensor connected to any effector, and only
+2.3 of 4 effectors are driven by anything (the rest output a constant). Oscillators
+increasingly carry the wiring. One seed, so this is a lead, not a measurement across
+seeds; it agrees with the sensor loss above.
+
+## Species calibration
+
+Shipped defaults, 200,000 ticks, seeds 42/117/314. Classification does not affect
+dynamics, so the threshold variants are identical worlds labelled differently.
+Summaries: [`experiments/phase-2-m8/calibration/`](../experiments/phase-2-m8/calibration/).
+
+| Evolving, per seed | active species | persistent | created |
+|---|---|---|---|
+| shipped (threshold 0.5) | 18, 46, 48 | 6, 18, 17 | 40, 81, 84 |
+| deletion off | 21, 38, 32 | 8, 15, 13 | 54, 70, 68 |
+| threshold 0.3 | 41, 146, 119 | 10, 43, 31 | 191, 525, 480 |
+| threshold 0.8 | 4, 10, 9 | 4, 5, 4 | 5, 12, 9 |
+
+- **The threshold sets the species count**: moving it from 0.5 to 0.3 roughly triples
+  active species, and 0.8 leaves a handful. Species counts are labels relative to the
+  threshold, not a measure of divergence on their own.
+- **Deletion's marker churn is a minor effect**: with deletion off, species counts move
+  within seed-to-seed variation (lower on two seeds, higher on one). Shipping deletion
+  before calibration did not materially inflate labels.
+- Species claims should report persistent species at more than one threshold rather
+  than a single count.
+
 ## Unranked shortlist for watching
 
-With today's shipped defaults (minimal founder with oscillators, mutation enabled),
-in the browser against the scalar control:
+With today's shipped defaults, in the browser against the scalar control:
 
-- **seed 42** — the sparse run with the most species. Are species behaviorally distinct
-  or threshold labels?
-- **seed 117** — the sparse run with the largest genomes. Are added neurons wired into
-  behavior?
-- **seed 314** — nearly sensorless in the sparse run. Do these agents forage or graze a
-  rich food field?
+- **seed 42** — the largest genomes in the shipped rerun (max 51 genes). Are the added
+  neurons and clocks visible in behavior?
+- **seed 117** — nearly sensorless (mean sensor load 0.17) yet the largest population.
+  Do agents forage, or graze on a timer?
+- **seed 314** — the most species. Are they behaviorally distinct or threshold labels?
 
 ## Limitations
 
 - Three seeds per configuration; final samples only. Trajectories are reproducible
   from the command above but are not committed (`*.jsonl` is ignored).
-- The null comparison ran before oscillators and deletion shipped; the shipped
-  configuration's structural evidence would need a rerun.
+- The functional-wiring analysis covers one seed and species-founding genomes, not
+  whole populations.
 - Species persistence uses 5k-tick sampling, so species living between samples are
   counted only in created/extinct totals.

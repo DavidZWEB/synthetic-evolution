@@ -1,0 +1,6 @@
+shipped-117-scalar 495
+shipped-117-structural-null 748
+shipped-314-scalar 485
+shipped-314-structural-null 823
+shipped-42-scalar 458
+shipped-42-structural-null 724
