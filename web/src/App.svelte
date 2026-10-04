@@ -719,6 +719,7 @@
         {captureStatus}
         message={historyMessage}
         busy={historyBusy || transitioning}
+        worldReady={transport !== null}
         onclose={() => (showHistory = false)}
         onrefresh={() => historyAction(refreshHistory)}
         onsave={saveRun}
