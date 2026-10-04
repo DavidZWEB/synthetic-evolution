@@ -32,6 +32,7 @@
 import { createCamera } from './camera.js';
 import { createProgram } from './gl-program.js';
 import { pickAgent } from './picking.js';
+import { createReseedGlow } from './reseed-glow.js';
 import { displayColors, validateSpeciesView } from './species-colors.js';
 import {
   AGENT_FRAGMENT_SHADER,
@@ -313,7 +314,9 @@ function buildRenderer(
   const plantAttributes = {
     position: instancedFor(plantProgram, 'a_position', 3, gl.FLOAT, 4, plantCapacity),
     energy: instancedFor(plantProgram, 'a_energy', 1, gl.FLOAT, 4, plantCapacity),
+    glow: instancedFor(plantProgram, 'a_glow', 1, gl.FLOAT, 4, plantCapacity),
   };
+  const reseeds = createReseedGlow(plantCapacity);
   gl.bindVertexArray(null);
 
   gl.clearColor(0.055, 0.063, 0.078, 1);
@@ -384,10 +387,14 @@ function buildRenderer(
       if (plantCapacity > 0) {
         gl.useProgram(plantProgram);
         gl.bindVertexArray(plantVao);
+        const now = performance.now();
         if (shouldUpload) {
           upload(plantAttributes.position, views.plantPosition);
           upload(plantAttributes.energy, views.plantEnergy);
+          reseeds.observe(views.plantPosition, now);
         }
+        // Every frame, not only fresh ones: the glow fades in wall-clock time.
+        upload(plantAttributes.glow, reseeds.values(now));
         gl.uniform2f(plantUniforms.center, camera.state.x, camera.state.y);
         gl.uniform1f(plantUniforms.ppu, camera.state.ppu);
         gl.uniform2f(plantUniforms.viewport, camera.width, camera.height);

@@ -67,6 +67,7 @@ precision highp float;
 in vec2 a_corner;
 in vec3 a_position;
 in float a_energy;
+in float a_glow;
 
 uniform vec2 u_center;
 uniform float u_ppu;
@@ -78,15 +79,18 @@ uniform float u_world;
 
 out vec2 v_corner;
 out float v_fullness;
+out float v_glow;
 
 void main() {
   v_corner = a_corner;
   v_fullness = clamp(a_energy / u_max_energy, 0.0, 1.0);
+  v_glow = a_glow;
 
   vec2 d = a_position.xy - u_center;
   d -= u_world * floor(d / u_world + 0.5);
 
-  float radius = max(u_radius * u_ppu, u_min_radius);
+  // A just-reseeded plant swells, so it can be found at any zoom.
+  float radius = max(u_radius * u_ppu, u_min_radius) * (1.0 + 3.0 * a_glow);
   vec2 pixels = d * u_ppu + a_corner * radius;
   gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;
@@ -96,11 +100,14 @@ precision highp float;
 
 in vec2 v_corner;
 in float v_fullness;
+in float v_glow;
 uniform vec3 u_color;
 out vec4 fragment;
 
 void main() {
   if (dot(v_corner, v_corner) > 1.0) discard;
-  // Empty sites remain visible because they persist and regrow (spec §5.1).
-  fragment = vec4(u_color * (0.18 + 0.82 * v_fullness), 1.0);
+  // Empty plants stay visible: they regrow, or have just reseeded (spec §5.1).
+  vec3 base = u_color * (0.18 + 0.82 * v_fullness);
+  // A reseed flashes warm white and fades back to the plant's own colour.
+  fragment = vec4(mix(base, vec3(1.0, 0.95, 0.7), 0.85 * v_glow), 1.0);
 }`;
