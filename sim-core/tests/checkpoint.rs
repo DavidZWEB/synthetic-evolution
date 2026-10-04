@@ -123,6 +123,62 @@ fn plant_turnover_survives_a_checkpoint() {
 }
 
 #[test]
+fn corpses_survive_a_checkpoint() {
+    // Corpse slots, energies, and free order are not derivable from the seed: a restore
+    // that lost them would feed or blind agents differently from the saved world.
+    let mut p = params();
+    p.corpses.energy_fraction = 0.6;
+    p.corpses.decay = 0.05;
+    // The scenario's agents run on small tanks; a lower floor lets their shares form.
+    p.corpses.min_energy = 0.01;
+    let mut original = World::new(77, p).unwrap();
+    original.seed_founders(32);
+    let mut events = SpeciesEventCounts::default();
+    for t in 0..120 {
+        let first = original.pool().iter_live().next();
+        if t % 10 == 0
+            && let Some(id) = first
+        {
+            original.despawn(id);
+        }
+        step(&mut original, &mut events);
+    }
+    // This scenario's agents eat a corpse within a tick or two, so save right after a
+    // death; the continuation then has to feed on the restored corpse.
+    let victim = original.pool().iter_live().next().unwrap();
+    original.despawn(victim);
+    assert!(original.corpses().count() > 0, "no corpse to save");
+    let bytes = original.checkpoint();
+    let mut restored = World::from_checkpoint(&bytes, LIMITS).unwrap();
+    assert_eq!(restored.corpses().position(), original.corpses().position());
+    assert_eq!(restored.corpses().energy(), original.corpses().energy());
+    assert_eq!(restored.corpses().alive(), original.corpses().alive());
+    let mut other = SpeciesEventCounts::default();
+    for tick in 0..500 {
+        if tick % 25 == 0 {
+            for world in [&mut original, &mut restored] {
+                let first = world.pool().iter_live().next();
+                if let Some(id) = first {
+                    world.despawn(id);
+                }
+            }
+        }
+        step(&mut original, &mut events);
+        step(&mut restored, &mut other);
+        assert_eq!(
+            restored.state_hash(),
+            original.state_hash(),
+            "diverged {tick} ticks after restore"
+        );
+        assert_eq!(
+            restored.corpses().energy(),
+            original.corpses().energy(),
+            "corpses diverged at {tick}"
+        );
+    }
+}
+
+#[test]
 fn saving_neither_advances_time_nor_draws_randomness() {
     let mut saved = churned(BrainInheritance::Evolving);
     let mut twin = churned(BrainInheritance::Evolving);

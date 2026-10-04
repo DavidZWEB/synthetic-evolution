@@ -91,6 +91,10 @@ const PARAMS = {
     patch_scale: f, death_stock: f, death_seconds: f, local_dispersal: f,
     dispersal_radius: f, radius: f, scent_rate: f, initial_fill: f, signature: ['finite', 3],
   },
+  corpses: {
+    energy_fraction: f, decay: f, min_energy: f, max_corpses: u, radius: f,
+    signature: ['finite', 3],
+  },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
 
@@ -100,7 +104,7 @@ const PARAMS = {
  */
 const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
-  'death_seconds', 'local_dispersal', 'dispersal_radius',
+  'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses',
 ]);
 
 export function integerParam(path) {

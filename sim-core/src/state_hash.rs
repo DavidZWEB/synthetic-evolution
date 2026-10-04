@@ -301,6 +301,25 @@ impl World {
         }
         h.u64(plants.reseeded());
 
+        // Corpses by slot, with the free order that decides where the next one lies
+        // (spec §5.1). Empty slots fold only their liveness.
+        let corpses = self.corpses();
+        h.u32(corpses.len() as u32);
+        for (i, &alive) in corpses.alive().iter().enumerate() {
+            h.u32(u32::from(alive));
+            if alive == 1 {
+                h.f32(corpses.position()[i].x);
+                h.f32(corpses.position()[i].y);
+                h.f32(corpses.energy()[i]);
+                h.f64(corpses.energy_reserve()[i]);
+            }
+        }
+        h.u32(corpses.free_slots().len() as u32);
+        for &slot in corpses.free_slots() {
+            h.u32(slot);
+        }
+        h.u64(corpses.refused());
+
         // Commands not yet due are state too: two worlds identical in every other way
         // but holding different queues diverge on the tick those queues come due.
         h.u32(self.commands.len() as u32);

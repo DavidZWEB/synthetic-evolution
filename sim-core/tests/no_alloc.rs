@@ -836,3 +836,36 @@ fn plant_ecology_never_allocates() {
     );
     assert_eq!(observed, 0, "plant ecology allocated {observed} times");
 }
+
+#[test]
+fn corpse_creation_decay_and_feeding_never_allocate() {
+    // A death leaves a corpse, rebuilding its grid; decomposition frees slots; feeding
+    // reads both grids (spec §5.1). All of it runs inside the tick.
+    let mut params = SimParams::default();
+    params.world.max_agents = 256;
+    params.plants.max_plants = 400;
+    params.corpses.max_corpses = 64;
+    params.corpses.decay = 0.5;
+    let mut world = World::new(31, params).expect("valid params");
+    world.seed_founders(200);
+    for _ in 0..60 {
+        world.step();
+    }
+    let observed = count_allocations(|| {
+        for round in 0..300 {
+            let next = world.pool().iter_live().next();
+            if round % 3 == 0
+                && let Some(id) = next
+            {
+                world.despawn(id);
+            }
+            world.step();
+        }
+        std::hint::black_box(&world);
+    });
+    assert!(
+        world.corpses().refused() > 0 || world.corpses().count() > 0,
+        "no corpse formed"
+    );
+    assert_eq!(observed, 0, "corpses allocated {observed} times");
+}

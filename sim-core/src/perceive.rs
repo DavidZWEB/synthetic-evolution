@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::brain::Neuron;
 use crate::chemo::ChemoField;
+use crate::corpses::Corpses;
 use crate::genome::{GENE_PARAMS, Gene, Modality, SENSOR_CHANNELS};
 use crate::ids::NeuronId;
 use crate::math;
@@ -69,6 +70,10 @@ pub struct WorldView<'a> {
     pub plants: &'a Plants,
     pub plant_radius: f32,
     pub plant_signature: Vec3,
+    /// Corpses are visible in their own colour (spec §5.1).
+    pub corpses: &'a Corpses,
+    pub corpse_radius: f32,
+    pub corpse_signature: Vec3,
 }
 
 /// The sensing agent's own state — what an interoceptor reads and what every
@@ -191,9 +196,9 @@ fn vision_ray(
         cos_limit: math::cos((fov * 0.5).clamp(0.0, core::f32::consts::PI)),
     };
 
-    // Both populations, nearest wins. Agents and plants live in separate pools with
-    // separate grids, so an eye that queried only one would be blind to the other —
-    // which for plants would mean paying for three organs that never see food.
+    // Every population, nearest wins. Agents, plants, and corpses live in separate
+    // pools with separate grids, so an eye that queried only one would be blind to the
+    // others — which for plants would mean paying for three organs that never see food.
     let mut seen: Option<Sighting> = None;
     cast(
         &ray,
@@ -213,6 +218,17 @@ fn vision_ray(
         |_| world.plant_signature,
         &mut seen,
     );
+    if let Some(hash) = world.corpses.hash() {
+        cast(
+            &ray,
+            hash,
+            world.corpses.position(),
+            u32::MAX,
+            |_| world.corpse_radius,
+            |_| world.corpse_signature,
+            &mut seen,
+        );
+    }
 
     if let Some(hit) = seen {
         out[0] = 1.0 - (hit.distance / range).clamp(0.0, 1.0);
@@ -379,6 +395,7 @@ mod tests {
         plants: Plants,
         plant_radius: f32,
         plant_signature: Vec3,
+        corpses: Corpses,
     }
 
     impl Fixture {
@@ -412,6 +429,7 @@ mod tests {
                 plants: Plants::new(&empty, &mut crate::rng::Rng::from_seed(1)),
                 plant_radius: params.plants.radius,
                 plant_signature: Vec3::from(params.plants.signature),
+                corpses: Corpses::new(&params),
                 positions,
                 hash,
                 pool,
@@ -428,6 +446,9 @@ mod tests {
                 plants: &self.plants,
                 plant_radius: self.plant_radius,
                 plant_signature: self.plant_signature,
+                corpses: &self.corpses,
+                corpse_radius: SimParams::default().corpses.radius,
+                corpse_signature: Vec3::from(SimParams::default().corpses.signature),
             }
         }
 
@@ -649,6 +670,35 @@ mod tests {
         assert!((neurons[1].input - green.x).abs() < 1e-6, "plant red");
         assert!((neurons[2].input - green.y).abs() < 1e-6, "plant green");
         assert!((neurons[3].input - green.z).abs() < 1e-6, "plant blue");
+    }
+
+    #[test]
+    fn an_eye_sees_a_corpse_in_its_own_colour() {
+        let genes = one_sensor(Modality::VisionRay, [0.0, 0.0, 60.0, 0.5]);
+        let sensors = compile_sensors(&genes);
+        let mut fixture = Fixture::new(vec![Vec3::new(500.0, 500.0, 0.0)]);
+        let params = SimParams::default();
+        let (mut energy, mut reserve) = (100.0f32, 0.0f64);
+        fixture.corpses.leave(
+            Vec3::new(525.0, 500.0, 0.0),
+            &mut energy,
+            &mut reserve,
+            &params.corpses,
+        );
+        fixture.corpses.settle();
+        let mut neurons = neurons_for(&genes);
+        perceive(
+            &sensors,
+            &fixture.agent(0, 0.0),
+            &fixture.view(),
+            &mut neurons,
+        );
+
+        assert!(neurons[0].input > 0.0, "the eye did not see the corpse");
+        let colour = Vec3::from(params.corpses.signature);
+        assert!((neurons[1].input - colour.x).abs() < 1e-6);
+        assert!((neurons[2].input - colour.y).abs() < 1e-6);
+        assert!((neurons[3].input - colour.z).abs() < 1e-6);
     }
 
     #[test]
