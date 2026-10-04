@@ -240,9 +240,12 @@ impl SpatialHash {
         radius: f32,
         mut visit: impl FnMut(u32, Vec3, f32),
     ) {
+        // Each entry is visited once, at its nearest image, so a radius past half the
+        // world is still well defined: nearest images on the plane lie up to w/√2 apart,
+        // and the cell walk covers every cell once a query spans the world.
         debug_assert!(
-            radius * 2.0 <= self.world_size,
-            "radius past half the world makes the minimum image ambiguous"
+            radius <= self.world_size,
+            "a radius past the world reaches nothing more"
         );
         let r2 = radius * radius;
         let base = self.cell_coords(center);
@@ -550,7 +553,8 @@ mod tests {
             spec in prop::collection::vec((0f32..WORLD, 0f32..WORLD, any::<bool>()), 0..120),
             cx in 0f32..WORLD,
             cy in 0f32..WORLD,
-            radius in 0.5f32..(WORLD / 2.0),
+            // Past half the world too: a bite may search a diagonal that far.
+            radius in 0.5f32..WORLD,
             min_cell in 3f32..70f32,
         ) {
             let (pos, alive, mut cells) = population(&spec);

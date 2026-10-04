@@ -68,9 +68,9 @@ pub(crate) struct Targets<'a> {
 pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<usize> {
     let direction = Vec3::new(math::cos(aim.heading), math::sin(aim.heading), 0.0);
     let cos_arc = math::cos(targets.arc);
-    // A retune may widen the size ranges past an old gene's reach; past half the world
-    // the torus has no nearer image to search anyway.
-    let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size * 0.5);
+    // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
+    // still finds every target in reach, whatever a retune did to the size ranges.
+    let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size);
     let mut nearest: Option<(f32, u32)> = None;
     targets.hash.for_each_within(
         targets.positions,
@@ -168,8 +168,18 @@ mod tests {
         assert_eq!(cooldown_ticks(&none, 1.0 / 60.0), 0);
     }
 
-    /// Agents of radius 1 in a 100-unit world, searched from slot 0.
+    /// Agents in a 100-unit world, searched from slot 0 with a reach of 2.
     fn hit_from(positions: &[Vec3], sizes: &[f32], heading: f32, arc: f32) -> Option<usize> {
+        hit_reaching(2.0, positions, sizes, heading, arc)
+    }
+
+    fn hit_reaching(
+        reach: f32,
+        positions: &[Vec3],
+        sizes: &[f32],
+        heading: f32,
+        arc: f32,
+    ) -> Option<usize> {
         let mut hash = SpatialHash::new(100.0, 10.0, positions.len() as u32);
         let alive = vec![1; positions.len()];
         let mut cells = vec![0; positions.len()];
@@ -177,7 +187,7 @@ mod tests {
         let aim = Aim {
             position: positions[0],
             heading,
-            reach: 2.0,
+            reach,
             radius: sizes[0],
         };
         let targets = Targets {
@@ -229,6 +239,18 @@ mod tests {
         // Across the seam, the minimum image is in reach.
         assert_eq!(
             hit_from(&[at(99.0, 50.0), at(1.5, 50.0)], &ones, 0.0, quarter),
+            Some(1)
+        );
+        // A reach of half the world, the most an import may carry, still finds a
+        // diagonal target 52.9 away: within 50 + 3 + 3, though past half the world.
+        assert_eq!(
+            hit_reaching(
+                50.0,
+                &[at(25.0, 50.0), at(74.0, 70.0)],
+                &[3.0, 3.0],
+                0.0,
+                quarter
+            ),
             Some(1)
         );
     }
