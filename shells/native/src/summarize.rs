@@ -26,6 +26,8 @@ const METRICS: &[&str] = &[
     "genome_variants",
     "agent_energy_mean",
     "speed_mean",
+    "intake_per_agent_tick",
+    "intake_per_distance",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -98,6 +100,7 @@ const NOTES: &[&str] = &[
     "persistent_species: species alive at the end that were first sampled at least half the run earlier",
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
     "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
+    "intake_per_agent_tick / intake_per_distance: energy eaten over the second half per living agent-tick and per unit of mean speed x agent-ticks",
     "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
     "peak_arena_use: the fullest arena's used fraction at the final sample",
 ];
@@ -342,6 +345,7 @@ fn cohort_values(
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
+    let (intake, per_distance) = foraging(samples, ticks, &select);
     let values: Vec<Option<f64>> = vec![
         Some(f64::from(u8::from(last.population == 0))),
         Some(f64::from(last.population)),
@@ -349,6 +353,8 @@ fn cohort_values(
         Some(f64::from(last.genome_variants)),
         Some(last.agent_energy.mean),
         Some(last.speed.mean),
+        intake,
+        per_distance,
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),
@@ -394,6 +400,33 @@ fn cohort_values(
     ];
     debug_assert_eq!(values.len(), METRICS.len());
     values
+}
+
+/// Energy eaten over the run's second half, per living agent per tick and per unit of
+/// distance moved. Agents gain energy only by eating (spec §5.1), so between samples
+/// intake is the change in agent-held energy plus what was dissipated. Assumes no
+/// founders were added after the first sample, which `experiment.sh` runs never do.
+fn foraging(
+    samples: &[RunSample],
+    ticks: u64,
+    select: &impl Fn(&RunSample) -> &WorldMetrics,
+) -> (Option<f64>, Option<f64>) {
+    let window: Vec<&RunSample> = samples.iter().filter(|s| s.tick >= ticks / 2).collect();
+    let (mut eaten, mut agent_ticks, mut distance) = (0.0, 0.0, 0.0);
+    for pair in window.windows(2) {
+        let (a, b) = (select(pair[0]), select(pair[1]));
+        let held = |m: &WorldMetrics| m.total_energy - m.plant_energy;
+        let dt = (pair[1].tick - pair[0].tick) as f64;
+        let agents = f64::from(a.population + b.population) / 2.0;
+        eaten += held(b) - held(a) + (b.cumulative_dissipation - a.cumulative_dissipation);
+        agent_ticks += agents * dt;
+        distance += agents * dt * (a.speed.mean + b.speed.mean) / 2.0;
+    }
+    if agent_ticks == 0.0 {
+        return (None, None);
+    }
+    let per_distance = (distance > 0.0).then(|| eaten / distance);
+    (Some(eaten / agent_ticks), per_distance)
 }
 
 /// Species persistence from sampled presence: how many species alive at the end
@@ -639,6 +672,27 @@ mod tests {
         for row in &rows {
             assert_eq!(separators(row), expected, "{row}");
         }
+    }
+
+    #[test]
+    fn intake_is_energy_gained_plus_energy_dissipated_over_the_second_half() {
+        let at = |tick, held: f64, dissipated: f64| {
+            let mut sample = sample(tick, &[1]);
+            sample.evolving.population = 10;
+            sample.evolving.plant_energy = 1_000.0;
+            sample.evolving.total_energy = 1_000.0 + held;
+            sample.evolving.cumulative_dissipation = dissipated;
+            sample.evolving.speed.mean = 2.0;
+            sample
+        };
+        // The first half's feeding is excluded; the second half eats 300 (+100 held,
+        // +200 dissipated) over 10 agents x 100 ticks.
+        let samples = [at(0, 0.0, 0.0), at(100, 500.0, 0.0), at(200, 600.0, 200.0)];
+        let (intake, per_distance) = foraging(&samples, 200, &|s| &s.evolving);
+        assert_eq!(intake, Some(0.3));
+        assert_eq!(per_distance, Some(0.15));
+        let (none, _) = foraging(&samples[..1], 200, &|s| &s.evolving);
+        assert_eq!(none, None);
     }
 
     #[test]
