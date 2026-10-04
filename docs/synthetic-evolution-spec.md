@@ -292,17 +292,16 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 | **Gene duplication** | 0.005 | Duplicate a subgraph with fresh IDs |
 | Mutate meta-genes | 0.05 | Mutation rates evolve |
 
-**DECIDED for M2:** ship all neural structural rates at zero initially, preserving
-the accepted scalar-only default runs. **Superseded in M8:** a human enabled every
-structural and sensor rate in the table above after the full set was viable on
-seeds 42/117/314 over 200k ticks (1,315-1,645 agents; mean genome 26-34 genes from
-the 25-gene founder). Deletion was enabled before D4's distance/threshold
-calibration, accepting that remove-and-re-add marker turnover can split species
-labels without real divergence; read species counts with that in mind.
-`SimParams::without_structural_mutation` restores fixed topology for runs that
-need it, and metrics or archives that omit a rate decode it as the zero they ran. Rates live under `mutation.structural` and
-are runtime-tunable. The later operators in the table retain proposed starting
-rates, not a claim that they are enabled in the current phase.
+**DECIDED (M8):** every structural and sensor rate in the table ships enabled; the
+full set was viable on seeds 42/117/314 over 200k ticks (1,315–1,645 agents; mean
+genome 26–34 genes from the 25-gene founder). Deletion ships before D4's
+distance/threshold calibration, accepting that remove-and-re-add marker turnover can
+split species labels without real divergence; read species counts with that in mind.
+Rates live under `mutation.structural` and `mutation.organs` and are runtime-tunable;
+`SimParams::without_structural_mutation` gives fixed topology, and metrics or
+archives that omit a rate decode it as the zero they ran. The later operators in the
+table (effectors, body, duplication, meta-genes) keep proposed starting rates, not a
+claim that they exist in the current phase.
 
 Each positive-rate operator gets one Bernoulli gate and at most one edit attempt per
 offspring, in this order: remove connection, remove neuron, toggle connection, add
@@ -347,15 +346,15 @@ does not change ordinary finite results or the random-draw sequence.
 
 **DECIDED for M3:** organ edits run before the existing neural pass, in the order
 remove sensor, add sensor. This lets a removed organ's targets become eligible for
-neural pruning and a new organ's inputs acquire wiring in the same birth. Both new
-rates default to zero and consume no draws while disabled. Sensor/organ logic lives
+neural pruning and a new organ's inputs acquire wiring in the same birth. Zero rates
+consume no draws. Sensor/organ logic lives
 in `mutate/organs.rs`; neural logic remains in `mutate/structural.rs`.
 
 Addition chooses vision, food chemo, or energy interoception using configurable
-nonnegative weights (initially equal), before checking the selected modality's
+nonnegative weights, before checking the selected modality's
 limits. Do not reroll a different modality on refusal. A successful edit atomically
 adds one fresh sigmoid target neuron per channel and one sensor, with no automatic
-connections. Target bias is configurable (initially zero), tau uses the existing
+connections. Target bias is configurable, tau uses the existing
 brain range, and sensor initialization matches founders: random vision azimuth,
 zero elevation, configured range/FOV, food channel zero/current chemo radius, or
 energy selector zero. Deleting a sensor leaves its neurons and connections intact.
@@ -374,9 +373,9 @@ not accepted as active Phase 2 sensor behavior.
 
 **Founders should get simpler through measurement once these operators exist.** Phase 1 issues every founder the complete sensory suite: three eyes, a nose, an interoceptor, fully connected. That is forced rather than chosen. With no add-sensor and no add-connection operator, anything missing from the founder is unreachable for every descendant for the whole of the phase, so density is the only safe default when structure cannot change.
 
-That argument expires the moment the structural operators above are *implemented* — add/remove neuron, connection, and sensor. **DECIDED: the sensor addition/removal pair lands in Phase 2 alongside the neural structural operators.** After that, a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
+That argument expired once the structural operators above — add/remove neuron, connection, and sensor — existed. Now a founder carrying a full suite of organs is not a neutral starting point — it is a strong prior that skips the part of the search actually worth watching. Nothing began with eyes; single-celled life began with a gradient and a way to move along it, and every organ after that was paid for. A lineage that *acquires* an eye and covers its metabolic cost is the interesting result, and it cannot be observed in a population that was issued one at birth.
 
-So when the structural operators arrive, invert the default: the founder should be the **simplest organism that can still close the loop** — plausibly one chemoreceptor, thrust, turn, ingest, and little else — with complexity earned rather than granted. Three consequences to plan for:
+So the founder is the **simplest organism that can still close the loop**, with complexity earned rather than granted. Three consequences:
 
 - **The metabolic terms change meaning.** With a maximal founder, `k_sensor` (§5.2) is a tax every agent pays equally, so it selects for nothing within a generation-0 population. With a minimal founder it becomes the price of an upgrade, which is the selective role it was designed for.
 - **Minimal may not be viable, and that is a measurement.** A founder too simple to find food starves before it can reproduce, and the floor depends on the §5.5 energy economy and on food density, not on principle. Sweep it; do not reason it out.
@@ -388,15 +387,13 @@ count per hidden/output target. `None` means the original dense topology; a coun
 selects up to that many distinct sources from the existing input/hidden/oscillator
 source set. Choose sparse wiring once per world after plant seeding, using the same
 world RNG, and share its template/innovation IDs across founders. Dense construction
-consumes no topology draws, so shipped defaults and prior runs stay unchanged.
+consumes no topology draws.
 
 Preserve all four effectors and body/meta compatibility fields. Counts and allocation
 budgets must describe the exact sparse template without charging for dense wiring.
-A no-eye, one-chemoreceptor, zero-hidden/oscillator founder with one incoming edge
-per target was introduced as an opt-in small-controller candidate.
 
-**DECIDED (M8): that minimal chemo-led founder is the shipped default,** with two
-oscillators restored. It was the most viable founder measured across seeds
+**DECIDED (M8): the shipped founder is minimal and chemo-led** — no eyes, one
+chemoreceptor, no hidden neurons, two oscillators, and one incoming edge per target. It was the most viable founder measured across seeds
 (`docs/phase-2-m8-evidence.md`) and a human approved it. A human then chose to keep
 the oscillator scaffold, since no operator could otherwise create one.
 
@@ -1163,26 +1160,18 @@ Every phase success criterion in §8 is a judgment about whether something *inte
 
 A tool that helps: **a random-brain control population.** §10's last failure mode is that humans see intent in moving dots. Run it as a separate world with the same seed and params; putting a control lineage in the evolving world would make it compete for the same energy and perturb the measurement. Founders match exactly, while every control offspring redraws its neural scalars instead of inheriting them. In Phase 1's fixed topology this breaks cumulative neural-scalar inheritance without changing sensors, body, or ecology. Indistinguishable behavior does not establish a benefit from that inheritance. In automated reporting (§7.9), every behavioral metric should be printed alongside the relevant control's value for the same metric.
 
-**DECIDED for M2:** evolving offspring receive the legacy scalar pass followed by
-structural edits. Scalar-control offspring receive the same structural rules followed
-by a redraw of all neural scalars on their resulting topology. This is the
-`randomized_at_birth_v2` telemetry protocol; it can inherit/evolve topology and is
-not a structural-null control. The browser retains the `randomized_at_birth` mode
-identifier for existing links but labels it "scalar control". With all structural
-rates zero, each mode preserves its previous dynamics and random-draw sequence.
+**DECIDED: the scalar control, protocol `randomized_at_birth_v3`.** Evolving
+offspring receive scalar mutation, then organ edits, then neural structural edits.
+Scalar-control offspring receive the same organ and structural edits, then a redraw
+of all neural scalars on their resulting topology; sensor parameters and bindings are
+not redrawn. It can inherit and evolve topology, so it is not a structural null. The
+browser's `randomized_at_birth` mode identifier is labelled "scalar control".
 
 Disabling structural rates does not discard evolved topology. Scalar redraw must
 remain safe for its retained fan-in, including one-input neurons. Sampling a finite
 interval whose width overflows f32 uses bounded interpolation rather than an
 infinite intermediate; ordinary interval arithmetic and the single random draw are
 unchanged.
-
-M3 extends the same policy to sensor edits with telemetry protocol
-`randomized_at_birth_v3`: evolving offspring run scalars, organ edits, then neural
-edits; controls run both edit families before neural-scalar redraw. Sensor parameters
-and bindings are not redrawn by that control. Legacy neural observations may still
-be available without organ observations; missing sensor counts remain explicitly
-unavailable rather than measured zero.
 
 **DECIDED: Phase 2 also requires an approved structural-null comparison before
 acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone
