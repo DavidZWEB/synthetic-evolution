@@ -8,7 +8,6 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::Path;
 
-use sim_core::LayoutEra;
 use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 use sim_core::ids::{BirthId, SpeciesId};
 
@@ -208,9 +207,7 @@ fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
         &wire["data"]["params"],
         &serde_json::to_value(&header.params)?,
     )?;
-    header
-        .params
-        .validate_for_layout(LayoutEra::BirthIdentities)?;
+    header.params.validate()?;
     Ok(())
 }
 

@@ -804,60 +804,20 @@ not complete genealogy. Incomplete prefixes may contain no event rows if initial
 persistence failed. Counts and event ticks must fit the saved boundary, never a
 newer simulation frame. Both versions retain canonical decimal u64 strings, exact
 nullable parent identities, strict lifecycle/sequence validation, and the 1 MiB
-encoded-line limit. Both currently validate against `LayoutEra::BirthIdentities`.
+encoded-line limit. Both validate params against the current storage layout.
 Native schema 1 output and historical experiment reading remain unchanged.
 
 ### Telemetry protocol and observations
 
-New output uses metrics schema **8**, `phase: 2`, and
-`control: "randomized_at_birth_v3"` (the shared core protocol constant).
-Species classification does not change heredity, so the control protocol is unchanged.
-The reader explicitly supports **schemas 7, 6, and 5 / phase 2 /
-`control: "randomized_at_birth_v3"`**, **schema 4 / phase 2 /
-`control: "randomized_at_birth_v2"`** and **schema 3 / phase 1 /
-`control: "randomized_at_birth"`** (v1), without relabeling them as v3.
-Schemas 3 and 4 reject nonzero organ mutation rates or nondefault M3 founder
-fields (`chemo_sensors != 1`, `energy_sensors != 1`, or non-null
-`connections_per_target`). Schema 3 also rejects every nonzero neural structural
-rate and any claimed structural observations. Schema 4 may carry the five neural
-operator observations but cannot claim measured sensor counts, even zeros.
-Schema 5 retains its organ observations and nondefault M3 founder configurations.
-Schemas 1 and 2, unknown schemas, and all other schema/phase/control combinations
-are rejected.
+Metrics use schema **8** with `phase: 2`. The header's `control` names the paired
+control world's protocol: `randomized_at_birth_v3` (scalar control),
+`structural_null_v1`, or `structural_null_v2`. **Only schema 8 is read**; older
+metrics files, and any other schema, phase, or control, are rejected rather than
+migrated. The header must carry explicit species capacity and threshold and all
+distance coefficients. Mutation rates a schema-8 file omits (written before M8 added
+or enabled them) are read as the zero that run used, never as today's defaults.
 
-Schemas 3–5 predate World classification. Their absent species metrics stay `null`,
-not invented zeroes. The reader rejects species observations or any explicit
-`params.species` field in those schemas; only a genuinely omitted field is internally
-decoded with classification disabled to preserve the metadata's meaning. Historical
-buffer selection is independent of that normalization and is owned by `LayoutEra`.
-Schemas 6–8 require explicit species capacity, threshold, and all distance coefficients
-in the header, rather than silently filling missing classification metadata.
-
-The native reader maps supported wire schemas to core buffer inventories:
-
-| Native schema | Core `LayoutEra` | Additional buffers |
-|---|---|---|
-| 3-5 | `BeforeSpecies` | Neither species representatives nor birth identities |
-| 6 | `Species` | Species representatives only |
-| 7-8 | `BirthIdentities` | Species representatives and three lifetime identity arrays |
-
-`SimParams::validate_for_layout(era)` replaces the era-specific pre-birth validator.
-The core owns which buffers existed; it does not know native schema numbers. This
-validation changes neither parameters nor recorded budgets and does not invent
-observations. The reader still independently rejects unsupported feature claims.
-
-Historical validation is not permission to construct an old runtime or bypass
-the current memory ceiling: `World::new` always uses `LayoutEra::CURRENT`.
-Selecting an era neither parses nor migrates checkpoint data; M7 still requires
-explicit rejection of incompatible formats. Schema 7 marks the identity-aware runtime/storage contract, not
-the addition of per-organism history records to these population samples.
-
-Schema 8 adds observations only; its runtime/storage contract is schema 7's. Schema 7
-remains readable. Its absent `complexity` and `history` fields stay `null` and
-`diagnose` reports them as unavailable or unknown, never as zeroes or as capture being
-off. The reader rejects either field in schemas 3–7.
-
-Each schema 8 cohort contains **`complexity`**: exact nearest-rank distributions
+Each cohort contains **`complexity`**: exact nearest-rank distributions
 (`min`, `p25`, `median`, `p75`, `max`, plus `mean`) across living agents of
 `genome_genes`, `neurons` (neuron genes), `connections` (all connection genes), and
 `enabled_connections`. Neuron plus connection genes are what `k_brain` charges and
@@ -868,18 +828,18 @@ neurons and connections bounded by genes, and zeroes exactly when population is 
 These are drift descriptors, not a complexity score. `genome_variants` still counts
 exact genomes.
 
-Each schema 8 cohort also has a required **`history`** key: omitting it is rejected,
+Each cohort also has a required **`history`** key: omitting it is rejected,
 not read as capture being off. It is `null` when `--history` was not requested, otherwise `capacity` (per cohort), `retained_events`, `dropped_events`,
 and `gaps` as of that sample. Each sample drains the recorder first, so these equal
 what the archive holds at that tick. Both cohorts must agree on capture and capacity;
 capture cannot switch on or off mid-run; counts never decrease; and a gap exists
 exactly when events were dropped. Enabling history changes only this field: every
 other metric stays byte-identical to an uncaptured run. `diagnose` reports final
-history status as `complete`, `incomplete`, `off`, or `unknown` (schemas 3–7). It
+history status as `complete`, `incomplete`, or `off`. It
 emits a `history_gaps` finding when events were dropped, and shows active species
 against the configured species capacity.
 
-Schema 7 retains the earlier metric fields. `arena_usage` contains current element
+`arena_usage` contains current element
 counts for `Genes`, `Neurons`, `Synapses`, `Sensors`, and `Effectors` (`capacity`, `free_elements`,
 `largest_free_block`, `live_blocks`); `spawn_failures` contains cumulative saturating
 `u64` counters for `pool_full`, `genome_limit`, `arena_capacity`,
@@ -935,11 +895,9 @@ state. The `--metrics` path observes seeding, command spawns, natural births, an
 species extinctions, collecting structural edits and classification transitions
 separately in both cohorts; plain runs use the unobserved stepping path.
 Samples created outside a collected run encode unavailable observations as `null`,
-not invented zeroes. Schema 3's absent `structural_mutations` fields likewise decode
-to `null`. Schema 4's missing sensor-counter fields decode individually to `null`;
-they are not inferred from neural counts, zero configured rates, or later samples.
-Unknown historical sensor totals stay unknown even if later edits are observed.
-Current shell observers instead begin with measured zeroes for all seven operators.
+not invented zeroes, and an `add_oscillator` counter absent from files written before
+that operator existed stays `null`. Current shell observers begin with measured
+zeroes for every operator.
 `diagnose` reports availability separately for each organ operator and cohort, and
 reports mutation caps (including sensor and vision-ray caps), scratch limits, and
 innovation exhaustion separately from spawn pressure, and distinguishes arena capacity

@@ -488,11 +488,9 @@ report creation, extinction, and unclassified admissions; shell-owned cumulative
 counters never affect RNG or authoritative state. Existing methods use no-op
 observers unless a caller opts in.
 
-Native schema 6 introduced population metadata retained by later schemas; WASM/browser status distinguish active populations, unclassified
-population, and optional event observations. Legacy schemas 3/4/5 retain unavailable
-species observations and are validated without charging nonexistent historical
-classifier buffers. Scalar-control protocol remains `randomized_at_birth_v3` because
-heredity is unchanged. World integration and subsequent full classifier hash coverage
+Native metrics and WASM/browser status distinguish active populations, unclassified
+population, and optional event observations. Scalar-control protocol remains
+`randomized_at_birth_v3` because heredity is unchanged. World integration and subsequent full classifier hash coverage
 are separate attributable commits; neither changes ecological dynamics.
 Retained ancestry/history remains M5 work; this component returns synchronous
 assignment and departure outcomes rather than owning an event archive.
@@ -525,17 +523,9 @@ This identity slice provides stable references, not a retained ancestry graph or
 archive of dead organisms. The capture/export contract below is the next D6 slice;
 browser retention and graph presentation remain separate decisions. Identity integration
 preserves existing references; its full state-hash coverage is a separate refresh.
-Native schema 7 identifies the identity-aware construction footprint, without adding
-individual history rows to population telemetry. Historical schemas 3-6 validate
-their original budgets against the layout before these identity arrays existed;
-constructing a current World still requires the complete current allocation budget.
-
-Historical footprint validation has one core-owned `LayoutEra` inventory. Shells
-map their supported wire versions to an era, rather than selecting feature-specific
-validators or relying on parameter normalization to choose buffers. Normalization
-and rejection of unsupported historical feature claims remain boundary concerns.
-World construction always uses the current era; selecting a historical inventory
-does not authorize an old runtime layout or add checkpoint migration support.
+Population telemetry carries no individual history rows. Native metrics are read only
+at the current schema; older metrics files are rejected rather than migrated, so the
+core keeps one storage layout and validates every params document against it.
 
 **DECIDED for M5 history capture and native export:** record species origins and
 extinctions, not every organism's life. Each origin records the new species, its
