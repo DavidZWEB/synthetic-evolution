@@ -3,6 +3,7 @@
 //! Describes boundary/capacity outcomes without deciding reproduction or logging.
 //! Counters belong to observing shells; the ordinary tick uses a no-op observer.
 
+use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::arena::AllocationFailure;
@@ -94,15 +95,24 @@ impl SpawnFailureCounts {
 
 /// An imported body must lie inside the ranges every birth keeps bodies within, or one
 /// agent could carry a size whose feeding reach validation never covered, or a muscle
-/// whose force overflows (spec §3.5). `size` is the radius the spawn requests.
+/// whose force overflows (spec §3.5). `size` and `signature` are the radius and colour
+/// the agent will carry; a colour outside `[0, 1]` would reach every eye that sees it.
 pub(crate) fn validate_body(
     genes: &[Gene],
     size: f32,
+    signature: Vec3,
     body: &BodyParams,
 ) -> Result<(), SpawnError> {
     let inside = |value: f32, [low, high]: [f32; 2]| (low..=high).contains(&value);
     if !inside(size, body.size_range) {
         return Err(SpawnError::BodyTraits("size is outside body.size_range"));
+    }
+    if !signature
+        .to_array()
+        .into_iter()
+        .all(|channel| inside(channel, [0.0, 1.0]))
+    {
+        return Err(SpawnError::BodyTraits("signature is outside [0, 1]"));
     }
     for gene in genes {
         let Gene::Body(gene) = gene else { continue };

@@ -378,8 +378,18 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
                 "an agent genome is incoherent or exceeds its limits",
             ));
         }
-        if spawn::validate_body(genes, agent.size, &world.params.body).is_err() {
+        if spawn::validate_body(genes, agent.size, agent.signature, &world.params.body).is_err() {
             return Err(invalid("an agent body is outside the configured ranges"));
+        }
+        // Founders, births, and spawns all take a trait the genome carries from it.
+        let carries =
+            |trait_, value: f32| genome::body_trait(genes, trait_).is_none_or(|g| g == value);
+        if !(carries(BodyTrait::Size, agent.size)
+            && carries(BodyTrait::SignatureR, agent.signature.x)
+            && carries(BodyTrait::SignatureG, agent.signature.y)
+            && carries(BodyTrait::SignatureB, agent.signature.z))
+        {
+            return Err(invalid("an agent body disagrees with its genome"));
         }
         let lengths = [
             (agent.genome.block, genes.len()),
@@ -669,7 +679,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 14] = [
+        let cases: [(&str, Corrupt); 16] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -699,6 +709,8 @@ mod tests {
             }),
             ("unissued birth ID", |c| c.next_birth = 0),
             ("body outside its range", |c| c.agents[0].size = 100.0),
+            ("size unlike its gene", |c| c.agents[0].size *= 1.5),
+            ("colour unlike its gene", |c| c.agents[0].signature.x = 0.0),
         ];
         for (name, corrupt) in cases {
             let mut c = checkpoint();

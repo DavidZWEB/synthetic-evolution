@@ -126,7 +126,10 @@ pub struct SpawnSpec {
     pub position: Vec3,
     pub yaw: f32,
     pub energy: f32,
+    /// The radius for a genome without a size gene; a size gene decides it otherwise.
     pub size: f32,
+    /// The colour for a genome without signature genes; each one it carries decides
+    /// its channel otherwise.
     pub signature: Vec3,
     /// `AgentId::NULL` for a founder.
     /// Otherwise this names the current live parent at admission, not a saved ancestry ID.

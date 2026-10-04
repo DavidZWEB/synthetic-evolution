@@ -53,9 +53,22 @@ impl World {
         on_species: impl FnMut(SpeciesEvent),
         on_history: impl FnMut(HistoryEvent, Option<&[Gene]>),
     ) -> Result<AgentId, SpawnError> {
+        // The genome decides every body trait it carries, as it does for founders and
+        // births, so an imported agent looks like the offspring it will have. The
+        // caller's size and colour stand in only for traits it omits (spec §3.5).
+        let carried = |trait_, fallback| genome::body_trait(genes, trait_).unwrap_or(fallback);
+        let spec = &SpawnSpec {
+            size: carried(BodyTrait::Size, spec.size),
+            signature: Vec3::new(
+                carried(BodyTrait::SignatureR, spec.signature.x),
+                carried(BodyTrait::SignatureG, spec.signature.y),
+                carried(BodyTrait::SignatureB, spec.signature.z),
+            ),
+            ..*spec
+        };
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
-        spawn::validate_body(genes, spec.size, &self.params.body)?;
+        spawn::validate_body(genes, spec.size, spec.signature, &self.params.body)?;
         let id = self.spawn_validated(spec, genes, on_species, on_history)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep
         // subsequent structural edits from reusing them (spec section 3.1).
