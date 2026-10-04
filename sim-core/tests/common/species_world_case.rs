@@ -11,7 +11,7 @@ use sim_core::genome::{Action, ConnectionGene, EffectorGene, Gene, NeuronGene};
 use sim_core::history::{Event, EventKind, Parent, Record, Recorder};
 use sim_core::ids::{AgentId, BirthId, InnovationId, NULL_ID, SpeciesId};
 use sim_core::species::SpeciesEventCounts;
-use sim_core::{SimParams, SpawnSpec, World};
+use sim_core::{SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
 pub const EVOLVING_GOLDEN: u64 = 0x7693_6bb1_5102_1ff7;
@@ -46,7 +46,7 @@ fn genes(weight: f32) -> [Gene; 4] {
 }
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default().without_structural_mutation();
+    let mut params = crate::scenario::params();
     params.world.max_agents = 4;
     params.plants.max_plants = 1;
     params.plants.max_energy = 600.0;

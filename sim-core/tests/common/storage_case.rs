@@ -6,7 +6,7 @@
 use sim_core::control::BrainInheritance;
 use sim_core::genome::{Activation, BodyTrait, Gene, NeuronGene, body_trait};
 use sim_core::spawn::SpawnFailureCounts;
-use sim_core::{AgentId, Rng, SimParams, SpawnSpec, World};
+use sim_core::{AgentId, Rng, SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
 pub const EVOLVING_GOLDEN: u64 = 0xa0a2_3fd4_eb0a_17ed;
@@ -15,7 +15,7 @@ pub const CONTROL_GOLDEN: u64 = 0x2544_0d46_7ce5_a7c8;
 const EXTRA: usize = 8;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default().without_structural_mutation();
+    let mut params = crate::scenario::params();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;
