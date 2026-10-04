@@ -1319,6 +1319,8 @@ One JSON line per sample interval: population by species, trophic biomass by tie
 
 **DECIDED (M8): report functional wiring alongside size.** Gene counts include structure nothing reads, so each cohort also reports, per living agent, the hidden neurons on an enabled path from an input (a sensor target or an oscillator) to an output (an effector source), the sensors with a target on such a path, and the effectors driven from any input. These describe wiring, not usefulness; they exist because M8 found genomes growing while perception was shed. Files written before them report wiring as unknown.
 
+**DECIDED (Phase 3): diet telemetry.** Each agent keeps lifetime totals of energy eaten from plants and from other agents, the latter counting both a bite's kept share and carrion. A carnivore is an agent, or a species' living members together, that took more than half its intake from other agents; an agent that has eaten nothing is neither, until it eats. Each cohort records swings, hits, and kills since the world began, the corpses on the ground, intake by source, biomass by tier (carnivore, plant-eater, unfed), and each species' meat share. `diagnose` reports the two trophic rows of the table below. `summarize` counts **persistent carnivores**: species alive at the end that ate mostly meat at every sample for at least the last half of the run. That count is the measurement behind §8's Phase 3 criterion. Files written before the bite report all of this as unknown.
+
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
 
 | Signal | Diagnosis |

@@ -4,7 +4,7 @@
 //! the native shell when metrics are requested, so ordinary simulation ticks pay no
 //! instrumentation cost.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use crate::Result;
@@ -86,6 +86,11 @@ pub struct Summary {
 pub struct SpeciesPopulation {
     pub species_id: SpeciesId,
     pub population: u32,
+    /// The share of its living members' lifetime intake eaten from other agents, by
+    /// bites and carrion (spec §7.9). Absent when they have eaten nothing yet, or in a
+    /// file written before diets were recorded.
+    #[serde(default)]
+    pub meat_share: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -163,6 +168,33 @@ pub struct WorldMetrics {
     /// them; their absence is unknown, not a population of reference bodies.
     #[serde(default)]
     pub bodies: Option<BodyMetrics>,
+    /// Who eats whom (spec §7.9). Files written before the bite did not record it; its
+    /// absence is unknown, not a world without predation.
+    #[serde(default)]
+    pub predation: Option<PredationMetrics>,
+}
+
+/// Bites, kills, carrion, and diet, at one sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PredationMetrics {
+    /// Swings, hits, and kills since the world began.
+    pub swings: u64,
+    pub hits: u64,
+    pub kills: u64,
+    /// Corpses on the ground, and the energy they hold.
+    pub corpses: u32,
+    pub corpse_energy: f64,
+    /// What the living have eaten over their lives: from plants, and from other agents
+    /// through bites and carrion.
+    pub eaten_plants: f64,
+    pub eaten_animals: f64,
+    /// Energy held by living agents that took most of their food from other agents,
+    /// by those that took at least half from plants, and by those that have eaten
+    /// nothing yet: the trophic tiers spec §7.9 diagnoses, with newborns kept out of
+    /// both until they eat.
+    pub carnivore_biomass: f64,
+    pub herbivore_biomass: f64,
+    pub unfed_biomass: f64,
 }
 
 /// Each evolvable body trait across living agents, at one sample.
@@ -345,6 +377,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         }
     }
 
+    let diets = species_diets(world);
     let ledger = world.ledger();
     let plant_energy = finite(world.plants().total_energy(), "plant energy")?;
     let total_energy = finite(world.total_energy(), "total energy")?;
@@ -379,6 +412,9 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
                 .map(|(species_id, population)| SpeciesPopulation {
                     species_id,
                     population,
+                    meat_share: diets
+                        .get(&species_id.raw())
+                        .and_then(|&diet| meat_share(diet)),
                 })
                 .collect(),
             unclassified_population: world.unclassified_population(),
@@ -391,7 +427,58 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
             clustering: plant_clustering(world.plants(), world.params().world.size),
         }),
         bodies: Some(body_metrics(world)),
+        predation: Some(predation_metrics(world)?),
     })
+}
+
+/// The share of `(plants, animals)` eaten from other agents, absent when nothing was.
+pub(crate) fn meat_share((plants, animals): (f64, f64)) -> Option<f64> {
+    let eaten = plants + animals;
+    (eaten > 0.0).then(|| animals / eaten)
+}
+
+/// Each classified species' living members' lifetime intake, from plants and from
+/// other agents.
+fn species_diets(world: &World) -> BTreeMap<u32, (f64, f64)> {
+    let agents = world.agents();
+    let mut diets = BTreeMap::new();
+    for id in world.pool().iter_live() {
+        let i = id.index();
+        let diet: &mut (f64, f64) = diets.entry(agents.species_id[i]).or_default();
+        diet.0 += f64::from(agents.eaten_plants[i]);
+        diet.1 += f64::from(agents.eaten_animals[i]);
+    }
+    diets
+}
+
+fn predation_metrics(world: &World) -> Result<PredationMetrics> {
+    let counts = world.bite_counts();
+    let agents = world.agents();
+    let mut metrics = PredationMetrics {
+        swings: counts.swings,
+        hits: counts.hits,
+        kills: counts.kills,
+        corpses: world.corpses().count() as u32,
+        corpse_energy: finite(world.corpses().total_energy(), "corpse energy")?,
+        ..PredationMetrics::default()
+    };
+    for id in world.pool().iter_live() {
+        let i = id.index();
+        let plants = f64::from(agents.eaten_plants[i]);
+        let animals = f64::from(agents.eaten_animals[i]);
+        metrics.eaten_plants += plants;
+        metrics.eaten_animals += animals;
+        let held = f64::from(agents.energy[i]) + agents.energy_reserve[i];
+        // Most of its food from other agents: what spec §7.9 calls a carnivore.
+        if plants + animals == 0.0 {
+            metrics.unfed_biomass += held;
+        } else if animals > plants {
+            metrics.carnivore_biomass += held;
+        } else {
+            metrics.herbivore_biomass += held;
+        }
+    }
+    Ok(metrics)
 }
 
 fn body_metrics(world: &World) -> BodyMetrics {
@@ -842,11 +929,13 @@ mod tests {
             vec![
                 SpeciesPopulation {
                     species_id: SpeciesId::new(second_species),
-                    population: 1
+                    population: 1,
+                    meat_share: None,
                 },
                 SpeciesPopulation {
                     species_id: SpeciesId::new(third_species),
-                    population: 1
+                    population: 1,
+                    meat_share: None,
                 },
             ]
         );

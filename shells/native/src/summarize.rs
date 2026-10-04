@@ -15,7 +15,7 @@ use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 use crate::Result;
 use crate::cli::SummarizeArgs;
 use crate::diagnose::control_label;
-use crate::metrics::{Retune, RunHeader, RunSample, WorldMetrics};
+use crate::metrics::{Retune, RunHeader, RunSample, WorldMetrics, meat_share};
 use crate::metrics_reader::read_metrics;
 
 /// Final-sample metrics reported per cohort, in output order.
@@ -39,6 +39,12 @@ const METRICS: &[&str] = &[
     "mouth_p25",
     "mouth_median",
     "mouth_p75",
+    "swings",
+    "kills",
+    "meat_share",
+    "carnivore_biomass_share",
+    "carnivore_species",
+    "persistent_carnivores",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -409,6 +415,7 @@ fn cohort_values(
     let complexity = last.complexity.as_ref();
     let wiring = complexity.and_then(|c| c.wiring.as_ref());
     let bodies = last.bodies.as_ref();
+    let predation = last.predation;
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
@@ -433,6 +440,20 @@ fn cohort_values(
         bodies.map(|b| b.mouth.p25),
         bodies.map(|b| b.mouth.median),
         bodies.map(|b| b.mouth.p75),
+        predation.map(|p| p.swings as f64),
+        predation.map(|p| p.kills as f64),
+        predation.and_then(|p| meat_share((p.eaten_plants, p.eaten_animals))),
+        predation.and_then(|p| {
+            let held = p.carnivore_biomass + p.herbivore_biomass + p.unfed_biomass;
+            (held > 0.0).then(|| p.carnivore_biomass / held)
+        }),
+        predation.and(species).map(|s| {
+            s.populations
+                .iter()
+                .filter(|entry| carnivorous(entry.meat_share))
+                .count() as f64
+        }),
+        persistent_carnivores(samples, ticks, &select),
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),
@@ -539,6 +560,45 @@ fn species_persistence(
     (Some(persistent as f64), Some(longest as f64))
 }
 
+/// Most of its intake from other agents: spec §8's Phase 3 carnivore.
+fn carnivorous(meat_share: Option<f64>) -> bool {
+    meat_share.is_some_and(|share| share > 0.5)
+}
+
+/// Species alive at the end that have been carnivorous at every sample since at least
+/// half the run before it: spec §8's Phase 3 measure, a carnivorous lineage that
+/// persisted. Unavailable unless every sample recorded diets.
+fn persistent_carnivores(
+    samples: &[RunSample],
+    ticks: u64,
+    select: &impl Fn(&RunSample) -> &WorldMetrics,
+) -> Option<f64> {
+    let mut since: BTreeMap<u32, u64> = BTreeMap::new();
+    for sample in samples {
+        let metrics = select(sample);
+        metrics.predation?;
+        let species = metrics.species.as_ref()?;
+        // A species absent here, or eating mostly plants, starts again.
+        let mut next = BTreeMap::new();
+        for entry in species
+            .populations
+            .iter()
+            .filter(|e| carnivorous(e.meat_share))
+        {
+            let id = entry.species_id.raw();
+            next.insert(id, since.get(&id).copied().unwrap_or(sample.tick));
+        }
+        since = next;
+    }
+    let end = samples.last()?.tick;
+    Some(
+        since
+            .values()
+            .filter(|&&first| end - first >= ticks / 2)
+            .count() as f64,
+    )
+}
+
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &byte| {
         (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -643,7 +703,7 @@ pub(crate) fn write_human(output: &mut impl Write, summary: &Summary) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::{SpeciesMetrics, SpeciesPopulation};
+    use crate::metrics::{PredationMetrics, SpeciesMetrics, SpeciesPopulation};
     use sim_core::ids::SpeciesId;
 
     fn sample(tick: u64, species: &[u32]) -> RunSample {
@@ -655,6 +715,7 @@ mod tests {
                     .map(|&id| SpeciesPopulation {
                         species_id: SpeciesId::new(id),
                         population: 5,
+                        meat_share: None,
                     })
                     .collect(),
                 ..SpeciesMetrics::default()
@@ -699,6 +760,67 @@ mod tests {
         assert_eq!(
             species_persistence(&legacy, 1_000, &|s| &s.evolving),
             (None, None)
+        );
+    }
+
+    /// A sample whose species eat the given shares of meat, with diets recorded.
+    fn diet_sample(tick: u64, species: &[(u32, Option<f64>)]) -> RunSample {
+        let ids: Vec<u32> = species.iter().map(|&(id, _)| id).collect();
+        let mut sample = sample(tick, &ids);
+        let populations = &mut sample.evolving.species.as_mut().unwrap().populations;
+        for (entry, &(_, share)) in populations.iter_mut().zip(species) {
+            entry.meat_share = share;
+        }
+        sample.evolving.predation = Some(PredationMetrics::default());
+        sample
+    }
+
+    #[test]
+    fn a_persistent_carnivore_ate_mostly_meat_at_every_sample_for_half_the_run() {
+        // Species 1 has eaten mostly meat since tick 0. Species 2 slipped back to plants
+        // at tick 500, and 3 only turned to meat late. Species 4 ate meat throughout,
+        // then died out.
+        let samples = vec![
+            diet_sample(
+                0,
+                &[
+                    (1, Some(0.9)),
+                    (2, Some(0.8)),
+                    (3, Some(0.1)),
+                    (4, Some(0.9)),
+                ],
+            ),
+            diet_sample(
+                500,
+                &[
+                    (1, Some(0.7)),
+                    (2, Some(0.4)),
+                    (3, Some(0.2)),
+                    (4, Some(0.9)),
+                ],
+            ),
+            diet_sample(800, &[(1, Some(0.6)), (2, Some(0.9)), (3, Some(0.9))]),
+            diet_sample(1_000, &[(1, Some(0.51)), (2, Some(0.9)), (3, Some(0.9))]),
+        ];
+        let carnivores = persistent_carnivores(&samples, 1_000, &|s| &s.evolving);
+        assert_eq!(carnivores, Some(1.0));
+        // Half-and-half is not most, and a species that has eaten nothing is not one.
+        let mut even = samples.clone();
+        for sample in &mut even {
+            for entry in &mut sample.evolving.species.as_mut().unwrap().populations {
+                entry.meat_share = entry.meat_share.map(|_| 0.5);
+            }
+        }
+        assert_eq!(
+            persistent_carnivores(&even, 1_000, &|s| &s.evolving),
+            Some(0.0)
+        );
+        // Diets not recorded at every sample cannot establish persistence.
+        let mut legacy = samples.clone();
+        legacy[1].evolving.predation = None;
+        assert_eq!(
+            persistent_carnivores(&legacy, 1_000, &|s| &s.evolving),
+            None
         );
     }
 
