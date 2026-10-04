@@ -825,6 +825,14 @@ neurons and connections bounded by genes, and zeroes exactly when population is 
 These are drift descriptors, not a complexity score. `genome_variants` still counts
 exact genomes.
 
+`complexity.wiring` adds three distributions of the same shape describing structure
+that can affect behavior: `wired_hidden_neurons` (hidden neurons on an enabled path
+from a sensor target or oscillator to an effector source), `wired_sensors` (sensors
+with a target on such a path), and `driven_effectors` (effectors reachable from any
+input; the rest emit a constant). Wired hidden neurons are bounded by neurons. Files
+written before wiring was recorded omit it and read it as unknown. `diagnose`,
+`summarize`, and the browser species panel report it alongside sizes.
+
 Each cohort also has a required **`history`** key: omitting it is rejected,
 not read as capture being off. It is `null` when `--history` was not requested, otherwise `capacity` (per cohort), `retained_events`, `dropped_events`,
 and `gaps` as of that sample. Each sample drains the recorder first, so these equal

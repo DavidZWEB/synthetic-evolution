@@ -413,6 +413,7 @@ mod tests {
                 max: 3,
                 mean: 1.5,
             },
+            wiring: None,
         })
         .unwrap()
     }

@@ -34,6 +34,9 @@ const METRICS: &[&str] = &[
     "neurons_max",
     "connections_mean",
     "enabled_connections_mean",
+    "wired_hidden_neurons_mean",
+    "wired_sensors_mean",
+    "driven_effectors_mean",
     "active_species",
     "persistent_species",
     "longest_species_span",
@@ -94,6 +97,7 @@ const NOTES: &[&str] = &[
     "cohorts are reported side by side and are not ranked or scored",
     "persistent_species: species alive at the end that were first sampled at least half the run earlier",
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
+    "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
     "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
     "peak_arena_use: the fullest arena's used fraction at the final sample",
 ];
@@ -334,6 +338,7 @@ fn cohort_values(
 ) -> Vec<Option<f64>> {
     let last = select(samples.last().expect("checked non-empty"));
     let complexity = last.complexity.as_ref();
+    let wiring = complexity.and_then(|c| c.wiring.as_ref());
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
@@ -352,6 +357,9 @@ fn cohort_values(
         complexity.map(|c| f64::from(c.neurons.max)),
         complexity.map(|c| c.connections.mean),
         complexity.map(|c| c.enabled_connections.mean),
+        wiring.map(|w| w.wired_hidden_neurons.mean),
+        wiring.map(|w| w.wired_sensors.mean),
+        wiring.map(|w| w.driven_effectors.mean),
         species.map(|s| s.populations.len() as f64),
         persistent,
         longest,

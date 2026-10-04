@@ -43,3 +43,24 @@ test('disordered, out-of-range, or unbounded distributions are rejected', () => 
   }
   assert.throws(() => decodeComplexity('[]', 1));
 });
+
+test('wiring decodes when recorded, is null when absent, and is validated', () => {
+  assert.equal(decodeComplexity(JSON.stringify(valid), 32).wiring, null);
+  const wired = { min: 0, p25: 1, median: 2, p75: 2, max: 3, mean: 1.5 };
+  const withWiring = {
+    ...valid,
+    wiring: { wired_hidden_neurons: wired, wired_sensors: wired, driven_effectors: wired },
+  };
+  const decoded = decodeComplexity(JSON.stringify(withWiring), 32);
+  assert.deepEqual(decoded.wiring?.drivenEffectors, wired);
+  for (const wiring of [
+    [],
+    { ...withWiring.wiring, wired_sensors: undefined },
+    { ...withWiring.wiring, wired_hidden_neurons: { ...wired, max: 16, mean: 15.5 } },
+  ]) {
+    assert.throws(
+      () => decodeComplexity(JSON.stringify({ ...valid, wiring }), 32),
+      `accepted ${JSON.stringify(wiring)}`,
+    );
+  }
+});

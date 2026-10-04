@@ -60,6 +60,18 @@ pub(crate) fn write_human(output: &mut impl Write, report: &DiagnosisReport) -> 
         ] {
             writeln!(output, "      {label}: {}", distribution_text(distribution))?;
         }
+        match &sizes.wiring {
+            Some(wiring) => {
+                for (label, distribution) in [
+                    ("wired hidden neurons", &wiring.wired_hidden_neurons),
+                    ("wired sensors", &wiring.wired_sensors),
+                    ("driven effectors", &wiring.driven_effectors),
+                ] {
+                    writeln!(output, "      {label}: {}", distribution_text(distribution))?;
+                }
+            }
+            None => writeln!(output, "      wiring: not recorded")?,
+        }
     }
     writeln!(output, "history capture:")?;
     for (name, status) in [

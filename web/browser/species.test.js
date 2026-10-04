@@ -230,6 +230,9 @@ test('genome complexity matches the native reference at the same completed tick'
       row('neurons', expected.neurons),
       row('connections', expected.connections),
       row('enabled connections', expected.enabled_connections),
+      row('wired hidden neurons', expected.wiring.wired_hidden_neurons),
+      row('wired sensors', expected.wiring.wired_sensors),
+      row('driven effectors', expected.wiring.driven_effectors),
     ]);
   }, { ...structural, species: { capacity: 256, threshold: 0.5 } }, { seed: '7', runFounders: 8 });
 });
