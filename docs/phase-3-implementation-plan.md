@@ -14,7 +14,7 @@ Design decisions live in the spec: §2.2b combat in the snapshot, §3.3 wired se
 §5.5 constants. This plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: M1 and M2 done; M3 next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1 and M2 done; M3's bite landed, with its diet and kill telemetry next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**. It is measured as a species
 whose members take most of their energy from other agents (bites and corpses),
 persisting for at least half a run on several seeds while plant-eaters persist beside
@@ -26,7 +26,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 | M0 Design | Recorded in the spec; revised 2026-10-04 from the research below |
 | M1 Corpses | Done: pool, decomposition, eating, sight, hashing, checkpoints, snapshot, and drawing |
 | M2 Evolvable bodies | Done: muscle and mouth genes, mass, gape, upkeep, the mutation operator at rate 0, and trait telemetry |
-| M3 The bite | Not started |
+| M3 The bite | In progress: the dormant bite, the two-pass swing, health, and kills landed; diet and kill telemetry next |
 | M4 Protecting innovation | Not started |
 | M5 Seeing predation | Not started |
 | M6 Calibration | Not started |
@@ -174,6 +174,16 @@ Spec §4.2 and §2.4.
 - Conservation and no allocation with combat on.
 - Checkpoint continuation through kills.
 - Native/WASM agreement.
+
+**Landed (mechanism)** with `founder.bite` off, so Phase 2's dynamics are unchanged.
+`storage.max_effectors` is 5, so a world with the bite needs no storage edit, while
+`effectors_per_slot` stays 4: 5,000 slots hold 4,000 biting founders. The gate is
+non-negative, since an agent without a bite drives it at 0. A cooldown counts whole
+ticks, never shorter than `cooldown_seconds`. Two bites on one agent sum their drives,
+and the stronger aims. An imported bite must aim on the plane and reach no further than
+half the world. The random control redraws the bite's bias with every other neural
+scalar, so once calibration turns the bite on, its children bite at random from birth;
+M6 should weigh that when comparing against it.
 
 ## M4 - Protecting innovation
 
