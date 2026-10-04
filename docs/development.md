@@ -293,12 +293,12 @@ winner, and metric definitions are printed with it. Each params file is a partia
 `SimParams` document (`{}` for shipped defaults). M8's published summaries live
 under `experiments/phase-2-m8/`.
 
-### Opt-in neural structural mutation (M2)
+### Neural structural mutation
 
-**Since M8 the structural rates ship enabled** (spec section 3.3's table): add
-connection 0.05, add neuron 0.02, toggle 0.02, add oscillator 0.01, remove connection
-0.02, remove neuron 0.01. Shared URLs and params files that omit them now get these
-rates; metrics and history files that omit a rate are read as the zero they ran.
+The structural rates ship enabled (spec section 3.3's table): add connection 0.05,
+add neuron 0.02, toggle 0.02, add oscillator 0.01, remove connection 0.02, remove
+neuron 0.01. Shared URLs and params files that omit them get these rates; metrics and
+history files that omit a rate are read as the zero they ran.
 Set every rate to zero (or call `SimParams::without_structural_mutation` in Rust) for
 fixed-topology runs. A partial params document like this overrides individual rates
 with `--params params.json` (the WASM constructor and `Sim.set_params` accept the same
@@ -320,28 +320,27 @@ JSON):
 }
 ```
 
-This is a protocol example, not a recommended configuration. Rates are per-offspring
-operator probabilities in `[0, 1]`, applied in the order shown: remove connection,
-remove neuron, toggle connection, add connection, then split an enabled connection
-to add a neuron. Initializers must be finite; when splitting is enabled,
+This is an example, not a recommended configuration. Rates are per-offspring
+operator probabilities in `[0, 1]`, applied in the order: remove connection, remove
+neuron, toggle connection, add connection, split an enabled connection to add a
+neuron, then add an oscillator with one outgoing connection. Initializers must be finite; when splitting is enabled,
 `abs(split_input_weight)` cannot exceed `mutation.weight_limit`. Rates and
 initializers can be retuned without resizing a world. Founders are not structurally
-mutated. Sensor operators are separately opt-in below; body mutation and sexual
-reproduction remain unavailable.
+mutated. Sensor operators are described below; body mutation and sexual reproduction
+are not part of Phase 2.
 
-Evolving offspring receive legacy neural-scalar mutation followed by sensor edits
-and then the five neural structural edits. Scalar-control offspring receive those
-same sensor and neural structural edits followed by a full neural-scalar redraw on
-the resulting topology, retaining sensors and other non-neural genes. This control
-**can inherit and evolve topology and sensors**: it is neither a no-evolution
-control nor the separate structural-null comparison planned for M8. Report both
+Evolving offspring receive neural-scalar mutation, then sensor edits, then the neural
+structural edits. Scalar-control offspring receive the same sensor and structural
+edits followed by a full neural-scalar redraw on the resulting topology, retaining
+sensors and other non-neural genes. This control **can inherit and evolve topology
+and sensors**: it is neither a no-evolution control nor the structural null. Report both
 cohorts' metric vectors across multiple seeds, not a ranking or a claim of useful
 structure based only on gene counts.
 
-### Opt-in sensors and founder composition (M3)
+### Sensor mutation and founder composition
 
-Both rates under **`SimParams.mutation.organs` ship at 0.001 since M8**. For example,
-to change them:
+Both rates under **`SimParams.mutation.organs` ship at 0.001**. For example, to
+change them:
 
 ```json
 {
@@ -367,8 +366,8 @@ wire those neurons. Rates must be in `[0, 1]`, modality weights finite and nonne
 and `neuron_bias` finite. Enabled addition requires a positive total modality weight.
 These rates, weights, and bias may be retuned on a running world.
 
-Founder composition is separately configurable at construction. The following opt-in
-partial JSON works with `--params params.json`, the WASM constructor, or the existing
+Founder composition is configurable at construction. This partial JSON, which spells
+out the shipped founder, works with `--params params.json`, the WASM constructor, or the existing
 shared URL `params` fragment:
 
 ```json
