@@ -19,8 +19,10 @@ use crate::params::MetabolismParams;
 /// Energy one agent burns in a **tick**, at this body, brain, sensor load, and force.
 ///
 /// `muscle` and `mouth` add `k · (trait² − 1)` each, zero at the reference body of 1,
-/// so a Phase 2 body pays exactly what it did (spec §3.5). `force` is the thrust a
-/// drive produced after muscle scaled it, not the acceleration mass leaves of it.
+/// so a Phase 2 body pays exactly what it did (spec §3.5). Below 1 they are discounts,
+/// and a bill they would take below zero is zero: upkeep dissipates energy and cannot
+/// create it (spec §5.1). `force` is the thrust a drive produced after muscle scaled
+/// it, not the acceleration mass leaves of it.
 ///
 /// Per tick, not per second, because that is how spec §5.5 states every constant in the
 /// table ("0.05 /tick") and how it states the one relationship that matters: idling is
@@ -43,13 +45,16 @@ pub fn cost_per_tick(
     force: f32,
     params: &MetabolismParams,
 ) -> f32 {
-    params.base
+    let bill = params.base
         + params.k_size * size * size
         + params.k_muscle * (muscle * muscle - 1.0)
         + params.k_mouth * (mouth * mouth - 1.0)
         + params.k_brain * brain_units as f32
         + params.k_sensor * sensor_load
-        + params.k_move * force * force
+        + params.k_move * force * force;
+    // Compared rather than `f32::max`, which may return either zero for -0 and +0: a
+    // byte-identical run needs the same zero on every target (spec §2.1).
+    if bill > 0.0 { bill } else { 0.0 }
 }
 
 /// How long an idle agent survives on `energy`, in ticks, at this size and brain, with
@@ -136,6 +141,36 @@ mod tests {
             (weak - reference + p.k_muscle * 0.75).abs() < 1e-6,
             "weaker muscle is cheaper to carry"
         );
+    }
+
+    #[test]
+    fn discounts_never_take_the_bill_below_zero() {
+        // Every other cost zero, so the weakest muscle's discount is the whole bill.
+        // Paying it out would create energy (spec §5.1).
+        let p = MetabolismParams {
+            base: 0.0,
+            k_size: 0.0,
+            k_brain: 0.0,
+            k_sensor: 0.0,
+            k_move: 0.0,
+            k_muscle: 1.0,
+            k_mouth: 0.0,
+        };
+        let weak = cost_per_tick(3.0, 0.25, 1.0, 13, 3.0, 0.0, &p);
+        assert_eq!(weak.to_bits(), 0.0f32.to_bits(), "{weak}");
+        assert_eq!(cost_per_tick(3.0, 2.0, 1.0, 13, 3.0, 0.0, &p), 3.0);
+        // A bill of -0 is charged as +0, the same zero on every target.
+        let negative_zero = MetabolismParams {
+            base: -0.0,
+            k_size: -0.0,
+            k_brain: -0.0,
+            k_sensor: -0.0,
+            k_move: -0.0,
+            k_muscle: -0.0,
+            k_mouth: -0.0,
+        };
+        let zero = cost_per_tick(3.0, 1.0, 1.0, 13, 3.0, 0.5, &negative_zero);
+        assert_eq!(zero.to_bits(), 0.0f32.to_bits());
     }
 
     #[test]
