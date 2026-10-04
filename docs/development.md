@@ -297,8 +297,14 @@ population; what foraging changes is how much enters, since a full plant refuses
 share. Agents gain energy only by eating, so intake between samples is the change in
 agent-held energy plus what was dissipated; it matches the plants' side of the books
 exactly when no founders are added mid-run. Each params file is a partial
-`SimParams` document (`{}` for shipped defaults). M8's published summaries live
-under `experiments/phase-2-m8/`.
+`SimParams` document (`{}` for shipped defaults). Published summaries live under
+`experiments/` (M8 in `phase-2-m8/`, the perception sweep in `perception-sweep/`).
+
+With `HISTORY=1`, each scalar-control run also writes a species-history archive with
+representative genomes beside its metrics (`<run>.history.ndjson`; the structural null
+writes metrics only). `python3 experiments/phase-2-m8/wiring.py <archive>` then reports
+the functional wiring of species-founding genomes by quarter of the run, which
+complements the population-wide `wired_*` metrics.
 
 ### Neural structural mutation
 

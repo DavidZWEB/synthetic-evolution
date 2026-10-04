@@ -1,0 +1,42 @@
+configuration params=2e9a34c3f9179ab7 founders=2000 ticks=300000 sample_every=5000
+  seeds: 42, 117, 314
+  source revisions: ac36feaed9efd1a9e9b4980805523a666b14576a
+  metric (mean ± sd [min–max]) | evolving (n=3)                     | scalar control (n=3)                       | structural null (n=3)               
+  extinct                      | 0 ± 0 [0–0]                        | 0 ± 0 [0–0]                                | 0 ± 0 [0–0]                         
+  population                   | 1589 ± 139.925 [1439–1716]         | 24 ± 7 [19–32]                             | 1609.333 ± 281.569 [1432–1934]      
+  descendants                  | 1584.333 ± 141.747 [1433–1714]     | 6.333 ± 4.163 [3–11]                       | 1605.333 ± 281.518 [1429–1930]      
+  genome_variants              | 790.667 ± 32.884 [766–828]         | 24 ± 7 [19–32]                             | 1519.333 ± 300.117 [1283–1857]      
+  agent_energy_mean            | 137.899 ± 26.636 [117.806–168.111] | 14394.276 ± 1348.924 [12857.541–15382.711] | 644.608 ± 547.562 [123.554–1215.298]
+  speed_mean                   | 1.731 ± 0.336 [1.426–2.091]        | 2.443 ± 0.538 [1.979–3.033]                | 1.294 ± 0.532 [0.706–1.745]         
+  supply_captured              | 0.690 ± 0.002 [0.687–0.692]        | 0.022 ± 0.007 [0.017–0.030]                | 0.656 ± 0.039 [0.625–0.700]         
+  brain_units_mean             | 18.171 ± 4.927 [15.300–23.860]     | 13 ± 0 [13–13]                             | 19.849 ± 2.553 [17.375–22.474]      
+  sensor_load_mean             | 1.098 ± 0.921 [0.205–2.045]        | 3 ± 0 [3–3]                                | 2.374 ± 0.751 [1.554–3.027]         
+  genome_genes_mean            | 29.538 ± 5.202 [26.370–35.542]     | 25 ± 0 [25–25]                             | 31.637 ± 2.795 [28.892–34.479]      
+  genome_genes_max             | 41 ± 5.568 [36–47]                 | 25.333 ± 0.577 [25–26]                     | 41.667 ± 2.082 [40–44]              
+  neurons_mean                 | 10.312 ± 1.623 [9.195–12.174]      | 9 ± 0 [9–9]                                | 11.181 ± 1.161 [10.162–12.445]      
+  neurons_max                  | 14.333 ± 1.528 [13–16]             | 9 ± 0 [9–9]                                | 15.667 ± 2.082 [14–18]              
+  connections_mean             | 7.859 ± 3.319 [5.784–11.687]       | 4 ± 0 [4–4]                                | 8.668 ± 1.410 [7.213–10.028]        
+  enabled_connections_mean     | 6.459 ± 1.737 [5.347–8.461]        | 4 ± 0 [4–4]                                | 7.071 ± 1.142 [5.778–7.939]         
+  wired_hidden_neurons_mean    | 1.026 ± 1.140 [0.194–2.326]        | 0 ± 0 [0–0]                                | 1.352 ± 0.532 [0.992–1.963]         
+  wired_sensors_mean           | 0.360 ± 0.310 [0.057–0.677]        | 1 ± 0 [1–1]                                | 0.774 ± 0.255 [0.495–0.995]         
+  driven_effectors_mean        | 2.917 ± 0.319 [2.598–3.237]        | 3.990 ± 0.018 [3.969–4]                    | 3.546 ± 0.254 [3.390–3.839]         
+  active_species               | 54.333 ± 18.717 [33–68]            | 6.333 ± 1.528 [5–8]                        | 38.667 ± 3.215 [35–41]              
+  persistent_species           | 18.667 ± 9.713 [8–27]              | 6.333 ± 1.528 [5–8]                        | 26.333 ± 8.737 [19–36]              
+  longest_species_span         | 300000 ± 0 [300000–300000]         | 300000 ± 0 [300000–300000]                 | 300000 ± 0 [300000–300000]          
+  species_created              | 108.667 ± 39.311 [64–138]          | 16.333 ± 5.859 [12–23]                     | 102.333 ± 8.737 [95–112]            
+  species_extinct              | 54.333 ± 20.599 [31–70]            | 10 ± 7.211 [4–18]                          | 63.667 ± 9.074 [54–72]              
+  unclassified_population      | 0 ± 0 [0–0]                        | 0 ± 0 [0–0]                                | 0 ± 0 [0–0]                         
+  structural_edits_applied     | 7413.333 ± 265.805 [7170–7697]     | 61.667 ± 18.771 [45–82]                    | 4887.667 ± 1513.133 [3674–6583]     
+  sensor_edits_applied         | 94.667 ± 30.534 [65–126]           | 2 ± 1.732 [1–4]                            | 77.667 ± 28.868 [61–111]            
+  capacity_refusals            | 0 ± 0 [0–0]                        | 0 ± 0 [0–0]                                | 0 ± 0 [0–0]                         
+  pool_full_refusals           | 0 ± 0 [0–0]                        | 0 ± 0 [0–0]                                | 0 ± 0 [0–0]                         
+  peak_arena_use               | 0.318 ± 0.028 [0.288–0.343]        | 0.005 ± 0.001 [0.004–0.006]                | 0.322 ± 0.056 [0.286–0.387]         
+
+note: values are each run's final sample; spread is across seeds, not time
+note: cohorts are reported side by side and are not ranked or scored
+note: persistent_species: species alive at the end that were first sampled at least half the run earlier
+note: longest_species_span: longest first-to-last sampled presence of any species, in ticks
+note: wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent
+note: supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)
+note: capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds
+note: peak_arena_use: the fullest arena's used fraction at the final sample

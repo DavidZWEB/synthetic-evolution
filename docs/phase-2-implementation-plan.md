@@ -21,7 +21,7 @@ are not evidence that useful complexity evolved.
 | M5 Phylogeny | Done: lifetime identities, bounded native/browser history archives |
 | M6 Observation and sharing | Done: schema 8 telemetry, species browser, origin graph, representative comparison |
 | M7 Manual checkpoints | Done: saved-run bundles with exact continuation in both shells |
-| M8 Founder experiments | Evidence reported, including the shipped-configuration rerun and species calibration; awaiting human review |
+| M8 Founder experiments | Evidence reported, including the shipped-configuration rerun, species calibration, and a perception sweep; awaiting human review |
 | M9 Acceptance | Not started |
 
 ## Delivered
@@ -50,22 +50,28 @@ are not evidence that useful complexity evolved.
 - **M8** — Multi-seed tooling (`scripts/experiment.sh`, `native summarize`), the
   structural null, founder-viability and structural-null evidence, the minimal
   founder, oscillator addition, and structural/sensor mutation shipped enabled.
+  After M8: population-wide functional-wiring telemetry (`wired_hidden_neurons`,
+  `wired_sensors`, `driven_effectors`), the `supply_captured` foraging measure in
+  `native summarize`, and the perception sweep.
 
 ## Open work
 
-The shipped-configuration rerun and species calibration are reported in
-[`phase-2-m8-evidence.md`](phase-2-m8-evidence.md): growth is still not distinguished
-from the structural null, evolving lineages shed perception, the threshold (not
-deletion) sets species counts.
+Evidence is in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md). Brain growth is
+still not distinguished from the structural null, and the threshold (not deletion)
+sets species counts. Evolving lineages disconnect perception. A sweep of food
+patchiness and scarcity found no plant setting where perception pays: selection tunes
+movement, not sensing.
 
-1. **Make perception pay, then re-measure.** The leading explanation for growth that
-   the null cannot distinguish is an environment where a blind, clock-driven grazer
-   does as well as a forager. Investigate with parameters first (food input,
-   density, and patchiness; sensor and brain costs), across seeds, reporting
-   functional wiring alongside size. This is tuning, not a mechanism change.
-2. **Functional-complexity telemetry.** Add to the metrics how much structure lies on
-   a sensor-to-effector path (`experiments/phase-2-m8/wiring.py` is the prototype),
-   so growth can be judged by what is wired in rather than gene counts.
+1. **Decide what the environment should reward.** Clock-driven grazing competes
+   because plants are fixed sites regrowing in place, dense enough that covering
+   ground finds food. Untested tuning remains: chemo signal quality (`chemo_radius`,
+   `scent_rate`) and sensor cost. The likelier lever is a mechanism change, such as
+   relocating depleted sites or spec §5.3's nutrient heterogeneity. That needs
+   discussion and a spec update before code.
+2. **Check whether evolved brains use their sensors.** For example, silence sensors
+   in a resumed evolved world and compare `supply_captured` against an intact
+   continuation. Probably possible as native-shell tooling over a saved run, without
+   a sim-core change; confirm that when designing it.
 3. **Species reporting.** Report persistent species at more than one threshold; the
    0.5 default stays a provisional scale.
 4. **M9 acceptance**, below.
