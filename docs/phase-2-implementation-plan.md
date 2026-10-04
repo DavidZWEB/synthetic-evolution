@@ -5,11 +5,14 @@ Phase 2 builds the **genetic architecture** from
 decisions live in the spec; this plan tracks status and the remaining work. Phase 1's
 acceptance evidence is in [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M1–M9 are implemented; M10 acceptance needs human judgment.** The success criterion is **brains grow in complexity and
-distinct species appear**, judged by a human with reproducible multi-seed evidence
-and both controls alongside: the scalar control and the structural null (spec §7.8).
-More genes or more cluster labels alone are not evidence that useful complexity
-evolved.
+**Status: complete.** Phase 2 was accepted on 2026-10-04, against its success
+criterion: **brains grow in complexity and distinct species appear**, judged with
+reproducible multi-seed evidence and both controls alongside (the scalar control and
+the structural null, spec §7.8). The project owner delegated M10's watching and
+final call to the coding agent, so that judgment is the agent's. The record, its
+reasoning, and what would overturn it are in
+[`phase-2-acceptance.md`](phase-2-acceptance.md). Work continues in
+[`phase-3-implementation-plan.md`](phase-3-implementation-plan.md).
 
 | Milestone | State |
 |---|---|
@@ -21,9 +24,9 @@ evolved.
 | M5 Phylogeny | Done: lifetime identities, bounded native/browser history archives |
 | M6 Observation and sharing | Done: schema 8 telemetry, species browser, origin graph, representative comparison |
 | M7 Manual checkpoints | Done: saved-run bundles with exact continuation in both shells |
-| M8 Founder experiments | Evidence reported, including the shipped-configuration rerun, species calibration, and a perception sweep; awaiting human review |
+| M8 Founder experiments | Evidence reported, including the shipped-configuration rerun, species calibration, and a perception sweep; its open questions answered by M10's evidence |
 | M9 Plant ecology | Done: stock-dependent regrowth, patchy fertility, turnover; calibrated and shipped |
-| M10 Acceptance | Not started |
+| M10 Acceptance | Accepted 2026-10-04 by the agent under the owner's delegation; [record](phase-2-acceptance.md) |
 
 ## Delivered
 
@@ -58,22 +61,25 @@ evolved.
   map for patchy placement, and starvation turnover with local dispersal; plant
   clustering and reseed telemetry; calibrated defaults.
 
-## Open work
+## Outcome
 
-Evidence is in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md). Under Phase 1's
-plants, brain growth was not distinguished from the structural null and evolving
-lineages shed perception. With M9's plant ecology shipped, evolving worlds sustain
-more agents than the null on every seed and capture as much food or more; added
-structure exceeds the null's on two of three seeds, and perception is kept on two.
-The threshold, not deletion, sets species counts.
+Evidence before M10 is in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md); M10's
+is in [`phase-2-acceptance.md`](phase-2-acceptance.md). Over 1,000,000 ticks on five
+seeds, evolving worlds outnumber the structural null and capture more food on every
+seed, at shipped and at half plant input. Their brains keep adding connections and
+genes while both controls level off. What grew is motor circuitry, most likely
+shaping the founders' oscillator rhythms: a food-scent knockout costs evolved worlds
+nothing, while the null loses up to 16% of its capture. At every threshold tested,
+evolving worlds hold more species at any moment, with more turnover; at the coarse
+threshold they also keep more long-lived species.
 
-1. **Check whether evolved brains use their sensors.** For example, silence sensors
-   in a resumed evolved world and compare `supply_captured` against an intact
-   continuation. Probably possible as native-shell tooling over a saved run, without
-   a sim-core change; confirm that when designing it.
-2. **Species reporting.** Report persistent species at more than one threshold; the
-   0.5 default stays a provisional scale.
-3. **M10 acceptance**, below.
+Carried forward rather than resolved:
+
+1. **Perception is unused.** Evolved lineages shed their sensors and forage without
+   them. Phase 3's predators and prey are the next test of whether sensing pays;
+   rerun the knockout once bites are on.
+2. **Species thresholds stay provisional.** Report persistent species at more than
+   one threshold whenever species are a claim.
 
 ## M9 - Plant ecology (done)
 
@@ -109,6 +115,9 @@ misleading control comparison. A missing or inconclusive structural comparison b
 acceptance rather than being waived. Record seeds, complete params, source revision,
 both control protocols, duration, metric variance, limitations, and what was observed.
 Mechanical success alone cannot mark this phase complete.
+
+Done: the evidence, the delegation, and the decision are recorded in
+[`phase-2-acceptance.md`](phase-2-acceptance.md).
 
 ## Scope
 
