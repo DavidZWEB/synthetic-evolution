@@ -13,7 +13,9 @@ use sim_core::ids::{AgentId, BirthId, InnovationId, NULL_ID, SpeciesId};
 use sim_core::species::SpeciesEventCounts;
 use sim_core::{SpawnSpec, World};
 
-// M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
+// Phase 3 M2 refresh: founders carry muscle and mouth genes, and the hash covers both
+// (spec §3.5). M5's coverage-only refresh before it added lifetime birth identities
+// (spec section 7.8).
 pub const EVOLVING_GOLDEN: u64 = 0xd1b5_e2fa_0ce1_c72e;
 pub const CONTROL_GOLDEN: u64 = 0xd864_2add_7fbd_632b;
 

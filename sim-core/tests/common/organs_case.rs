@@ -6,6 +6,8 @@
 //! M4 integration first refreshed only the control reference for real species labels.
 //! The subsequent coverage-only refresh adds full classifier state to both values.
 //! M5's additional coverage-only refresh includes lifetime birth identities.
+//! Phase 3 M2 refreshes both again: founders carry muscle and mouth genes, and the
+//! hash covers them.
 
 use sim_core::World;
 use sim_core::control::BrainInheritance;
