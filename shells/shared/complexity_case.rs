@@ -9,7 +9,7 @@ pub const SEED: u64 = 7;
 pub const FOUNDERS: u32 = 8;
 pub const TICKS: u32 = 40;
 pub const EXPECTED: &str = concat!(
-    r#"{"genome_genes":{"min":33,"p25":33,"median":34,"p75":34,"max":35,"mean":34.0},"#,
+    r#"{"genome_genes":{"min":35,"p25":35,"median":36,"p75":36,"max":37,"mean":36.0},"#,
     r#""neurons":{"min":14,"p25":14,"median":14,"p75":14,"max":14,"mean":14.0},"#,
     r#""connections":{"min":6,"p25":6,"median":7,"p75":7,"max":8,"mean":7.0},"#,
     r#""enabled_connections":{"min":3,"p25":5,"median":6,"p75":6,"max":7,"mean":5.46875},"#,

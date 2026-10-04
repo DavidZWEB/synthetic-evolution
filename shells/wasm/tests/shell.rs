@@ -662,9 +662,10 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
         "every activation is zero, so this would pass on an empty brain"
     );
     let genome = v["genome"].as_array().expect("genome");
+    // 25 through Phase 2; Phase 3 adds the muscle and mouth genes (spec §3.5).
     assert_eq!(
         genome.len(),
-        25,
+        27,
         "slot 0 is still a shipped minimal founder"
     );
     assert!(

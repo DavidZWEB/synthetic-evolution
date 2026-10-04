@@ -410,7 +410,7 @@ fn configured_sensor_edits_are_observed_with_sparse_no_eye_founders() {
     let initial: serde_json::Value = serde_json::from_str(&lines[1]).unwrap();
     let final_sample: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
     for cohort in ["evolving", "random_control"] {
-        assert_eq!(initial["data"][cohort]["genome_genes"]["mean"], 23.0);
+        assert_eq!(initial["data"][cohort]["genome_genes"]["mean"], 25.0);
         assert_eq!(final_sample["data"][cohort]["descendants"], 1);
         for operator in ["remove_sensor", "add_sensor"] {
             assert_eq!(

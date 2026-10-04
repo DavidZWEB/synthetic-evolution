@@ -135,7 +135,7 @@ fn birth_identity_arrays_are_charged_and_fit_the_shipped_budget() {
     // The shipped minimal founder's construction total, including one plant
     // starvation count per plant (M9 turnover), the 7 x 7 fertility lattice that
     // shipped patchiness draws, and the 2,000-slot corpse pool with its grid (Phase 3).
-    assert_eq!(current, 88_681_236);
+    assert_eq!(current, 88_681_412);
     assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
     // One birth ID and two parent references per slot are part of the estimate.
     params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);

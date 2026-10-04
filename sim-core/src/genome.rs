@@ -106,6 +106,13 @@ pub enum BodyTrait {
     SignatureR,
     SignatureG,
     SignatureB,
+    /// Multiplies the force a full thrust drive produces; upkeep grows with its square
+    /// (spec §3.5). Appended after the colour channels so existing genomes keep their
+    /// encoding; a genome without it has muscle 1.
+    Muscle,
+    /// Gape relative to the body: intake and the bite scale with it (spec §3.5). A
+    /// genome without it has mouth 1.
+    Mouth,
 }
 
 /// Traits governing the genome's own evolution. Present and inherited in Phase 1; no

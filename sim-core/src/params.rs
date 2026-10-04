@@ -308,7 +308,8 @@ pub struct BrainParams {
     /// Hidden neurons in the founding template.
     ///
     /// Default 0 since Phase 2 M8 (was 6): the minimal chemo-led founder (9 neurons
-    /// with its 2 oscillators, 4 connections, 25 genes) replaced the dense one after multi-seed viability
+    /// with its 2 oscillators, 4 connections, 25 genes; 27 since Phase 3 added muscle and
+    /// mouth) replaced the dense one after multi-seed viability
     /// evidence and human approval (`docs/phase-2-m8-evidence.md`). Structural
     /// mutation, not the founder, is now the source of hidden structure.
     pub hidden_neurons: u32,

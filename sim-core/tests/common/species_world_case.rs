@@ -14,8 +14,8 @@ use sim_core::species::SpeciesEventCounts;
 use sim_core::{SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x0239_3207_86b2_edb7;
-pub const CONTROL_GOLDEN: u64 = 0x26ad_7838_c98c_db46;
+pub const EVOLVING_GOLDEN: u64 = 0x4bbd_63df_b8eb_90ee;
+pub const CONTROL_GOLDEN: u64 = 0x33f8_83e7_d8c6_c8eb;
 
 fn genes(weight: f32) -> [Gene; 4] {
     [
