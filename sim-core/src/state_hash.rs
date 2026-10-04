@@ -280,22 +280,26 @@ impl World {
             }
         }
 
-        // Plants in seeding order, which never changes: positions are fixed at
-        // construction and folding them catches a world seeded from a different stream
-        // even when every agent still agrees.
+        // Plants in slot order. Folding their sites catches a world seeded from a
+        // different stream even when every agent still agrees, and since turnover moves
+        // them (spec §5.1) the starvation counts that decide the next death are state
+        // too, as is the running reseed count.
         let plants = self.plants();
         h.u32(plants.len() as u32);
-        for ((&p, &e), &reserve) in plants
+        for (((&p, &e), &reserve), &starved) in plants
             .position()
             .iter()
             .zip(plants.energy().iter())
             .zip(plants.energy_reserve().iter())
+            .zip(plants.starved().iter())
         {
             h.f32(p.x);
             h.f32(p.y);
             h.f32(e);
             h.f64(reserve);
+            h.u32(starved);
         }
+        h.u64(plants.reseeded());
 
         // Commands not yet due are state too: two worlds identical in every other way
         // but holding different queues diverge on the tick those queues come due.

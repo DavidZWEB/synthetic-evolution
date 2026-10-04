@@ -9,8 +9,8 @@ use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x185b_736d_e86c_7bdf;
-pub const CONTROL_GOLDEN: u64 = 0x41cc_a964_7649_2502;
+pub const EVOLVING_GOLDEN: u64 = 0xb597_fc6d_bf84_211f;
+pub const CONTROL_GOLDEN: u64 = 0x6ee7_f385_60a6_7a42;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();
