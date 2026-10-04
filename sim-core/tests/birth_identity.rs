@@ -8,7 +8,7 @@ use sim_core::spawn::SpawnError;
 use sim_core::{SimParams, SpawnSpec, World};
 
 fn params(capacity: u32) -> SimParams {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default();
     params.world.max_agents = capacity;
     params.plants.max_plants = 0;
     params.species.capacity = 2;
@@ -126,7 +126,9 @@ fn pool_and_arena_refusals_do_not_consume_birth_ids() {
     for arena_refusal in [false, true] {
         let mut params = params(if arena_refusal { 3 } else { 1 });
         if arena_refusal {
-            params.storage.genes_per_slot = 142;
+            // Three slots pool room for one founder but not two.
+            let founder = World::new(42, params.clone()).unwrap().founder_plan().len() as u32;
+            params.storage.genes_per_slot = (2 * founder - 1) / 3;
         }
         let mut world = World::new(42, params).unwrap();
         let first = world.spawn_founder(Vec3::ZERO).unwrap();

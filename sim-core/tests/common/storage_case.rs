@@ -9,25 +9,32 @@ use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{AgentId, Rng, SimParams, SpawnSpec, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xf974_ee46_7746_b362;
-pub const CONTROL_GOLDEN: u64 = 0xd390_bb6b_169d_2c6c;
+pub const EVOLVING_GOLDEN: u64 = 0xa0a2_3fd4_eb0a_17ed;
+pub const CONTROL_GOLDEN: u64 = 0x2544_0d46_7ce5_a7c8;
+
+const EXTRA: usize = 8;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;
     params.feeding.rate = 300.0;
     params.reproduction.maturity_ticks = 0;
-    params.storage.neurons_per_slot = 18;
+    // Parents carry the founder brain plus eight neurons; the pooled neuron arena
+    // holds exactly two such brains, so a third birth is refused.
+    let brain = World::new(42, params.clone())
+        .unwrap()
+        .founder_plan()
+        .neuron_count()
+        + EXTRA;
+    params.storage.neurons_per_slot = (brain as u32).div_ceil(2);
     let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
     let mut genes = vec![Gene::default(); world.founder_plan().len()];
     world
         .founder_plan()
         .instantiate(&mut Rng::from_seed(77), &params, &mut genes);
-    for _ in 0..8 {
+    for _ in 0..EXTRA {
         genes.push(Gene::Neuron(NeuronGene {
             id: world.next_innovation().expect("IDs available"),
             bias: 0.0,
@@ -64,7 +71,7 @@ fn run(mode: BrainInheritance) -> u64 {
         world
             .pool()
             .iter_live()
-            .all(|id| world.brain(id).len() == 36)
+            .all(|id| world.brain(id).len() == brain)
     );
 
     world.agents_mut().position[parent.index()] = world.plants().position()[1];

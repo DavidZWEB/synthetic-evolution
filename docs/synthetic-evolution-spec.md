@@ -398,8 +398,7 @@ per target was introduced as an opt-in small-controller candidate.
 **DECIDED (M8): that minimal chemo-led founder is the shipped default,** with two
 oscillators restored. It was the most viable founder measured across seeds
 (`docs/phase-2-m8-evidence.md`) and a human approved it. A human then chose to keep
-the oscillator scaffold, since no operator could otherwise create one. Phase 1's dense founder remains a reproducible preset for comparisons
-and for scenarios whose coverage depends on dense topology.
+the oscillator scaffold, since no operator could otherwise create one.
 
 ### 3.4 Crossover and speciation
 

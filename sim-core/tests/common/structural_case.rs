@@ -9,20 +9,25 @@ use sim_core::spawn::SpawnFailureCounts;
 use sim_core::{SimParams, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x2660_3990_31f1_6fa5;
-pub const CONTROL_GOLDEN: u64 = 0x2aeb_1b57_a4f9_75dd;
+pub const EVOLVING_GOLDEN: u64 = 0x185b_736d_e86c_7bdf;
+pub const CONTROL_GOLDEN: u64 = 0x41cc_a964_7649_2502;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut params = SimParams::default().without_structural_mutation();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;
     params.feeding.rate = 300.0;
     params.reproduction.maturity_ticks = 0;
-    params.storage.genes_per_slot = 142;
-    params.storage.max_genes = 284;
+    // Hidden neurons with dense wiring give neuron removal a candidate whose
+    // incident edges make the child smaller than its parent.
+    params.brain.hidden_neurons = 2;
+    params.brain.connections_per_target = None;
+    // The pooled gene arena holds exactly two founders, and a genome may not grow
+    // past the founder, so growth meets both refusals.
+    let founder_genes = World::new(42, params.clone()).unwrap().founder_plan().len() as u32;
+    params.storage.genes_per_slot = founder_genes.div_ceil(2);
+    params.storage.max_genes = founder_genes;
     let rates = &mut params.mutation.structural;
     rates.remove_connection_rate = 1.0;
     rates.remove_neuron_rate = 1.0;

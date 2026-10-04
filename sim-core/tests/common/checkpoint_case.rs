@@ -29,23 +29,21 @@ pub const CONTINUE_TICKS: u32 = 350;
 
 /// FNV-1a of the checkpoint bytes, per mode: both targets must encode identically.
 pub const CHECKPOINT_FINGERPRINT: [u64; 4] = [
-    0xc9de_aa8e_fb05_5372,
-    0x5c1f_a768_8b86_0efa,
-    0x8971_6acd_e4b1_0326,
-    0x03e2_dc58_55c5_3a85,
+    0x7702_78eb_d384_17b6,
+    0x21cf_42b3_e2f7_adb6,
+    0x7bf4_33cb_4251_4120,
+    0x7a81_c226_a358_b717,
 ];
 /// `state_hash` after restoring and continuing `CONTINUE_TICKS`, per mode.
 pub const CONTINUED_HASH: [u64; 4] = [
-    0x737a_a4fb_0b35_3fd9,
-    0x56a9_8c23_6bdd_c1c3,
-    0xda2f_1e4d_c8d4_b343,
-    0xea3c_9914_0910_555a,
+    0x354d_d2e6_b48e_af60,
+    0x319d_bd78_426b_44fb,
+    0x0031_673c_3a76_fcb1,
+    0x05c1_c1bb_bebd_5979,
 ];
 
 pub fn params() -> SimParams {
-    let mut p = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut p = SimParams::default().without_structural_mutation();
     p.world.size = 100.0;
     p.world.max_agents = 32;
     p.world.founder_spread = 0.2;

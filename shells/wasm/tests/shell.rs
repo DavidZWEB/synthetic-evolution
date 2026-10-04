@@ -476,22 +476,28 @@ fn construction_rejects_low_budgets_and_overflow_without_fallback() {
 
 #[wasm_bindgen_test]
 fn arena_refusals_observe_seeding_and_natural_births_without_hiding_undersupply() {
-    let params = r#"{
+    let params = half_founder_slot(
+        r#"{
         "world":{"size":100.0,"max_agents":2},
-        "storage":{"genes_per_slot":142},
-        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},
-        "brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null},
+        "storage":{},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":1},
         "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
         "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
         "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},
         "metabolism":{"base":0.0,"k_size":0.0,"k_brain":0.0,"k_sensor":0.0,"k_move":0.0}
-    }"#;
-    let mut sim = Sim::new(7, Some(params.into())).expect("one founder fits");
+    }"#,
+    );
+    let capacity: u64 =
+        serde_json::from_str::<serde_json::Value>(&params).unwrap()["storage"]["genes_per_slot"]
+            .as_u64()
+            .unwrap()
+            * 2;
+    let mut sim = Sim::new(7, Some(params)).expect("one founder fits");
     assert_eq!(sim.seed_founders(2), 1, "undersupply must remain visible");
     let seeded = storage(&sim);
     assert_eq!(seeded["spawn_failures"]["arena_capacity"], 1);
     assert_eq!(seeded["spawn_failures"]["pool_full"], 0);
-    assert_eq!(seeded["arena_usage"][0]["capacity"], 284);
+    assert_eq!(seeded["arena_usage"][0]["capacity"], capacity);
     assert_eq!(seeded["arena_usage"][0]["free_elements"], 0);
     assert_eq!(seeded["arena_usage"][0]["live_blocks"], 1);
     sim.step_many(2);
@@ -681,4 +687,22 @@ fn structural_births_keep_extreme_scalar_biases_finite() {
     assert_eq!(sim.descendants(), 1);
     assert_eq!(mutations(&sim).toggle_connection.applied, 1);
     sim_core::genome::validate(&genome(&sim, 1)).unwrap();
+}
+
+/// `params` with `genes_per_slot` set to half its founder's genes, so two slots hold
+/// exactly one founder and a second is refused (spec section 2.2a).
+fn half_founder_slot(params: &str) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(params).unwrap();
+    let parsed: sim_core::SimParams = serde_json::from_value(value.clone()).unwrap();
+    let founder = sim_core::World::new(1, parsed)
+        .unwrap()
+        .founder_plan()
+        .len();
+    assert_eq!(
+        founder % 2,
+        0,
+        "an odd founder cannot fill two slots exactly"
+    );
+    value["storage"]["genes_per_slot"] = (founder / 2).into();
+    value.to_string()
 }

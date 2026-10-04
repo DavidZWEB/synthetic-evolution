@@ -14,14 +14,11 @@
   "sensing": {
     "vision_range": 20.0,
     "vision_rays": 1,
-    "chemo_radius": 20.0,
-    "chemo_sensors": 1,
-    "energy_sensors": 1
+    "chemo_radius": 20.0
   },
   "brain": {
     "hidden_neurons": 2,
-    "oscillators": 1,
-    "connections_per_target": null
+    "oscillators": 1
   },
   "reproduction": {
     "start_energy": 1.0,

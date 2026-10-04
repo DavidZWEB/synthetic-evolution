@@ -130,18 +130,31 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
                 assert_eq!(counts.len(), 6);
                 assert!(counts.values().all(|count| count.as_u64() == Some(0)));
             }
+            // Small genomes cross the provisional species threshold within a few
+            // births, so assert consistent bookkeeping rather than a species count.
             let species = &sample["data"][cohort]["species"];
             let rows = species["populations"].as_array().unwrap();
-            assert_eq!(rows.len(), 1);
-            assert_eq!(rows[0]["population"], sample["data"][cohort]["population"]);
-            assert_eq!(species["unclassified_population"], 0);
+            let classified: u64 = rows
+                .iter()
+                .map(|row| row["population"].as_u64().unwrap())
+                .sum();
             assert_eq!(
-                species["events"]["created"], 1,
-                "founder classification was observed"
+                serde_json::Value::from(classified),
+                sample["data"][cohort]["population"]
             );
-            assert_eq!(species["events"]["extinct"], 0);
+            assert_eq!(species["unclassified_population"], 0);
+            let created = species["events"]["created"].as_u64().unwrap();
+            let extinct = species["events"]["extinct"].as_u64().unwrap();
+            assert!(created >= 1, "founder classification was observed");
+            assert_eq!(created - extinct, rows.len() as u64);
             assert_eq!(species["events"]["unclassified_capacity"], 0);
-            assert_eq!(report["species"][cohort]["active_species"], 1);
+            // The report describes the final sample only.
+            assert!(
+                report["species"][cohort]["active_species"]
+                    .as_u64()
+                    .unwrap()
+                    >= 1
+            );
             assert_eq!(report["species"][cohort]["species_capacity"], 256);
             assert_eq!(report["species"][cohort]["unclassified_population"], 0);
             assert_eq!(sample["data"][cohort]["history"], serde_json::Value::Null);
@@ -215,11 +228,12 @@ fn diagnose_finds_an_extinction_induced_by_an_impossible_energy_budget() {
 
 #[test]
 fn diagnose_finds_a_deliberately_collapsed_genome_population() {
-    // This real no-mutation sweep depends on founder placement. Seed 20 reaches a
-    // stable one-genome population under the current equal-area layout; if placement
-    // changes, reselect a deterministic collapsing seed rather than weakening the
-    // diagnostic assertion or replacing the simulator-driven fixture.
-    let (_, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 20, 4_000, 50, 2);
+    // This real no-mutation sweep depends on founder placement and composition. Seed 5
+    // reaches a stable one-genome population with the minimal founder (a small base
+    // metabolic cost supplies the turnover drift needs); if either changes, reselect
+    // a deterministic collapsing seed rather than weakening the diagnostic assertion
+    // or replacing the simulator-driven fixture.
+    let (_, report) = run_and_diagnose(include_str!("fixtures/monoculture.json"), 5, 4_000, 50, 2);
     assert!(
         report["evolving"]
             .as_array()
@@ -231,17 +245,18 @@ fn diagnose_finds_a_deliberately_collapsed_genome_population() {
 
 #[test]
 fn collected_runs_report_arena_pressure_separately_from_structural_edits() {
-    let params = r#"{
+    let params = half_founder_slot(
+        r#"{
         "world":{"size":100.0,"max_agents":2},
-        "storage":{"genes_per_slot":142},
-        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},
-        "brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null},
+        "storage":{},
+        "sensing":{"vision_range":20.0,"chemo_radius":20.0,"vision_rays":1},
         "reproduction":{"start_energy":1.0,"threshold":1.1,"gate":0.0,"maturity_ticks":0},
         "feeding":{"rate":100.0,"gate":0.0,"reach":20.0},
         "plants":{"max_plants":100,"max_energy":100.0,"initial_fill":1.0},
         "metabolism":{"base":0.0,"k_size":0.0,"k_brain":0.0,"k_sensor":0.0,"k_move":0.0}
-    }"#;
-    let (lines, report) = run_and_diagnose(params, 7, 2, 1, 1);
+    }"#,
+    );
+    let (lines, report) = run_and_diagnose(&params, 7, 2, 1, 1);
     let header: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
     assert_eq!(header["data"]["control"], RANDOMIZED_AT_BIRTH_PROTOCOL);
     for cohort in ["evolving", "random_control"] {
@@ -423,8 +438,7 @@ fn founder_storage_undersupply_is_an_error_with_or_without_metrics() {
     let params = temporary("undersupplied-params.json");
     fs::write(
         &params,
-        // Half the dense founder's 284 genes per slot (spec section 2.2a).
-        r#"{"world":{"max_agents":2},"storage":{"genes_per_slot":142},"sensing":{"vision_rays":3,"chemo_sensors":1,"energy_sensors":1},"brain":{"hidden_neurons":6,"oscillators":2,"connections_per_target":null}}"#,
+        half_founder_slot(r#"{"world":{"max_agents":2},"storage":{},"sensing":{"vision_rays":1}}"#),
     )
     .unwrap();
     for metrics in [false, true] {
@@ -728,4 +742,22 @@ fn summarize_pairs_seeds_and_reports_every_cohort_unranked() {
     for run in runs {
         fs::remove_file(run).expect("remove metrics");
     }
+}
+
+/// `params` with `genes_per_slot` set to half its founder's genes, so two slots hold
+/// exactly one founder and a second is refused (spec section 2.2a).
+fn half_founder_slot(params: &str) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(params).unwrap();
+    let parsed: sim_core::SimParams = serde_json::from_value(value.clone()).unwrap();
+    let founder = sim_core::World::new(1, parsed)
+        .unwrap()
+        .founder_plan()
+        .len();
+    assert_eq!(
+        founder % 2,
+        0,
+        "an odd founder cannot fill two slots exactly"
+    );
+    value["storage"]["genes_per_slot"] = (founder / 2).into();
+    value.to_string()
 }

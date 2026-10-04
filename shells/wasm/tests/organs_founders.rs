@@ -26,6 +26,16 @@ fn genome(sim: &Sim, slot: u32) -> Vec<Gene> {
     serde_json::from_value(inspect(sim, slot)["genome"].clone()).unwrap()
 }
 
+/// Sensors on this params' founder, measured rather than assumed.
+fn founder_sensors(params: &SimParams) -> u32 {
+    let mut probe = Sim::new(7, Some(serde_json::to_string(params).unwrap())).unwrap();
+    probe.seed_founders(1);
+    genome(&probe, 0)
+        .iter()
+        .filter(|gene| matches!(gene, Gene::Sensor(_)))
+        .count() as u32
+}
+
 fn counts(sim: &Sim) -> StructuralMutationCounts {
     serde_json::from_str(&sim.structural_mutation_diagnostics().unwrap()).unwrap()
 }
@@ -155,16 +165,22 @@ fn founder_composition_is_frozen_but_bad_shapes_fail_before_world_replacement() 
     let mut sim = Sim::new(7, Some(params.to_string())).unwrap();
     sim.seed_founders(1);
     let original_params = sim.params_json().unwrap();
-    for (path, next) in [
-        ("/sensing/vision_rays", serde_json::json!(0)),
-        ("/sensing/chemo_sensors", serde_json::json!(0)),
-        ("/sensing/energy_sensors", serde_json::json!(0)),
-        ("/brain/hidden_neurons", serde_json::json!(0)),
-        ("/brain/oscillators", serde_json::json!(0)),
-        ("/brain/connections_per_target", serde_json::json!(1)),
+    for path in [
+        "/sensing/vision_rays",
+        "/sensing/chemo_sensors",
+        "/sensing/energy_sensors",
+        "/brain/hidden_neurons",
+        "/brain/oscillators",
+        "/brain/connections_per_target",
     ] {
         let mut changed = params.clone();
-        *changed.pointer_mut(path).unwrap() = next;
+        // Any different value; composition is frozen whatever it currently is.
+        let field = changed.pointer_mut(path).unwrap();
+        *field = match field.as_u64() {
+            Some(0) => serde_json::json!(1),
+            Some(_) => serde_json::json!(0),
+            None => serde_json::json!(1),
+        };
         validate_params(Some(changed.to_string())).expect("valid construction-time shape");
         let before = sim.state_hash();
         assert!(
@@ -187,7 +203,10 @@ fn founder_composition_is_frozen_but_bad_shapes_fail_before_world_replacement() 
             serde_json::json!(4294967296u64),
         ),
         ("/storage/max_memory_bytes", serde_json::json!(1)),
-        ("/storage/max_sensors", serde_json::json!(2)),
+        (
+            "/storage/max_sensors",
+            serde_json::json!(founder_sensors(&birth_params()) - 1),
+        ),
         ("/storage/max_vision_rays", serde_json::json!(0)),
         ("/storage/max_neurons", serde_json::json!(4)),
         ("/storage/max_connections", serde_json::json!(0)),
@@ -342,7 +361,9 @@ fn sensor_removal_retains_neurons_and_connections_and_precedes_addition() {
         inspect(&sim, 0)["activations"].as_array().unwrap().len()
     );
 
-    params.storage.max_sensors = 3;
+    // At the founder's own sensor count, so addition fits only after removal.
+    let sensors = founder_sensors(&params);
+    params.storage.max_sensors = sensors;
     params.mutation.organs.add_sensor_rate = 1.0;
     let mut sim = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     sim.seed_founders(1);
@@ -358,7 +379,7 @@ fn sensor_removal_retains_neurons_and_connections_and_precedes_addition() {
             .iter()
             .filter(|gene| matches!(gene, Gene::Sensor(_)))
             .count(),
-        3
+        sensors as usize
     );
 }
 
@@ -366,7 +387,8 @@ fn sensor_removal_retains_neurons_and_connections_and_precedes_addition() {
 fn sensor_candidate_caps_and_arena_birth_refusals_are_distinct() {
     let mut params = birth_params();
     params.mutation.organs.add_sensor_rate = 1.0;
-    params.storage.max_sensors = 3;
+    let sensors = founder_sensors(&params);
+    params.storage.max_sensors = sensors;
     let mut capped = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     capped.seed_founders(1);
     capped.step_many(1);
@@ -376,7 +398,8 @@ fn sensor_candidate_caps_and_arena_birth_refusals_are_distinct() {
 
     params.storage.max_sensors = 32;
     params.world.max_agents = 2;
-    params.storage.sensors_per_slot = 2;
+    // Two slots pool room for the founder's sensors but not a grown child's too.
+    params.storage.sensors_per_slot = sensors.div_ceil(2);
     let mut full = Sim::new(7, Some(serde_json::to_string(&params).unwrap())).unwrap();
     full.seed_founders(1);
     full.step_many(1);

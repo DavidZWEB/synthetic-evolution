@@ -12,9 +12,7 @@ use sim_core::spawn::{SpawnError, SpawnFailureCounts};
 use sim_core::{AgentId, InnovationId, SimParams, SpawnSpec, World};
 
 fn params() -> SimParams {
-    let mut p = SimParams::default()
-        .with_dense_founder()
-        .without_structural_mutation();
+    let mut p = SimParams::default().without_structural_mutation();
     p.world.max_agents = 8;
     p.plants.max_plants = 8;
     p.reproduction.maturity_ticks = 0;
@@ -22,6 +20,10 @@ fn params() -> SimParams {
     p.mutation.weight_reset_rate = 0.0;
     p.mutation.neuron_perturb_rate = 0.0;
     p
+}
+
+fn founder_genes(p: &SimParams) -> u32 {
+    World::new(42, p.clone()).unwrap().founder_plan().len() as u32
 }
 
 fn ready(world: &mut World, parent: AgentId) {
@@ -93,6 +95,8 @@ fn structural_edits_receive_coherent_genes_after_extreme_scalar_mutation() {
 #[test]
 fn deletion_reduces_offspring_storage_without_touching_the_parent() {
     let mut p = params();
+    // Founder neurons are all protected; hidden ones give removal a candidate.
+    p.brain.hidden_neurons = 2;
     p.mutation.structural.remove_neuron_rate = 1.0;
     let mut world = World::new(42, p).unwrap();
     let parent = world.spawn_founder(Default::default()).unwrap();
@@ -110,7 +114,8 @@ fn deletion_reduces_offspring_storage_without_touching_the_parent() {
 #[test]
 fn a_declined_edit_can_still_produce_a_bounded_child() {
     let mut p = params();
-    p.storage.max_genes = 284;
+    // No room to grow past the founder.
+    p.storage.max_genes = founder_genes(&p);
     p.mutation.structural.add_neuron_rate = 1.0;
     let mut world = World::new(42, p).unwrap();
     let parent = world.spawn_founder(Default::default()).unwrap();
@@ -136,7 +141,8 @@ fn a_declined_edit_can_still_produce_a_bounded_child() {
 fn an_edited_candidate_can_be_refused_without_rewinding_ids_or_charging_energy() {
     let mut p = params();
     p.world.max_agents = 2;
-    p.storage.genes_per_slot = 142;
+    // The pooled arena fits the parent but not a grown child.
+    p.storage.genes_per_slot = founder_genes(&p).div_ceil(2);
     p.mutation.structural.add_neuron_rate = 1.0;
     let mut world = World::new(42, p).unwrap();
     let parent = world.spawn_founder(Default::default()).unwrap();

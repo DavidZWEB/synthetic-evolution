@@ -510,9 +510,8 @@ chosen once per world after plant seeding, without moving food geography. Exact
 counts and constructor accounting must agree with every supported configuration.
 Retain thrust, turn, ingest, and brain-gated reproduce: "minimal" must not remove
 reproduction simply because section 3.3's illustrative list abbreviates the loop.
-Keep body/meta hedges. The dense founder remains a reproducible baseline; switching
-the shipped founder was M8's measured decision (done: the minimal chemo-led founder
-ships since M8), not this milestone's guess.
+Keep body/meta hedges. Switching the shipped founder was M8's measured decision (the
+minimal chemo-led founder ships since M8), not this milestone's guess.
 
 **Done when:** removing a sensor leaves a valid runnable brain; adding every supported
 modality binds the correct number of channels and changes perception and metabolic

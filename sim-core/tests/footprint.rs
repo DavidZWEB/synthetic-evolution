@@ -85,7 +85,7 @@ fn assert_estimate_covers_requests(world: &World, used: u64, estimate: u64) {
 
 #[test]
 fn a_default_world_stays_inside_its_declared_core_budget() {
-    let params = SimParams::default().with_dense_founder();
+    let params = SimParams::default();
     let budget = params.storage.max_memory_bytes;
     let (world, used, estimate) = measure(params);
     assert_estimate_covers_requests(&world, used, estimate);
@@ -98,7 +98,7 @@ fn a_default_world_stays_inside_its_declared_core_budget() {
 #[test]
 fn standalone_species_estimate_covers_all_requested_buffers_exactly() {
     use sim_core::species::Classifier;
-    let params = SimParams::default().with_dense_founder();
+    let params = SimParams::default();
     let bytes = Classifier::estimated_construction_bytes(256, params.storage.max_genes).unwrap();
     take();
     let classifier =
@@ -111,7 +111,7 @@ fn standalone_species_estimate_covers_all_requested_buffers_exactly() {
 
 #[test]
 fn world_species_storage_is_charged_without_increasing_the_core_budget() {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default();
     let classified = params.estimated_construction_bytes().unwrap();
     let species = sim_core::species::Classifier::estimated_construction_bytes(
         params.species.capacity,
@@ -130,9 +130,10 @@ fn world_species_storage_is_charged_without_increasing_the_core_budget() {
 
 #[test]
 fn birth_identity_arrays_fit_the_unchanged_budget_and_legacy_validation_excludes_them() {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default();
     let current = params.estimated_construction_bytes().unwrap();
-    assert_eq!(current, 88_613_076);
+    // The shipped minimal founder's construction total.
+    assert_eq!(current, 88_588_988);
     assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
     params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);
     assert!(params.validate().is_err());
@@ -226,7 +227,7 @@ fn estimate_covers_nondefault_constructor_shapes() {
         },
     ];
     for profile in profiles {
-        let mut params = SimParams::default().with_dense_founder();
+        let mut params = SimParams::default();
         profile(&mut params);
         let (world, used, estimate) = measure(params);
         assert_estimate_covers_requests(&world, used, estimate);
@@ -234,39 +235,21 @@ fn estimate_covers_nondefault_constructor_shapes() {
 }
 
 #[test]
-fn explicit_full_connectivity_has_the_dense_constructor_footprint() {
-    let params = SimParams::default().with_dense_founder();
-    let (world, dense_used, dense_estimate) = measure(params.clone());
-    assert_estimate_covers_requests(&world, dense_used, dense_estimate);
-    drop(world);
-    for fan_in in [24, u32::MAX] {
-        let mut explicit = params.clone();
-        explicit.brain.connections_per_target = Some(fan_in);
-        let (world, used, estimate) = measure(explicit);
-        assert_estimate_covers_requests(&world, used, estimate);
-        assert_eq!(used, dense_used);
-        assert_eq!(estimate, dense_estimate);
-    }
-}
-
-#[test]
-fn sparse_constructor_fits_its_own_budget_without_charging_dense_edges() {
-    let mut params = SimParams::default().with_dense_founder();
-    let dense_estimate = params.estimated_construction_bytes().unwrap();
-    params.brain.connections_per_target = Some(1);
-    let sparse_estimate = params.estimated_construction_bytes().unwrap();
-    assert!(sparse_estimate < dense_estimate);
-    params.storage.max_memory_bytes = sparse_estimate;
+fn the_shipped_constructor_fits_a_budget_of_exactly_its_own_estimate() {
+    let mut params = SimParams::default();
+    let shipped = params.estimated_construction_bytes().unwrap();
+    params.storage.max_memory_bytes = shipped;
     let (world, used, estimate) = measure(params);
-    assert_eq!(estimate, sparse_estimate);
+    assert_eq!(estimate, shipped);
     assert_estimate_covers_requests(&world, used, estimate);
 }
 
 #[test]
 fn invalid_sparse_template_is_rejected_without_allocation_ids_or_rng() {
-    let mut params = SimParams::default().with_dense_founder();
+    let mut params = SimParams::default();
     params.brain.connections_per_target = Some(1);
-    params.storage.max_connections = 9;
+    // One fewer than the shipped founder's four connections.
+    params.storage.max_connections = 3;
     let mut rng = Rng::from_seed(42);
     let before = rng.clone();
     let mut requested = 0;
@@ -289,7 +272,7 @@ fn footprint_scales_with_the_pool_not_the_population() {
     // how many agents are actually spawned. If this stops holding, something started
     // allocating lazily and the no-grow guarantee is gone.
     let requests = |agents: u32| {
-        let mut params = SimParams::default().with_dense_founder();
+        let mut params = SimParams::default();
         params.world.max_agents = agents;
         let species_bytes = sim_core::species::Classifier::estimated_construction_bytes(
             params.species.capacity,

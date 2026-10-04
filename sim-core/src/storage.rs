@@ -339,7 +339,13 @@ mod tests {
 
     #[test]
     fn named_era_budgets_are_pinned_independently_of_inventory_deltas() {
-        let params = SimParams::default().with_dense_founder();
+        // Historical totals, pinned for the founder those eras shipped.
+        let mut params = SimParams::default();
+        params.sensing.vision_rays = 3;
+        params.sensing.energy_sensors = 1;
+        params.brain.hidden_neurons = 6;
+        params.brain.oscillators = 2;
+        params.brain.connections_per_target = None;
         // Equal growth in every era leaves delta checks unchanged. Pin each named
         // inventory, not CURRENT, so future additions cannot silently rewrite history.
         for (era, expected_bytes) in [
@@ -471,45 +477,6 @@ mod tests {
                 assert_eq!(requests.bytes, expected);
             }
         }
-    }
-
-    #[test]
-    fn sparse_templates_charge_only_their_actual_connections() {
-        let mut params = SimParams::default().with_dense_founder();
-        let dense = StorageLayout::new(&params).unwrap().construction_bytes;
-        let dense_connections = FounderPlan::checked_counts(&params).unwrap().synapses;
-        for fan_in in [0, 1, 2, 24, u32::MAX] {
-            params.brain.connections_per_target = Some(fan_in);
-            let counts = FounderPlan::checked_counts(&params).unwrap();
-            let sparse = StorageLayout::new(&params).unwrap().construction_bytes;
-            let removed = u64::from(dense_connections - counts.synapses);
-            // Template + possible sort scratch, cached scale, and the constructor's
-            // gene-capacity target-index buffer. All other allocations stay fixed.
-            let bytes_per_connection =
-                (2 * size_of::<Gene>() + size_of::<f32>() + size_of::<u64>()) as u64;
-            assert_eq!(dense - sparse, removed * bytes_per_connection);
-        }
-    }
-
-    #[test]
-    fn sparse_limits_do_not_require_space_for_a_dense_counterpart() {
-        let mut params = SimParams::default().with_dense_founder();
-        params.brain.hidden_neurons = 64;
-        assert_eq!(
-            params.validate().unwrap_err(),
-            ParamError("founder exceeds storage.max_genes")
-        );
-        params.brain.connections_per_target = Some(1);
-        params.storage.max_connections = 68;
-        params.storage.max_genes = 170;
-        params.storage.max_neurons = 86;
-        params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap();
-        params.validate().unwrap();
-        params.storage.max_connections -= 1;
-        assert_eq!(
-            params.validate().unwrap_err(),
-            ParamError("founder exceeds storage.max_connections")
-        );
     }
 
     #[test]
@@ -660,69 +627,77 @@ mod tests {
 
     #[test]
     fn every_founder_limit_is_checked_independently() {
-        type Case = (fn(&mut SimParams), &'static str);
+        type Case = (fn(&mut SimParams, &FounderCounts), &'static str);
         let cases: [Case; 6] = [
             (
-                |p| p.storage.max_genes = 283,
+                |p, c| p.storage.max_genes = c.genes - 1,
                 "founder exceeds storage.max_genes",
             ),
             (
-                |p| p.storage.max_neurons = 27,
+                |p, c| p.storage.max_neurons = c.neurons - 1,
                 "founder exceeds storage.max_neurons",
             ),
             (
-                |p| p.storage.max_connections = 239,
+                |p, c| p.storage.max_connections = c.synapses - 1,
                 "founder exceeds storage.max_connections",
             ),
             (
-                |p| p.storage.max_sensors = 4,
+                |p, c| p.storage.max_sensors = c.sensors - 1,
                 "founder exceeds storage.max_sensors",
             ),
             (
-                |p| p.storage.max_vision_rays = 2,
+                // The shipped founder has no eyes; give it one to exceed a zero limit.
+                |p, _| {
+                    p.sensing.vision_rays = 1;
+                    p.storage.max_vision_rays = 0;
+                },
                 "founder exceeds storage.max_vision_rays",
             ),
             (
-                |p| p.storage.max_effectors = 3,
+                |p, c| p.storage.max_effectors = c.effectors - 1,
                 "founder exceeds storage.max_effectors",
             ),
         ];
         for (change, message) in cases {
-            let mut params = SimParams::default().with_dense_founder();
-            change(&mut params);
+            let mut params = SimParams::default();
+            let counts = FounderPlan::checked_counts(&params).unwrap();
+            change(&mut params, &counts);
             assert_eq!(params.validate().unwrap_err(), ParamError(message));
         }
     }
 
     #[test]
     fn every_arena_must_hold_at_least_one_founder() {
-        type Case = (fn(&mut SimParams), &'static str);
+        type Case = (fn(&mut SimParams, &FounderCounts), &'static str);
         let cases: [Case; 5] = [
             (
-                |p| p.storage.genes_per_slot -= 1,
+                |p, c| p.storage.genes_per_slot = c.genes - 1,
                 "storage.genes_per_slot times world.max_agents cannot hold one founder",
             ),
             (
-                |p| p.storage.neurons_per_slot -= 1,
+                |p, c| p.storage.neurons_per_slot = c.neurons - 1,
                 "storage.neurons_per_slot times world.max_agents cannot hold one founder",
             ),
             (
-                |p| p.storage.synapses_per_slot -= 1,
+                |p, c| p.storage.synapses_per_slot = c.synapses - 1,
                 "storage.synapses_per_slot times world.max_agents cannot hold one founder",
             ),
             (
-                |p| p.storage.sensors_per_slot -= 1,
+                |p, c| p.storage.sensors_per_slot = c.sensors - 1,
                 "storage.sensors_per_slot times world.max_agents cannot hold one founder",
             ),
             (
-                |p| p.storage.effectors_per_slot -= 1,
+                |p, c| p.storage.effectors_per_slot = c.effectors - 1,
                 "storage.effectors_per_slot times world.max_agents cannot hold one founder",
             ),
         ];
         for (change, message) in cases {
-            let mut params = SimParams::default().with_dense_founder();
+            let mut params = SimParams::default();
+            // Two sensors, so one fewer per slot still pools enough for two agents.
+            params.sensing.chemo_sensors = 2;
+            let counts = FounderPlan::checked_counts(&params).unwrap();
             params.world.max_agents = 1;
-            change(&mut params);
+            change(&mut params, &counts);
             assert_eq!(params.validate().unwrap_err(), ParamError(message));
             params.world.max_agents = 2;
             params

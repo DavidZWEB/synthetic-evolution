@@ -567,7 +567,19 @@ mod tests {
         .unwrap()
     }
 
-    /// Dense-founder headers: every legacy schema these tests exercise ran it.
+    /// What every legacy schema's runs used: Phase 1's dense founder and no structural
+    /// or sensor mutation. Test data describing old files, not a supported preset.
+    fn legacy_era_params() -> SimParams {
+        let mut params = SimParams::default().without_structural_mutation();
+        params.sensing.vision_rays = 3;
+        params.sensing.energy_sensors = 1;
+        params.brain.hidden_neurons = 6;
+        params.brain.oscillators = 2;
+        params.brain.connections_per_target = None;
+        params
+    }
+
+    /// Legacy-era headers; see `legacy_era_params`.
     fn final_records() -> [serde_json::Value; 2] {
         [
             serde_json::to_value(MetricsRecord::Header(Box::new(RunHeader {
@@ -579,9 +591,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default()
-                    .with_dense_founder()
-                    .without_structural_mutation(),
+                params: legacy_era_params(),
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
             })))
             .unwrap(),
@@ -844,9 +854,7 @@ mod tests {
         }
         let legacy = parse_values(&records).unwrap();
         assert_eq!(legacy.header.control, "randomized_at_birth_v2");
-        let mut expected_params = SimParams::default()
-            .with_dense_founder()
-            .without_structural_mutation();
+        let mut expected_params = legacy_era_params();
         expected_params.species.capacity = 0;
         assert_eq!(legacy.header.params, expected_params);
         for cohort in [
@@ -908,9 +916,7 @@ mod tests {
     #[test]
     fn all_historical_schemas_keep_their_tight_preclassification_budget() {
         for schema in [3, 4, 5] {
-            let mut params = SimParams::default()
-                .with_dense_founder()
-                .without_structural_mutation();
+            let mut params = legacy_era_params();
             params.world.max_agents = 2;
             params.plants.max_plants = 8;
             params.species.capacity = 0;
@@ -981,9 +987,7 @@ mod tests {
         let mut records = final_records();
         records[0]["data"]["schema_version"] = 6.into();
         strip_schema_eight_observations(&mut records);
-        let mut params = SimParams::default()
-            .with_dense_founder()
-            .without_structural_mutation();
+        let mut params = legacy_era_params();
         params.world.max_agents = 2;
         params.plants.max_plants = 8;
         params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap()
@@ -1352,9 +1356,7 @@ mod tests {
             ticks: 10,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default()
-                .with_dense_founder()
-                .without_structural_mutation(),
+            params: legacy_era_params(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let records = [
@@ -1388,9 +1390,7 @@ mod tests {
             ticks: 0,
             founders: 1,
             sample_every: 5,
-            params: SimParams::default()
-                .with_dense_founder()
-                .without_structural_mutation(),
+            params: legacy_era_params(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
         };
         let final_sample = RunSample {
@@ -1421,9 +1421,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_header_params() {
-        let mut params = SimParams::default()
-            .with_dense_founder()
-            .without_structural_mutation();
+        let mut params = legacy_era_params();
         params.world.dt = 0.0;
         let records = [
             MetricsRecord::Header(Box::new(RunHeader {
@@ -1476,9 +1474,7 @@ mod tests {
                 ticks: 0,
                 founders: 1,
                 sample_every: 5,
-                params: SimParams::default()
-                    .with_dense_founder()
-                    .without_structural_mutation(),
+                params: legacy_era_params(),
                 control: "randomized_at_birth".to_owned(),
             }));
             let jsonl = serde_json::to_string(&header).unwrap();
