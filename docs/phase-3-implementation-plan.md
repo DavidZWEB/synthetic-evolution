@@ -116,8 +116,10 @@ Spec §3.5 and §5.2.
 **Tests**
 
 - At default traits, cost, intake, and acceleration equal Phase 2's bit for bit.
+- At non-default traits, each rule matches a hand-computed value: mass slows a large
+  body, muscle scales the thrust force, intake grows with gape², and upkeep adds
+  exactly `k_muscle · (muscle² − 1)` and `k_mouth · (mouth² − 1)`.
 - Mutated traits stay inside their ranges.
-- Mass slows a large body, and intake grows with gape².
 - Conservation and no allocation hold with traits mutating.
 - Native/WASM agreement on a trait-mutating case.
 
@@ -188,8 +190,8 @@ Spec §2.2b.
 **Snapshot**
 
 The combat fields: health, ticks since the last swing, ticks since the last hit, and
-where the last hit landed. That is 72 bytes per agent, pinned on both sides as the
-current 61 is.
+where the latest swing landed (NaN on a miss, so the swing's age always matches it).
+That is 72 bytes per agent, pinned on both sides as the current 61 is.
 
 **Renderer**
 
