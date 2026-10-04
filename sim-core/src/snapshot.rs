@@ -1,10 +1,11 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
-//! Spec §2.2b's render fields: agent appearance and identity plus plant position and
-//! current stock. A slot incarnation lets click selection survive free-list reuse without
-//! exposing private agent state. No agent energy, genomes, or brain state. The buffer is
-//! written once per tick and read by the main thread at whatever rate it happens to be
-//! drawing, so every field added is bandwidth paid 60 times a second at capacity.
+//! Spec §2.2b's render fields: agent appearance and identity, plant position and
+//! current stock, and corpse position and energy. A slot incarnation lets click
+//! selection survive free-list reuse without exposing private agent state. No agent
+//! energy, genomes, or brain state. The buffer is written once per tick and read by the
+//! main thread at whatever rate it happens to be drawing, so every field added is
+//! bandwidth paid 60 times a second at capacity.
 //!
 //! **Slot-indexed, not compacted.** Arrays are `capacity` long and `alive` says which
 //! entries are real, which costs a byte per slot and buys the thing compaction destroys:
@@ -30,6 +31,9 @@ pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4 + 4;
 
 /// Bytes one plant occupies: its position and current stock (spec §2.2b).
 pub const BYTES_PER_PLANT: usize = 12 + 4;
+
+/// Bytes one corpse slot occupies: its position and energy (spec §2.2b).
+pub const BYTES_PER_CORPSE: usize = 12 + 4;
 
 /// A frame's worth of world state, in struct-of-arrays form.
 ///
@@ -62,13 +66,20 @@ pub struct Snapshot {
     /// drawable — the site persists and regrows (spec §5.1) — so this is what tells a
     /// fat one from a bare one.
     plant_energy: Vec<f32>,
+    corpse_capacity: u32,
+    corpse_position: Vec<f32>,
+    /// What each corpse slot holds. Zero marks a free slot, so the frame needs no
+    /// liveness array: decomposition removes a corpse before it can hold nothing
+    /// (spec §5.1), and a corpse that holds nothing is not food to draw.
+    corpse_energy: Vec<f32>,
 }
 
 impl Snapshot {
     /// Allocates every array at capacity. The only allocation this type ever does.
-    pub fn new(capacity: u32, plant_capacity: u32) -> Self {
+    pub fn new(capacity: u32, plant_capacity: u32, corpse_capacity: u32) -> Self {
         let n = capacity as usize;
         let p = plant_capacity as usize;
+        let c = corpse_capacity as usize;
         Self {
             tick: 0,
             capacity,
@@ -85,12 +96,19 @@ impl Snapshot {
             plant_capacity,
             plant_position: vec![0.0; p * 3],
             plant_energy: vec![0.0; p],
+            corpse_capacity,
+            corpse_position: vec![0.0; c * 3],
+            corpse_energy: vec![0.0; c],
         }
     }
 
     /// A snapshot sized for `world`, which is the only size it can usefully be.
     pub fn for_world(world: &World) -> Self {
-        Self::new(world.pool().capacity(), world.plants().len() as u32)
+        Self::new(
+            world.pool().capacity(),
+            world.plants().len() as u32,
+            world.corpses().len() as u32,
+        )
     }
 
     /// Projects the world into this buffer, overwriting whatever it held.
@@ -153,6 +171,25 @@ impl Snapshot {
             self.plant_position[i * 3 + 1] = position.y;
             self.plant_position[i * 3 + 2] = position.z;
             self.plant_energy[i] = energy;
+        }
+
+        // Every corpse slot, a free one as zero energy. The pool is a few thousand
+        // slots, so writing them all is cheaper than a liveness array in every frame.
+        let corpses = world.corpses();
+        for (i, (&position, &energy)) in corpses
+            .position()
+            .iter()
+            .zip(corpses.energy().iter())
+            .enumerate()
+        {
+            if corpses.alive()[i] == 1 {
+                self.corpse_position[i * 3] = position.x;
+                self.corpse_position[i * 3 + 1] = position.y;
+                self.corpse_position[i * 3 + 2] = position.z;
+                self.corpse_energy[i] = energy;
+            } else {
+                self.corpse_energy[i] = 0.0;
+            }
         }
     }
 
@@ -239,6 +276,23 @@ impl Snapshot {
     pub fn plant_energy(&self) -> &[f32] {
         &self.plant_energy
     }
+
+    #[inline]
+    pub fn corpse_capacity(&self) -> u32 {
+        self.corpse_capacity
+    }
+
+    /// `x, y, z` per corpse slot; meaningless where the slot's energy is 0.
+    #[inline]
+    pub fn corpse_position(&self) -> &[f32] {
+        &self.corpse_position
+    }
+
+    /// What each corpse slot holds; 0 for a free slot.
+    #[inline]
+    pub fn corpse_energy(&self) -> &[f32] {
+        &self.corpse_energy
+    }
 }
 
 #[cfg(test)]
@@ -291,7 +345,7 @@ mod tests {
 
     #[test]
     fn one_plant_costs_sixteen_bytes() {
-        let snap = Snapshot::new(1, 1);
+        let snap = Snapshot::new(1, 1, 0);
         let bytes = snap.plant_position().len() * 4 + snap.plant_energy().len() * 4;
         assert_eq!(bytes, BYTES_PER_PLANT);
         assert_eq!(bytes, 16);
@@ -302,7 +356,7 @@ mod tests {
         // Spec §7.5 budgets the snapshot at 61 bytes per agent, and the argument that
         // pre-allocating it at capacity is free rests on that number. A field added
         // without noticing is bandwidth paid 60 times a second forever.
-        let snap = Snapshot::new(1, 0);
+        let snap = Snapshot::new(1, 0, 0);
         let bytes = snap.position().len() * 4
             + snap.orientation().len() * 4
             + snap.size().len() * 4
@@ -314,6 +368,48 @@ mod tests {
             + snap.incarnation().len() * 4;
         assert_eq!(bytes, BYTES_PER_AGENT);
         assert_eq!(bytes, 61);
+    }
+
+    #[test]
+    fn one_corpse_slot_costs_sixteen_bytes() {
+        let snap = Snapshot::new(0, 0, 1);
+        let bytes = snap.corpse_position().len() * 4 + snap.corpse_energy().len() * 4;
+        assert_eq!(bytes, BYTES_PER_CORPSE);
+        assert_eq!(bytes, 16);
+    }
+
+    #[test]
+    fn a_corpse_travels_with_the_frame_and_a_free_slot_holds_nothing() {
+        let mut world = world_of(4, 16);
+        let mut snap = Snapshot::for_world(&world);
+        assert_eq!(snap.corpse_capacity(), world.corpses().len() as u32);
+        snap.update(&world);
+        assert!(snap.corpse_energy().iter().all(|&e| e == 0.0));
+
+        // Founders hold energy, so a removed one leaves a corpse where it stood.
+        let victim = world.pool().iter_live().nth(2).expect("four agents");
+        let at = world.agents().position[victim.index()];
+        world.despawn(victim);
+        snap.update(&world);
+        let slot = world
+            .corpses()
+            .alive()
+            .iter()
+            .position(|&alive| alive == 1)
+            .expect("the death left a corpse");
+        assert_eq!(snap.corpse_position()[slot * 3], at.x);
+        assert_eq!(snap.corpse_position()[slot * 3 + 1], at.y);
+        assert_eq!(snap.corpse_energy()[slot], world.corpses().energy()[slot]);
+        assert!(snap.corpse_energy()[slot] > 0.0);
+
+        // Once it decomposes, its slot is free again and the frame stops drawing it.
+        let mut params = world.params().clone();
+        params.corpses.min_energy = 1e9;
+        world.set_params(params).expect("a live retune");
+        world.step();
+        assert_eq!(world.corpses().count(), 0);
+        snap.update(&world);
+        assert_eq!(snap.corpse_energy()[slot], 0.0);
     }
 
     #[test]

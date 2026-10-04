@@ -571,6 +571,23 @@ fn the_snapshot_spans_describe_the_buffer_they_claim_to() {
             "{field} has a null pointer"
         );
     }
+    for (count, fields) in [
+        ("plant_capacity", ["plant_position", "plant_energy"]),
+        ("corpse_capacity", ["corpse_position", "corpse_energy"]),
+    ] {
+        let slots = l[count].as_u64().expect(count);
+        assert!(slots > 0, "{count} is empty");
+        for (field, stride) in fields.into_iter().zip([3, 1]) {
+            assert_eq!(
+                l[field]["len"].as_u64().expect(field),
+                slots * stride,
+                "{field} is not {stride} per slot"
+            );
+        }
+    }
+    let hints: serde_json::Value =
+        serde_json::from_str(&sim.render_hints().expect("hints serialize")).expect("valid JSON");
+    assert_eq!(hints["corpse_capacity"], l["corpse_capacity"]);
 }
 
 #[wasm_bindgen_test]

@@ -55,8 +55,8 @@ export function preferredKind() {
  * Creates the writer half. `handoff` is what the worker posts to the main thread so it
  * can build the matching reader.
  */
-export function createWriter(kind, capacity, plantCapacity) {
-  const layout = frameLayout(capacity, plantCapacity);
+export function createWriter(kind, capacity, plantCapacity, corpseCapacity) {
+  const layout = frameLayout(capacity, plantCapacity, corpseCapacity);
   return kind === SHARED ? sharedWriter(layout) : transferableWriter(layout);
 }
 
@@ -88,7 +88,13 @@ function sharedWriter(layout) {
 
   return {
     kind: SHARED,
-    handoff: { kind: SHARED, buffer, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
+    handoff: {
+      kind: SHARED,
+      buffer,
+      capacity: layout.capacity,
+      plantCapacity: layout.plantCapacity,
+      corpseCapacity: layout.corpseCapacity,
+    },
 
     publish(source, tick, population) {
       const next = claimFreeFrame();
@@ -145,7 +151,12 @@ function transferableWriter(layout) {
 
   return {
     kind: TRANSFERABLE,
-    handoff: { kind: TRANSFERABLE, capacity: layout.capacity, plantCapacity: layout.plantCapacity },
+    handoff: {
+      kind: TRANSFERABLE,
+      capacity: layout.capacity,
+      plantCapacity: layout.plantCapacity,
+      corpseCapacity: layout.corpseCapacity,
+    },
 
     /** Returns a message to post, or `false` when no buffer is free. */
     publish(source, tick, population) {
@@ -170,7 +181,7 @@ function transferableWriter(layout) {
 
 /** Builds the reader half from whatever `createWriter` handed off. */
 export function createReader(handoff) {
-  const layout = frameLayout(handoff.capacity, handoff.plantCapacity);
+  const layout = frameLayout(handoff.capacity, handoff.plantCapacity, handoff.corpseCapacity);
   return handoff.kind === SHARED ? sharedReader(handoff, layout) : transferableReader(layout);
 }
 
