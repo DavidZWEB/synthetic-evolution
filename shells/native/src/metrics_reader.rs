@@ -288,12 +288,10 @@ fn validate_retune(header: &RunHeader) -> Result<()> {
     }
     let params = &header.params;
     // The grid a world built from these params would have, which bounds a retune.
-    let cell = sim_core::spatial::SpatialHash::new(
+    let cell = sim_core::spatial::SpatialHash::cell_size_for(
         params.world.size,
         params.sensing.max_sense_radius(),
-        1,
-    )
-    .cell_size();
+    );
     params.check_retune(&retune.params, cell).map_err(|error| {
         invalid(format!(
             "metrics retune is not a legal live retune: {error}"
