@@ -1,7 +1,7 @@
 <script>
   let {
     captureNext, oncapture, captureRepresentatives, onrepresentatives,
-    runs, activeId, captureStatus, message, busy,
+    runs, activeId, captureStatus, message, busy, worldReady,
     onclose, onrefresh, onsave, onload, onlineage, ondelete, onstop,
   } = $props();
 </script>
@@ -32,7 +32,7 @@
   {/if}
   {#if message}<p class="notice" role="status">{message}</p>{/if}
   <div class="actions">
-    <button onclick={onsave} disabled={busy}>save run</button>
+    <button onclick={onsave} disabled={busy || !worldReady}>save run</button>
     <label class="import">
       load run
       <input type="file" accept=".sevrun,application/octet-stream"
