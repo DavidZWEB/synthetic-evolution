@@ -470,7 +470,7 @@ mod tests {
                 position: Vec3::ZERO,
                 yaw: 0.0,
                 energy: 0.0,
-                size: 1.0,
+                size: 3.0,
                 signature: Vec3::ONE,
                 parent_a: crate::AgentId::NULL,
             };

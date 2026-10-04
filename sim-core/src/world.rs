@@ -748,7 +748,7 @@ mod tests {
                 &SpawnSpec {
                     position: Vec3::new(3.0, 4.0, 0.0),
                     energy: 100.0,
-                    size: 1.0,
+                    size: 3.0,
                     signature: Vec3::ONE,
                     yaw: 0.0,
                     parent_a: founder,
@@ -885,7 +885,7 @@ mod tests {
             position: Vec3::ZERO,
             yaw: 0.0,
             energy: 1.0,
-            size: 1.0,
+            size: 3.0,
             signature: Vec3::ZERO,
             parent_a: AgentId::NULL,
         };
@@ -901,6 +901,52 @@ mod tests {
                 "the world leaked its arena blocks"
             );
         }
+    }
+
+    #[test]
+    fn a_public_spawn_refuses_a_body_outside_the_ranges() {
+        // Births clamp every body into the ranges, so an import must arrive inside them,
+        // or one agent could reach further than validation allowed (spec §3.5).
+        let mut w = small_world();
+        let founder = w.spawn_founder(Vec3::ZERO).unwrap();
+        let genes = w.genome(founder).to_vec();
+        let spec = SpawnSpec {
+            position: Vec3::new(5.0, 5.0, 0.0),
+            yaw: 0.0,
+            energy: 1.0,
+            size: w.params().body.size,
+            signature: Vec3::ONE,
+            parent_a: AgentId::NULL,
+        };
+        let too_big = SpawnSpec {
+            size: 100.0,
+            ..spec
+        };
+        assert_eq!(
+            w.spawn(&too_big, &genes),
+            Err(SpawnError::BodyTraits("size is outside body.size_range"))
+        );
+        for (trait_, value) in [
+            (BodyTrait::Size, 7.0),
+            (BodyTrait::Muscle, 5.0),
+            (BodyTrait::Mouth, 0.1),
+            (BodyTrait::SignatureG, 1.5),
+        ] {
+            let mut altered = genes.clone();
+            for gene in &mut altered {
+                if let Gene::Body(body) = gene
+                    && body.trait_ == trait_
+                {
+                    body.value = value;
+                }
+            }
+            assert_eq!(
+                w.spawn(&spec, &altered),
+                Err(SpawnError::BodyTraits("a body trait is outside its range")),
+                "{trait_:?}"
+            );
+        }
+        assert!(w.spawn(&spec, &genes).is_ok(), "the founder's own body");
     }
 
     #[test]
@@ -1172,7 +1218,7 @@ mod tests {
             position: Vec3::ZERO,
             yaw: 0.0,
             energy: 0.0,
-            size: 1.0,
+            size: 3.0,
             signature: Vec3::ONE,
             parent_a: AgentId::NULL,
         };

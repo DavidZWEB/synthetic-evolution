@@ -833,13 +833,14 @@ impl SimParams {
     /// Whether `next` may replace these params on a world already running, given the
     /// spatial grid's `grid_cell` extent.
     ///
-    /// **Editable — nearly everything.** Every field of `body`, `metabolism`,
-    /// `movement`, `mutation`, `feeding`, `reproduction`, `chemo.decay`,
-    /// `chemo.diffuse`, `world.dt`, `world.founder_spread`, `plants` other than the two
-    /// below, `sensing` ranges within the limit below, and the `brain` fields that are
-    /// not topology (`tau_min`, `tau_max`, the oscillator periods, `weight_init_scale`).
-    /// That is the whole point of spec §7.6: tuning happens in the browser against a
-    /// running population, not in the compiler.
+    /// **Editable — nearly everything.** The `body` trait ranges (widening only, below),
+    /// every field of
+    /// `metabolism`, `movement`, `mutation`, `feeding`, and `reproduction`,
+    /// `chemo.decay`, `chemo.diffuse`, `world.dt`, `world.founder_spread`, the `plants`
+    /// and `corpses` fields not named below, `sensing` ranges within the limit below,
+    /// and the `brain` fields that are not topology (`tau_min`, `tau_max`, the
+    /// oscillator periods, `weight_init_scale`). That is the whole point of spec §7.6:
+    /// tuning happens in the browser against a running population, not in the compiler.
     ///
     /// **Frozen, because they size something already allocated:**
     ///
@@ -850,20 +851,32 @@ impl SimParams {
     /// | `species`, `distance` | representative storage and stable classification meaning |
     /// | `world.size` | the spatial grid's extent and the chemo field's |
     /// | `plants.max_plants` | the plant arrays and their neighbour grid |
+    /// | `corpses.max_corpses` | the corpse pool and its grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
     /// | founder sensor counts, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
-    /// **Frozen, because it would silently do nothing:** `plants.initial_fill`, which is
-    /// read once when the larder is stocked. Refusing is the honest answer for all of
-    /// these — accepting a value that changes nothing makes the inspector disagree with
-    /// the sim, and honouring one would move memory that JS holds views over (spec §7.3).
+    /// **Frozen, because they would silently do nothing:** `plants.initial_fill`, read
+    /// once when the larder is stocked, and `plants.patchiness` and `plants.patch_scale`,
+    /// read once when the fertility map is drawn. Refusing is the honest answer for all
+    /// of these — accepting a value that changes nothing makes the inspector disagree
+    /// with the sim, and honouring one would move memory that JS holds views over (spec
+    /// §7.3).
+    ///
+    /// **Frozen, because every body is measured against it:** `body.size`, the reference
+    /// body. Moving it would change every living body's mass and gape at once (spec
+    /// §3.5).
     ///
     /// **Sensing ranges may shrink but not grow.** `vision_range` and `chemo_radius`
     /// below the grid's cell size are fine: the cells are then larger than they need to
     /// be, which costs a little time and stays correct. Above it, a neighbour query
     /// would walk one ring of cells and miss agents beyond it — silently, and it would
     /// read as a sensor bug rather than a params one (spec §2.3).
+    ///
+    /// **Body trait ranges may widen but not narrow.** Every living body lies inside
+    /// them, and validation of the ranges' worst case is what keeps each body's motion,
+    /// upkeep, and intake finite; a narrower range could strand a living body outside
+    /// what was checked (spec §3.5).
     ///
     /// Written here rather than on `World` because none of it is about a world: it is a
     /// property of two `SimParams` and one number, which is what makes it testable
@@ -941,6 +954,17 @@ impl SimParams {
         if next.sensing.max_sense_radius() > grid_cell {
             return Err(ParamError(
                 "sensing radius would outgrow the spatial grid built for this world",
+            ));
+        }
+        // Every living body lies inside the ranges, which is what validation of the
+        // ranges' worst case covers; a narrower range could leave one outside (spec §3.5).
+        let narrows = |now: [f32; 2], next: [f32; 2]| next[0] > now[0] || next[1] < now[1];
+        if narrows(self.body.size_range, next.body.size_range)
+            || narrows(self.body.muscle_range, next.body.muscle_range)
+            || narrows(self.body.mouth_range, next.body.mouth_range)
+        {
+            return Err(ParamError(
+                "body trait ranges may widen during a run but not narrow",
             ));
         }
         Ok(())
@@ -1333,6 +1357,29 @@ impl SimParams {
                 return Err(ParamError(message));
             }
         }
+        // The strongest, lightest, and widest-mouthed bodies the ranges allow must keep
+        // acceleration, upkeep, and intake finite, computed as the tick computes them: an
+        // infinite acceleration becomes NaN velocity at the speed limit (spec §3.5).
+        // Neuron outputs lie in [-1, 1], and every thrust effector adds its drive.
+        let body = &self.body;
+        let force =
+            self.movement.max_thrust * self.storage.max_effectors as f32 * body.muscle_range[1];
+        let lightest = body.size_range[0] / body.size;
+        let gape = body.mouth_range[1] * (body.size_range[1] / body.size);
+        let square = |value: f32| value * value;
+        let worst = [
+            force / (lightest * lightest),
+            self.metabolism.k_size * square(body.size_range[1])
+                + self.metabolism.k_muscle * (square(body.muscle_range[1]) - 1.0)
+                + self.metabolism.k_mouth * (square(body.mouth_range[1]) - 1.0)
+                + self.metabolism.k_move * force * force,
+            self.feeding.rate * gape * gape,
+        ];
+        if worst.iter().any(|value| !value.is_finite()) {
+            return Err(ParamError(
+                "body ranges let a body's acceleration, upkeep, or intake overflow",
+            ));
+        }
         // The largest body's feeding query must fit in half the world, as every
         // spatial query must for the minimum image to be unambiguous (spec §2.3).
         let food_radius = self.plants.radius.max(self.corpses.radius);
@@ -1678,6 +1725,29 @@ mod tests {
             next.metabolism.k_muscle = 0.02;
             next.metabolism.k_mouth = 0.0;
             assert!(current.check_retune(&next, GRID_CELL).is_ok());
+        }
+
+        #[test]
+        fn body_ranges_may_widen_but_not_narrow() {
+            // Every living body lies inside the ranges (spec §3.5).
+            let (current, mut next) = pair();
+            next.body.size_range = [1.0, 8.0];
+            next.body.mouth_range = [0.1, 5.0];
+            assert!(current.check_retune(&next, GRID_CELL).is_ok());
+            for narrow in [
+                |p: &mut SimParams| p.body.size_range[1] = 5.0,
+                |p: &mut SimParams| p.body.muscle_range[0] = 0.5,
+                |p: &mut SimParams| p.body.mouth_range = [0.5, 3.0],
+            ] {
+                let (current, mut next) = pair();
+                narrow(&mut next);
+                assert_eq!(
+                    current.check_retune(&next, GRID_CELL),
+                    Err(ParamError(
+                        "body trait ranges may widen during a run but not narrow"
+                    ))
+                );
+            }
         }
 
         #[test]
@@ -2054,6 +2124,7 @@ mod tests {
         let muscle = "body.muscle_range must be positive, finite, and contain 1";
         let mouth = "body.mouth_range must be positive, finite, and contain 1";
         let reach = "the largest body's feeding reach exceeds half the world; the hash cannot wrap";
+        let overflow = "body ranges let a body's acceleration, upkeep, or intake overflow";
         let cases: Vec<(&str, BreakIt)> = vec![
             (size, |p| p.body.size_range = [0.0, 6.0]),
             (size, |p| p.body.size_range = [4.0, 6.0]),
@@ -2064,6 +2135,9 @@ mod tests {
             (mouth, |p| p.body.mouth_range = [0.25, 0.5]),
             (reach, |p| p.feeding.reach = 500.0),
             (reach, |p| p.body.size_range = [1.5, 495.0]),
+            (overflow, |p| p.body.muscle_range = [1.0, f32::MAX]),
+            (overflow, |p| p.body.size_range = [1e-30, 6.0]),
+            (overflow, |p| p.body.mouth_range = [1.0, 1e30]),
         ];
         for (message, break_it) in cases {
             let mut params = SimParams::default();

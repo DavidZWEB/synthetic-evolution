@@ -55,6 +55,7 @@ impl World {
     ) -> Result<AgentId, SpawnError> {
         spawn::validate_limits(genes, &self.params.storage)?;
         spawn::validate_sensor_parameters(genes, self.hash.cell_size(), self.field.channels())?;
+        spawn::validate_body(genes, spec.size, &self.params.body)?;
         let id = self.spawn_validated(spec, genes, on_species, on_history)?;
         // Imported genomes may carry fresh IDs beyond this world's template. Keep
         // subsequent structural edits from reusing them (spec section 3.1).

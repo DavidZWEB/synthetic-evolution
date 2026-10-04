@@ -14,9 +14,10 @@ use crate::rng::Rng;
 ///
 /// Size, muscle, and mouth are multiplied by `exp(σ·N(0, 1))`, so a trait explores in
 /// proportion to its value and a step can never carry it through zero. Colour channels
-/// take an additive `σ·N(0, 1)` step. Every result is clamped to its trait's range. A
-/// zero rate draws nothing, so a world with body mutation off consumes the stream it
-/// did before this operator existed.
+/// take an additive `σ·N(0, 1)` step. Each stepped trait is clamped to its range; an
+/// unstepped one is the parent's, already inside it. A zero rate draws nothing, so a
+/// world with body mutation off consumes the stream it did before this operator
+/// existed.
 pub(crate) fn apply(genes: &mut [Gene], params: &SimParams, rng: &mut Rng) {
     let rate = params.mutation.body_trait_rate;
     if rate <= 0.0 {

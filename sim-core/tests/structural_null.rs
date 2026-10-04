@@ -5,7 +5,7 @@
 
 use glam::Vec3;
 use sim_core::control::BrainInheritance;
-use sim_core::genome::Gene;
+use sim_core::genome::{BodyTrait, Gene};
 use sim_core::ids::{AgentId, InnovationId};
 use sim_core::{SimParams, SpawnSpec, World};
 
@@ -150,7 +150,15 @@ fn a_child_keeps_parent_scalars_on_shared_genes_and_the_donor_structure() {
                 neuron.bias += 0.25;
                 neuron.tau += 1.0;
             }
-            Gene::Body(trait_gene) => trait_gene.value += 0.25,
+            // A different body that is still a legal import (spec §3.5).
+            Gene::Body(trait_gene) => {
+                trait_gene.value = match trait_gene.trait_ {
+                    BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => {
+                        (trait_gene.value + 0.25) % 1.0
+                    }
+                    _ => trait_gene.value + 0.25,
+                }
+            }
             _ => {}
         }
     }

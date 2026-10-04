@@ -378,6 +378,9 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
                 "an agent genome is incoherent or exceeds its limits",
             ));
         }
+        if spawn::validate_body(genes, agent.size, &world.params.body).is_err() {
+            return Err(invalid("an agent body is outside the configured ranges"));
+        }
         let lengths = [
             (agent.genome.block, genes.len()),
             (agent.brain.block, genome::neuron_count(genes)),
@@ -666,7 +669,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 13] = [
+        let cases: [(&str, Corrupt); 14] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -695,6 +698,7 @@ mod tests {
                 c.agents[0].energy_reserve = -0.5
             }),
             ("unissued birth ID", |c| c.next_birth = 0),
+            ("body outside its range", |c| c.agents[0].size = 100.0),
         ];
         for (name, corrupt) in cases {
             let mut c = checkpoint();
