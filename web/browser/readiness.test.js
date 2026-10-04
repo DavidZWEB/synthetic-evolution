@@ -293,6 +293,17 @@ for (const mode of ['development', 'transferable']) {
       await page.waitForFunction(() =>
         [...document.querySelectorAll('header dt')].find((el) => el.textContent === 'tick')
           ?.nextElementSibling?.textContent === '1');
+
+      // Watch-only: asking to record does not start a capture, and Save run explains.
+      await page.getByRole('button', { name: 'history', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Species history' });
+      await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await waitForTransport(page, mode);
+      await panel.getByText('Capture: off').waitFor();
+      await panel.getByRole('button', { name: 'save run', exact: true }).click();
+      await panel.getByRole('status').filter({ hasText: 'watch-only' }).waitFor();
+      assert.match(await panel.innerText(), /Capture: off/);
     });
   });
 
