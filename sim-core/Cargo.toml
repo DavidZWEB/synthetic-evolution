@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 # This crate is a pure library: no I/O, no wasm-bindgen, no platform transcendentals.
-# `tests/invariants.rs` enforces that mechanically — see AGENTS.md invariants 1-3.
+# `tests/invariants.rs` enforces that mechanically: determinism (spec §7.4), and no I/O
+# or static mutable state (spec §7.2).
 [dependencies]
 glam.workspace = true
 libm.workspace = true
