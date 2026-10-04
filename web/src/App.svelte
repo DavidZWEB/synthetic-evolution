@@ -17,7 +17,7 @@
   import StatusBar from './ui/StatusBar.svelte';
   import TimeSeries from './ui/TimeSeries.svelte';
   import { createInspectorController } from './inspect/controller.js';
-  import { EVOLVING } from './sim/brain-inheritance.js';
+  import { EVOLVING, keepsHistory } from './sim/brain-inheritance.js';
   import { createSim } from './sim/client.js';
   import { createRunValidation } from './sim/run-validation.js';
   import { readRunUrl, writeRunUrl } from './sim/seed-url.js';
@@ -188,6 +188,9 @@
   function saveRun() {
     return historyAction(async () => {
       if (!sim || !activeRun) throw new Error('No world to save');
+      if (!keepsHistory(activeRun.brainInheritance)) {
+        throw new Error('The structural null is watch-only: saved runs carry the evolving world or the scalar control');
+      }
       const wasm = await wasmModule();
       let saved;
       let archive = null;
@@ -427,7 +430,8 @@
     transport = null;
     const startingSource = runSource;
     const previousShareUrl = shareUrl;
-    const historyRunId = captureNext ? crypto.randomUUID() : null;
+    // The structural null records no history (see keepsHistory).
+    const historyRunId = captureNext && keepsHistory(brainInheritance) ? crypto.randomUUID() : null;
     runOrigin = load?.origin ?? {
       provenance: null, restored: [], startTick: 0n, runId: historyRunId ?? crypto.randomUUID(),
     };

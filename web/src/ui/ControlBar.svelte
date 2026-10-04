@@ -62,13 +62,14 @@
   <label>
     heredity
     <select
-      title="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth."
-      aria-description="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth."
+      title="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth. Structural null gives each child a random survivor's topology with its parent's scalars, and records no history."
+      aria-description="Scalar control inherits topology and sensors, which may evolve when their mutation rates are enabled; neural scalars are redrawn at birth. Structural null gives each child a random survivor's topology with its parent's scalars, and records no history."
       value={brainInheritance}
       onchange={(event) => onbraininheritance(event.currentTarget.value)}
     >
       <option value="evolving">evolving</option>
       <option value="randomized_at_birth">scalar control</option>
+      <option value="structural_null">structural null</option>
     </select>
   </label>
   <button onclick={onreseed} disabled={transitioning}>reseed</button>

@@ -16,13 +16,16 @@
  * chooses *when* to step and how far, never what a step means.
  */
 
-import init, { Sim, random_control, validate_params, version } from '../wasm/wasm.js';
+import init, {
+  Sim, random_control, structural_null, validate_params, version,
+} from '../wasm/wasm.js';
 import { MAX_CORE_BYTES } from '../saved-run/saved-run.js';
 import { createHeader, REPRESENTATIVE_GENES } from '../history/archive.js';
 import { createHistoryDelivery } from '../history/delivery.js';
 import {
   EVOLVING,
   RANDOMIZED_AT_BIRTH,
+  STRUCTURAL_NULL,
   parseBrainInheritance,
 } from './brain-inheritance.js';
 import { founderCount, parseSeed } from './inputs.js';
@@ -132,10 +135,15 @@ const handlers = {
     const wasm = await init();
     memory = wasm.memory;
 
+    const constructors = {
+      [RANDOMIZED_AT_BIRTH]: random_control,
+      [STRUCTURAL_NULL]: structural_null,
+    };
+    const construct = constructors[parseBrainInheritance(brainInheritance)];
     const nextSim = checkpoint
       ? Sim.restore(checkpoint, MAX_CORE_BYTES)
-      : parseBrainInheritance(brainInheritance) === RANDOMIZED_AT_BIRTH
-        ? random_control(parseSeed(seed), params ?? null)
+      : construct
+        ? construct(parseSeed(seed), params ?? null)
         : new Sim(parseSeed(seed), params ?? null);
     const normalizedSeed = checkpoint ? nextSim.seed() : parseSeed(seed);
     const normalizedInheritance = checkpoint ? nextSim.heredity() : parseBrainInheritance(brainInheritance);
