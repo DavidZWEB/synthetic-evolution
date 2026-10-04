@@ -1390,6 +1390,23 @@ impl SimParams {
                 "body ranges let a body's acceleration, upkeep, or intake overflow",
             ));
         }
+        // A tick turns by the summed turn drives, adds the acceleration to a velocity
+        // the last tick capped, squares the sum to cap it again, then moves by the
+        // capped speed, each over `dt`. Any of them overflowing reaches the position as
+        // NaN (spec §2.4). A turn drive lies in [-3, 1] per effector, and the squared
+        // speed sums both axes.
+        let dt = self.world.dt;
+        let fastest = self.movement.max_speed + force / (lightest * lightest) * dt;
+        let movement = [
+            3.0 * self.storage.max_effectors as f32 * self.movement.max_turn_rate * dt,
+            fastest * fastest * 2.0,
+            self.movement.max_speed * dt,
+        ];
+        if movement.iter().any(|value| !value.is_finite()) {
+            return Err(ParamError(
+                "movement limits let a tick's turn, speed, or step overflow",
+            ));
+        }
         // The largest body's feeding query must fit in half the world, as every
         // spatial query must for the minimum image to be unambiguous (spec §2.3).
         let food_radius = self.plants.radius.max(self.corpses.radius);
@@ -2135,6 +2152,7 @@ mod tests {
         let mouth = "body.mouth_range must be positive, finite, and contain 1";
         let reach = "the largest body's feeding reach exceeds half the world; the hash cannot wrap";
         let overflow = "body ranges let a body's acceleration, upkeep, or intake overflow";
+        let movement = "movement limits let a tick's turn, speed, or step overflow";
         let cases: Vec<(&str, BreakIt)> = vec![
             (size, |p| p.body.size_range = [0.0, 6.0]),
             (size, |p| p.body.size_range = [4.0, 6.0]),
@@ -2157,6 +2175,22 @@ mod tests {
             (overflow, |p| {
                 p.metabolism.base = 2e38;
                 p.metabolism.k_brain = 2e35;
+            }),
+            // Acceleration alone is finite here; a step of it over a long tick is not.
+            (movement, |p| {
+                p.body.size_range = [p.body.size; 2];
+                p.body.muscle_range = [1.0, 4.0];
+                p.movement.max_thrust = 5e36;
+                p.world.dt = 10.0;
+                p.metabolism.k_move = 0.0;
+            }),
+            (movement, |p| {
+                p.movement.max_turn_rate = 1e37;
+                p.world.dt = 10.0;
+            }),
+            (movement, |p| {
+                p.movement.max_speed = 1e38;
+                p.world.dt = 10.0;
             }),
         ];
         for (message, break_it) in cases {
