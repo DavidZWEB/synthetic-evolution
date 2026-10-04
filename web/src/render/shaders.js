@@ -1,5 +1,6 @@
 /**
- * GLSL programs for instanced agents and plants.
+ * GLSL programs for instanced agents, and for food: plants and corpses share one
+ * disc program with different uniforms.
  *
  * Rendering orchestration owns buffers and uniforms; this module owns only the visual
  * projection of one instance into a shaded disc.
@@ -76,6 +77,9 @@ uniform float u_radius;
 uniform float u_min_radius;
 uniform float u_max_energy;
 uniform float u_world;
+// 1 for corpses, whose free slots hold nothing and must not draw; 0 for plants, whose
+// empty sites persist and regrow (spec §5.1).
+uniform float u_hide_empty;
 
 out vec2 v_corner;
 out float v_fullness;
@@ -89,8 +93,10 @@ void main() {
   vec2 d = a_position.xy - u_center;
   d -= u_world * floor(d / u_world + 0.5);
 
-  // A just-reseeded plant swells, so it can be found at any zoom.
-  float radius = max(u_radius * u_ppu, u_min_radius) * (1.0 + 3.0 * a_glow);
+  // A just-reseeded plant swells, so it can be found at any zoom. A hidden empty slot
+  // collapses to a degenerate quad, as a dead agent does.
+  float radius = max(u_radius * u_ppu, u_min_radius) * (1.0 + 3.0 * a_glow)
+    * (1.0 - u_hide_empty * step(a_energy, 0.0));
   vec2 pixels = d * u_ppu + a_corner * radius;
   gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;

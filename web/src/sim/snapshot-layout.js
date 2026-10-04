@@ -59,7 +59,7 @@ export function frameHeader(frame, field) {
  * any base — which is what makes adding transport frames a change of stride rather than
  * a second layout.
  */
-export function frameLayout(capacity, plantCapacity = 0) {
+export function frameLayout(capacity, plantCapacity = 0, corpseCapacity = 0) {
   let offset = 0;
   const wide = (count) => {
     const field = { offset, length: count };
@@ -78,6 +78,8 @@ export function frameLayout(capacity, plantCapacity = 0) {
     incarnation: wide(capacity),
     plantPosition: wide(plantCapacity * 3),
     plantEnergy: wide(plantCapacity),
+    corpsePosition: wide(corpseCapacity * 3),
+    corpseEnergy: wide(corpseCapacity),
     alive: { offset, length: capacity },
   };
   offset += capacity;
@@ -88,6 +90,7 @@ export function frameLayout(capacity, plantCapacity = 0) {
   layout.stride = Math.ceil(offset / 4) * 4;
   layout.capacity = capacity;
   layout.plantCapacity = plantCapacity;
+  layout.corpseCapacity = corpseCapacity;
   return layout;
 }
 
@@ -99,6 +102,11 @@ export function bytesPerAgent() {
 /** What one plant costs: a position and how much it holds. Should be 16. */
 export function bytesPerPlant() {
   return frameLayout(0, 1).bytes;
+}
+
+/** What one corpse slot costs: a position and how much it holds. Should be 16. */
+export function bytesPerCorpse() {
+  return frameLayout(0, 0, 1).bytes;
 }
 
 /**
@@ -121,6 +129,8 @@ export function frameViews(buffer, base, layout) {
     incarnation: u32(layout.incarnation),
     plantPosition: f32(layout.plantPosition),
     plantEnergy: f32(layout.plantEnergy),
+    corpsePosition: f32(layout.corpsePosition),
+    corpseEnergy: f32(layout.corpseEnergy),
     alive: new Uint8Array(buffer, base + layout.alive.offset, layout.alive.length),
   };
 }
@@ -137,6 +147,8 @@ export const FIELDS = [
   'incarnation',
   'plantPosition',
   'plantEnergy',
+  'corpsePosition',
+  'corpseEnergy',
   'alive',
 ];
 

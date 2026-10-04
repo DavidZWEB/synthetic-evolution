@@ -269,10 +269,16 @@ struct Layout {
     plant_position: Span,
     /// What each site holds, so a fat plant draws differently from a bare one.
     plant_energy: Span,
+    /// Slots in the corpse arrays. Fixed for the life of a world.
+    corpse_capacity: u32,
+    /// `x, y, z` per corpse slot.
+    corpse_position: Span,
+    /// What each corpse holds; 0 marks a free slot.
+    corpse_energy: Span,
 }
 
 /// What a renderer needs that is not per-frame: the extent it is drawing into, and how
-/// to draw a plant.
+/// to draw a plant and a corpse.
 ///
 /// Read from the world rather than agreed by convention. A client with its own copy of
 /// `world.size` draws a correct picture of the wrong world the moment either moves.
@@ -287,6 +293,11 @@ struct RenderHints {
     plant_signature: [f32; 3],
     /// What a full site holds, so a renderer can show how full one is.
     plant_max_energy: f32,
+    corpse_capacity: u32,
+    corpse_radius: f32,
+    corpse_signature: [f32; 3],
+    /// A newborn's tank, against which a renderer shades how much a corpse holds.
+    corpse_full_energy: f32,
 }
 
 fn span<T>(slice: &[T]) -> Span {
@@ -515,6 +526,9 @@ impl Sim {
             plant_capacity: self.snapshot.plant_capacity(),
             plant_position: span(self.snapshot.plant_position()),
             plant_energy: span(self.snapshot.plant_energy()),
+            corpse_capacity: self.snapshot.corpse_capacity(),
+            corpse_position: span(self.snapshot.corpse_position()),
+            corpse_energy: span(self.snapshot.corpse_energy()),
         };
         serde_json::to_string(&layout).map_err(|e| js_error("layout", e))
     }
@@ -530,6 +544,10 @@ impl Sim {
             plant_radius: params.plants.radius,
             plant_signature: params.plants.signature,
             plant_max_energy: params.plants.max_energy,
+            corpse_capacity: self.snapshot.corpse_capacity(),
+            corpse_radius: params.corpses.radius,
+            corpse_signature: params.corpses.signature,
+            corpse_full_energy: params.reproduction.start_energy,
         };
         serde_json::to_string(&hints).map_err(|e| js_error("render hints", e))
     }

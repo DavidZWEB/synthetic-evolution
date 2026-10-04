@@ -7,11 +7,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { FRAME_STATE, frameLayout, frameViews } from './snapshot-layout.js';
+import {
+  FRAME_STATE, bytesPerCorpse, bytesPerPlant, frameLayout, frameViews,
+} from './snapshot-layout.js';
 import { SHARED, TRANSFERABLE, createReader, createWriter } from './transport.js';
 
-function source(capacity, plantCapacity, marker) {
-  const layout = frameLayout(capacity, plantCapacity);
+function source(capacity, plantCapacity, marker, corpseCapacity = 0) {
+  const layout = frameLayout(capacity, plantCapacity, corpseCapacity);
   const views = frameViews(new ArrayBuffer(layout.bytes), 0, layout);
   for (const field of Object.values(views)) field.fill(marker);
   return views;
@@ -19,6 +21,9 @@ function source(capacity, plantCapacity, marker) {
 
 test('shared frame bases stay aligned for every capacity residue', () => {
   assert.equal(frameLayout(1, 0).bytes, 61);
+  // Matches sim_core::snapshot::BYTES_PER_PLANT and BYTES_PER_CORPSE.
+  assert.equal(bytesPerPlant(), 16);
+  assert.equal(bytesPerCorpse(), 16);
   for (const capacity of [5000, 5001, 5002, 5003]) {
     assert.doesNotThrow(() => createWriter(SHARED, capacity, 7), `${capacity} slots`);
   }
@@ -107,4 +112,19 @@ test('transferable frames stay attached until the next animation read', () => {
   const second = reader.latest();
   assert.equal(second.views.alive[1], 1);
   assert.equal(reader.takeRecycle(), firstBuffer);
+});
+
+test('corpses travel with the frame through either transport', () => {
+  for (const kind of [SHARED, TRANSFERABLE]) {
+    const writer = createWriter(kind, 3, 2, 4);
+    const reader = createReader(writer.handoff);
+    const frame = source(3, 2, 0, 4);
+    frame.corpsePosition.set([10, 20, 0], 3);
+    frame.corpseEnergy[1] = 42;
+    const published = writer.publish(frame, 5n, 1);
+    if (kind === TRANSFERABLE) reader.accept(published);
+    const { views } = reader.latest();
+    assert.deepEqual([...views.corpsePosition.subarray(3, 6)], [10, 20, 0], kind);
+    assert.deepEqual([...views.corpseEnergy], [0, 42, 0, 0], kind);
+  }
 });

@@ -93,7 +93,11 @@ export function createRenderer(canvas, options) {
   } = options;
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
   if (!gl) throw new Error('WebGL2 is unavailable in this browser');
-  const config = { ...initialConfig, plantColor: [...initialConfig.plantColor] };
+  const config = {
+    ...initialConfig,
+    plantColor: [...initialConfig.plantColor],
+    corpseColor: [...initialConfig.corpseColor],
+  };
   let pass = null;
   let savedView = null;
   let selected = null;
@@ -199,6 +203,9 @@ export function createRenderer(canvas, options) {
       config.plantRadius = hints.plantRadius;
       config.plantColor = [...hints.plantColor];
       config.plantMaxEnergy = hints.plantMaxEnergy;
+      config.corpseRadius = hints.corpseRadius;
+      config.corpseColor = [...hints.corpseColor];
+      config.corpseFullEnergy = hints.corpseFullEnergy;
       pass?.setRenderHints(hints);
     },
 
@@ -232,7 +239,10 @@ function buildRenderer(
   gl,
   canvas,
   resources,
-  { worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy },
+  {
+    worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy,
+    corpseCapacity, corpseRadius, corpseColor, corpseFullEnergy,
+  },
 ) {
   const program = resources.program(AGENT_VERTEX_SHADER, AGENT_FRAGMENT_SHADER);
   gl.useProgram(program);
@@ -256,6 +266,7 @@ function buildRenderer(
     color: gl.getUniformLocation(plantProgram, 'u_color'),
     maxEnergy: gl.getUniformLocation(plantProgram, 'u_max_energy'),
     world: gl.getUniformLocation(plantProgram, 'u_world'),
+    hideEmpty: gl.getUniformLocation(plantProgram, 'u_hide_empty'),
   };
 
   // The quad every instance is drawn from: a triangle strip of four corners, shared by
@@ -319,6 +330,20 @@ function buildRenderer(
   const reseeds = createReseedGlow(plantCapacity);
   gl.bindVertexArray(null);
 
+  // Corpses are food drawn like plants, from the same program over their own arrays.
+  // They never glow, so that attribute is a zero buffer uploaded once.
+  const corpseVao = resources.vertexArray();
+  gl.bindVertexArray(corpseVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+  gl.enableVertexAttribArray(plantCornerAttr);
+  gl.vertexAttribPointer(plantCornerAttr, 2, gl.FLOAT, false, 0, 0);
+  const corpseAttributes = {
+    position: instancedFor(plantProgram, 'a_position', 3, gl.FLOAT, 4, corpseCapacity),
+    energy: instancedFor(plantProgram, 'a_energy', 1, gl.FLOAT, 4, corpseCapacity),
+    glow: instancedFor(plantProgram, 'a_glow', 1, gl.FLOAT, 4, corpseCapacity),
+  };
+  gl.bindVertexArray(null);
+
   gl.clearColor(0.055, 0.063, 0.078, 1);
 
   const camera = createCamera(canvas, worldSize, (width, height) =>
@@ -328,6 +353,9 @@ function buildRenderer(
   let currentPlantRadius = plantRadius;
   let currentPlantColor = [...plantColor];
   let currentPlantMaxEnergy = plantMaxEnergy;
+  let currentCorpseRadius = corpseRadius;
+  let currentCorpseColor = [...corpseColor];
+  let currentCorpseFullEnergy = corpseFullEnergy;
   let hasUploadedFrame = false;
   let selected = null;
   let speciesView = { colorMode: 'signature', selectedSpecies: null };
@@ -365,10 +393,13 @@ function buildRenderer(
       speciesView = { ...view };
     },
 
-    setRenderHints({ plantRadius: radius, plantColor: color, plantMaxEnergy: maxEnergy }) {
-      currentPlantRadius = radius;
-      currentPlantColor = [...color];
-      currentPlantMaxEnergy = maxEnergy;
+    setRenderHints(hints) {
+      currentPlantRadius = hints.plantRadius;
+      currentPlantColor = [...hints.plantColor];
+      currentPlantMaxEnergy = hints.plantMaxEnergy;
+      currentCorpseRadius = hints.corpseRadius;
+      currentCorpseColor = [...hints.corpseColor];
+      currentCorpseFullEnergy = hints.corpseFullEnergy;
     },
 
     /** Draws one frame's views. `count` is the slot count, not the population. */
@@ -402,6 +433,7 @@ function buildRenderer(
         gl.uniform1f(plantUniforms.radius, currentPlantRadius);
         gl.uniform1f(plantUniforms.minRadius, MIN_RADIUS_PX);
         gl.uniform1f(plantUniforms.maxEnergy, currentPlantMaxEnergy);
+        gl.uniform1f(plantUniforms.hideEmpty, 0);
         gl.uniform3f(
           plantUniforms.color,
           currentPlantColor[0],
@@ -409,6 +441,31 @@ function buildRenderer(
           currentPlantColor[2],
         );
         gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, plantCapacity);
+      }
+
+      // Corpses over plants and under agents: carrion lies on the ground.
+      if (corpseCapacity > 0) {
+        gl.useProgram(plantProgram);
+        gl.bindVertexArray(corpseVao);
+        if (shouldUpload) {
+          upload(corpseAttributes.position, views.corpsePosition);
+          upload(corpseAttributes.energy, views.corpseEnergy);
+        }
+        gl.uniform2f(plantUniforms.center, camera.state.x, camera.state.y);
+        gl.uniform1f(plantUniforms.ppu, camera.state.ppu);
+        gl.uniform2f(plantUniforms.viewport, camera.width, camera.height);
+        gl.uniform1f(plantUniforms.world, worldSize);
+        gl.uniform1f(plantUniforms.radius, currentCorpseRadius);
+        gl.uniform1f(plantUniforms.minRadius, MIN_RADIUS_PX);
+        gl.uniform1f(plantUniforms.maxEnergy, currentCorpseFullEnergy);
+        gl.uniform1f(plantUniforms.hideEmpty, 1);
+        gl.uniform3f(
+          plantUniforms.color,
+          currentCorpseColor[0],
+          currentCorpseColor[1],
+          currentCorpseColor[2],
+        );
+        gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, corpseCapacity);
       }
 
       gl.useProgram(program);

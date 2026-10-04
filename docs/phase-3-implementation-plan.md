@@ -6,7 +6,7 @@ Design decisions live in the spec (§4.2 the bite, §5.1 corpses, §5.5 constant
 plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: designed; M1 next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1 done; M2 next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**, measured as a species whose
 members take most of their energy from corpses, persisting for at least half a run on
 several seeds while plant-eaters persist beside it, against both controls (spec §7.8).
@@ -16,7 +16,7 @@ alongside; mechanical tests cannot certify it.
 | Milestone | State |
 |---|---|
 | M0 Design | Recorded in the spec |
-| M1 Corpses | Not started |
+| M1 Corpses | Done: pool, decomposition, eating, sight, hashing, checkpoints, snapshot, and drawing |
 | M2 Bite, health, and kills | Not started |
 | M3 Diet telemetry and the browser | Not started |
 | M4 Calibration | Not started |
@@ -43,7 +43,10 @@ counted. Starved agents die empty, so until M2 nothing visible changes. Corpses 
 order. Vision rays see corpses in `corpses.signature`.
 
 - World state: hashed, checkpointed (a new checkpoint format), and in the snapshot; the
-  renderer draws them.
+  renderer draws them. The snapshot carries every corpse slot's position and energy, a
+  free slot as zero energy, so the frame needs no liveness array; the browser draws
+  corpses with the plant disc program, shaded against a newborn's tank, and hides
+  empty slots.
 - Tests: the energy ledger with corpses created, eaten, and decaying; no allocation;
   checkpoint continuation through corpse churn; ingest choosing the nearest food.
 
@@ -66,8 +69,8 @@ raises the per-genome effector limit to 5.
 
 Per-agent energy eaten from plants and from corpses, so a lineage's diet is measurable;
 kills per sample; corpse stock. `summarize` and `diagnose` report diet fractions and the
-spec §7.9 predation signals (carnivore biomass → 0; prey biomass → 0). The browser draws
-corpses, and the inspector shows health and diet. Drawing individual bites would need a
+spec §7.9 predation signals (carnivore biomass → 0; prey biomass → 0). The inspector
+shows health and diet; corpses are already drawn (M1). Drawing individual bites would need a
 snapshot field the spec does not define; it is out of scope.
 
 ## M4 - Calibration

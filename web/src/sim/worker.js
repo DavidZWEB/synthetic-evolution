@@ -32,7 +32,7 @@ import { founderCount, parseSeed } from './inputs.js';
 import { createSnapshotPublisher } from './publisher.js';
 import { createTickScheduler } from './scheduler.js';
 import { createWriter, preferredKind } from './transport.js';
-import { bytesPerAgent, bytesPerPlant } from './snapshot-layout.js';
+import { bytesPerAgent, bytesPerCorpse, bytesPerPlant } from './snapshot-layout.js';
 
 let sim = null;
 let memory = null;
@@ -68,14 +68,21 @@ function assertLayoutsAgree(spans) {
   const agentBytes =
     agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
   const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
+  const corpseBytes = (spans.corpse_position.len + spans.corpse_energy.len) * 4;
 
   const expectedAgents = capacity * bytesPerAgent();
   const expectedPlants = spans.plant_capacity * bytesPerPlant();
-  if (agentBytes !== expectedAgents || plantBytes !== expectedPlants) {
+  const expectedCorpses = spans.corpse_capacity * bytesPerCorpse();
+  if (
+    agentBytes !== expectedAgents ||
+    plantBytes !== expectedPlants ||
+    corpseBytes !== expectedCorpses
+  ) {
     throw new Error(
-      `snapshot layout disagrees: wasm says ${agentBytes}b for ${capacity} agents and ` +
-        `${plantBytes}b for ${spans.plant_capacity} plants; this side expects ` +
-        `${expectedAgents} and ${expectedPlants}`,
+      `snapshot layout disagrees: wasm says ${agentBytes}b for ${capacity} agents, ` +
+        `${plantBytes}b for ${spans.plant_capacity} plants, and ${corpseBytes}b for ` +
+        `${spans.corpse_capacity} corpses; this side expects ${expectedAgents}, ` +
+        `${expectedPlants}, and ${expectedCorpses}`,
     );
   }
 }
@@ -103,6 +110,8 @@ function sourceViews() {
     incarnation: at(spans.incarnation, Uint32Array),
     plantPosition: at(spans.plant_position, Float32Array),
     plantEnergy: at(spans.plant_energy, Float32Array),
+    corpsePosition: at(spans.corpse_position, Float32Array),
+    corpseEnergy: at(spans.corpse_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
   };
   sourceBuffer = memory.buffer;
@@ -184,7 +193,7 @@ const handlers = {
     // holding its own copy of `world.size` draws a correct picture of the wrong world
     // the moment either moves.
     const kind = preferredKind();
-    writer = createWriter(kind, hints.agent_capacity, hints.plant_capacity);
+    writer = createWriter(kind, hints.agent_capacity, hints.plant_capacity, hints.corpse_capacity);
     source = null;
     sourceLayout = null;
     sourceBuffer = null;

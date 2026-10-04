@@ -129,6 +129,15 @@
     return wasm;
   }
 
+  /** The renderer's corpse settings, from the worker's render hints. */
+  function corpseHints(hints) {
+    return {
+      corpseRadius: hints.corpse_radius,
+      corpseColor: hints.corpse_signature,
+      corpseFullEnergy: hints.corpse_full_energy,
+    };
+  }
+
   function download(bytes, name) {
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
     const link = document.createElement('a');
@@ -486,6 +495,8 @@
           plantRadius: hints.plant_radius,
           plantColor: hints.plant_signature,
           plantMaxEnergy: hints.plant_max_energy,
+          corpseCapacity: hints.corpse_capacity,
+          ...corpseHints(hints),
           onContextLost: () => {
             rendererFailure = 'renderer: WebGL context lost; restoring…';
           },
@@ -529,6 +540,7 @@
         plantRadius: hints.plant_radius,
         plantColor: hints.plant_signature,
         plantMaxEnergy: hints.plant_max_energy,
+        ...corpseHints(hints),
       });
     });
     nextSim.on('metrics', (message) => {
