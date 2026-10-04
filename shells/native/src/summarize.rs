@@ -26,8 +26,7 @@ const METRICS: &[&str] = &[
     "genome_variants",
     "agent_energy_mean",
     "speed_mean",
-    "intake_per_agent_tick",
-    "intake_per_distance",
+    "supply_captured",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -100,7 +99,7 @@ const NOTES: &[&str] = &[
     "persistent_species: species alive at the end that were first sampled at least half the run earlier",
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
     "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
-    "intake_per_agent_tick / intake_per_distance: energy eaten over the second half per living agent-tick and per unit of mean speed x agent-ticks",
+    "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
     "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
     "peak_arena_use: the fullest arena's used fraction at the final sample",
 ];
@@ -204,7 +203,10 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         .final_state_hashes
         .as_ref()
         .map(|hashes| hashes.evolving.clone());
-    let evolving = cohort_values(&run.samples, header.ticks, |sample| &sample.evolving);
+    let supply = f64::from(header.params.plants.energy_input_rate * header.params.world.dt);
+    let evolving = cohort_values(&run.samples, header.ticks, supply, |sample| {
+        &sample.evolving
+    });
     // Every control run repeats the same evolving world; disagreement means the runs
     // are not a matched comparison (different source or params).
     match &runs.evolving {
@@ -216,7 +218,9 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         Some(_) => {}
         None => runs.evolving = Some((evolving, hash)),
     }
-    let control = cohort_values(&run.samples, header.ticks, |sample| &sample.random_control);
+    let control = cohort_values(&run.samples, header.ticks, supply, |sample| {
+        &sample.random_control
+    });
     let Some(index) = CONTROLS
         .iter()
         .position(|&protocol| protocol == header.control)
@@ -333,10 +337,12 @@ fn stats(name: &'static str, values: Vec<Option<f64>>) -> MetricStats {
     }
 }
 
-/// One cohort's metric vector in `METRICS` order.
+/// One cohort's metric vector in `METRICS` order. `supply` is the plants' nominal
+/// energy input per tick.
 fn cohort_values(
     samples: &[RunSample],
     ticks: u64,
+    supply: f64,
     select: impl Fn(&RunSample) -> &WorldMetrics,
 ) -> Vec<Option<f64>> {
     let last = select(samples.last().expect("checked non-empty"));
@@ -345,7 +351,7 @@ fn cohort_values(
     let species = last.species.as_ref();
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
-    let (intake, per_distance) = foraging(samples, ticks, &select);
+    let captured = supply_captured(samples, ticks, supply, &select);
     let values: Vec<Option<f64>> = vec![
         Some(f64::from(u8::from(last.population == 0))),
         Some(f64::from(last.population)),
@@ -353,8 +359,7 @@ fn cohort_values(
         Some(f64::from(last.genome_variants)),
         Some(last.agent_energy.mean),
         Some(last.speed.mean),
-        intake,
-        per_distance,
+        captured,
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),
@@ -402,31 +407,31 @@ fn cohort_values(
     values
 }
 
-/// Energy eaten over the run's second half, per living agent per tick and per unit of
-/// distance moved. Agents gain energy only by eating (spec §5.1), so between samples
-/// intake is the change in agent-held energy plus what was dissipated. Assumes no
-/// founders were added after the first sample, which `experiment.sh` runs never do.
-fn foraging(
+/// Energy eaten over the run's second half as a fraction of the plants' nominal input
+/// over the same ticks.
+///
+/// Not per agent: once a run settles, everything that enters is eaten, so intake per
+/// agent is only input divided by population. What foraging changes is how much enters
+/// at all, because a full plant refuses its share of the input (`Plants::grow`); a
+/// population that keeps more sites grazed below capacity captures more of the supply.
+/// Agents gain energy only by eating, so between samples intake is the change in
+/// agent-held energy plus what was dissipated. Assumes no founders were added after
+/// the first sample, which `experiment.sh` runs never do.
+fn supply_captured(
     samples: &[RunSample],
     ticks: u64,
+    supply: f64,
     select: &impl Fn(&RunSample) -> &WorldMetrics,
-) -> (Option<f64>, Option<f64>) {
-    let window: Vec<&RunSample> = samples.iter().filter(|s| s.tick >= ticks / 2).collect();
-    let (mut eaten, mut agent_ticks, mut distance) = (0.0, 0.0, 0.0);
-    for pair in window.windows(2) {
-        let (a, b) = (select(pair[0]), select(pair[1]));
-        let held = |m: &WorldMetrics| m.total_energy - m.plant_energy;
-        let dt = (pair[1].tick - pair[0].tick) as f64;
-        let agents = f64::from(a.population + b.population) / 2.0;
-        eaten += held(b) - held(a) + (b.cumulative_dissipation - a.cumulative_dissipation);
-        agent_ticks += agents * dt;
-        distance += agents * dt * (a.speed.mean + b.speed.mean) / 2.0;
+) -> Option<f64> {
+    let first = samples.iter().find(|s| s.tick >= ticks / 2)?;
+    let last = samples.last()?;
+    let offered = supply * (last.tick - first.tick) as f64;
+    if offered <= 0.0 {
+        return None;
     }
-    if agent_ticks == 0.0 {
-        return (None, None);
-    }
-    let per_distance = (distance > 0.0).then(|| eaten / distance);
-    (Some(eaten / agent_ticks), per_distance)
+    let held = |m: &WorldMetrics| m.total_energy - m.plant_energy;
+    let (a, b) = (select(first), select(last));
+    Some((held(b) - held(a) + (b.cumulative_dissipation - a.cumulative_dissipation)) / offered)
 }
 
 /// Species persistence from sampled presence: how many species alive at the end
@@ -675,29 +680,28 @@ mod tests {
     }
 
     #[test]
-    fn intake_is_energy_gained_plus_energy_dissipated_over_the_second_half() {
+    fn supply_captured_is_energy_eaten_over_the_second_half_per_unit_offered() {
         let at = |tick, held: f64, dissipated: f64| {
             let mut sample = sample(tick, &[1]);
-            sample.evolving.population = 10;
             sample.evolving.plant_energy = 1_000.0;
             sample.evolving.total_energy = 1_000.0 + held;
             sample.evolving.cumulative_dissipation = dissipated;
-            sample.evolving.speed.mean = 2.0;
             sample
         };
         // The first half's feeding is excluded; the second half eats 300 (+100 held,
-        // +200 dissipated) over 10 agents x 100 ticks.
+        // +200 dissipated) of the 5 x 100 offered.
         let samples = [at(0, 0.0, 0.0), at(100, 500.0, 0.0), at(200, 600.0, 200.0)];
-        let (intake, per_distance) = foraging(&samples, 200, &|s| &s.evolving);
-        assert_eq!(intake, Some(0.3));
-        assert_eq!(per_distance, Some(0.15));
-        let (none, _) = foraging(&samples[..1], 200, &|s| &s.evolving);
-        assert_eq!(none, None);
+        let captured = supply_captured(&samples, 200, 5.0, &|s| &s.evolving);
+        assert_eq!(captured, Some(0.6));
+        assert_eq!(
+            supply_captured(&samples[..1], 200, 5.0, &|s| &s.evolving),
+            None
+        );
     }
 
     #[test]
     fn every_metric_has_a_value_slot() {
-        let values = cohort_values(&[sample(0, &[1])], 0, |s| &s.evolving);
+        let values = cohort_values(&[sample(0, &[1])], 0, 1.0, |s| &s.evolving);
         assert_eq!(values.len(), METRICS.len());
         assert_eq!(values[0], Some(0.0), "a living population is not extinct");
     }
