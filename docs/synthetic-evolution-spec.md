@@ -831,7 +831,7 @@ A uniform world produces one optimal strategy and then stagnates. Introduce vari
 
 Every one of these creates a niche, and niches are what let multiple species coexist instead of one clone sweeping the world.
 
-**DECIDED (Phase 2, M9): spatial fertility ships first.** A static map of smoothed value noise, periodic across the torus with feature size `patch_scale`, decides where plants can establish. A candidate site is accepted with probability `(fertility / peak fertility)^patchiness`, both when the world is built and at every reseed (§5.1). Zero `patchiness` is uniform. The map is drawn from the world RNG only when `patchiness` is non-zero, and is regenerated from the seed rather than saved. Fertility decides where plants live, not how fast they grow; a dense patch already receives more input because every plant is offered an equal share. Terrain and obstacles remain later work, and temporal cycles and disturbances stay in Phase 6 (§8).
+**DECIDED (Phase 2, M9): spatial fertility ships first.** A static map of smoothed value noise, periodic across the torus with feature size `patch_scale`, decides where plants can establish. A candidate site is accepted with probability `(fertility / peak fertility)^patchiness`, both when the world is built and at every reseed (§5.1); after 1,024 rejected candidates the last is kept, so choosing a site cannot stall a tick, and validation bounds `patchiness` at 16 so that cap is practically never reached. Zero `patchiness` is uniform. Both fields are fixed for the life of a world. The map is drawn from the world RNG only when `patchiness` is non-zero, and is regenerated from the seed rather than saved. Fertility decides where plants live, not how fast they grow; a dense patch already receives more input because every plant is offered an equal share. Terrain and obstacles remain later work, and temporal cycles and disturbances stay in Phase 6 (§8).
 
 ### 5.4 Reproduction and spatial viscosity
 
@@ -1389,8 +1389,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 3 since M9
-added `grazing_lag` to the encoded params; earlier formats are refused), the originating run's
+manifest records the container and checkpoint formats (checkpoint format 4 since M9
+added `patchiness` and `patch_scale` to the encoded params; earlier formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a
