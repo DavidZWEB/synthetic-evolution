@@ -241,18 +241,13 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
 
 /// Fills the params fields a file written before them omits with the values its run
 /// actually had, which today's serde defaults would not. Refuses a run whose founders
-/// bite but which records no `combat`, as the history readers do: today's defaults
-/// could describe attack rules the run never had.
+/// bite without every combat parameter recorded, as the history readers do.
 fn backfill_later_params(
     params: &mut serde_json::Map<String, serde_json::Value>,
 ) -> std::result::Result<(), &'static str> {
-    let biting = params
-        .get("founder")
-        .and_then(|founder| founder.get("bite"))
-        .and_then(serde_json::Value::as_bool);
-    if biting == Some(true) && !params.contains_key("combat") {
-        return Err("a run whose founders bite must record its combat parameters");
-    }
+    crate::history_reader::later_params::require_recorded_combat(&serde_json::Value::Object(
+        params.clone(),
+    ))?;
     // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
     // not exist before it, and M9's plant ecology fields came later still; a
     // schema-8 file written earlier omits some of them. It ran without them, so
@@ -1027,12 +1022,45 @@ mod tests {
         let mut params = serde_json::Map::new();
         backfill_later_params(&mut params).unwrap();
         assert_eq!(params["founder"]["bite"], false);
-        let mut written = serde_json::json!({"founder": {"bite": true}, "combat": {}});
+        let combat = serde_json::to_value(sim_core::params::CombatParams::default()).unwrap();
+        let mut written = serde_json::json!({"founder": {"bite": true}, "combat": combat});
         backfill_later_params(written.as_object_mut().unwrap()).unwrap();
         assert_eq!(written["founder"]["bite"], true);
-        // Biting with no record of how is refused, not filled from today's defaults.
-        let mut unrecorded = serde_json::json!({"founder": {"bite": true}});
-        assert!(backfill_later_params(unrecorded.as_object_mut().unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_biting_run_must_record_every_combat_parameter() {
+        // Serde would fill anything missing from today's defaults, which could describe
+        // attack rules the run never had: absent, empty, or partial is refused, in the
+        // header's params and a recorded retune's alike.
+        let mut biting = SimParams::default();
+        biting.founder.bite = true;
+        let mut records = final_records();
+        records[0]["data"]["params"] = serde_json::to_value(&biting).unwrap();
+        records[0]["data"]["retune"] = serde_json::json!({
+            "at_tick": 0,
+            "params": serde_json::to_value(&biting).unwrap(),
+        });
+        assert!(
+            parse_values(&records).is_ok(),
+            "a complete biting run reads"
+        );
+        for path in ["/data/params", "/data/retune/params"] {
+            let unrecorded: [fn(&mut serde_json::Value); 3] = [
+                |params| {
+                    params.as_object_mut().unwrap().remove("combat");
+                },
+                |params| params["combat"] = serde_json::json!({}),
+                |params| {
+                    params["combat"].as_object_mut().unwrap().remove("mouthful");
+                },
+            ];
+            for (case, unrecord) in unrecorded.into_iter().enumerate() {
+                let mut records = records.clone();
+                unrecord(records[0].pointer_mut(path).unwrap());
+                assert!(parse_values(&records).is_err(), "{path}, case {case}");
+            }
+        }
     }
 
     #[test]

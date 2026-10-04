@@ -5,7 +5,7 @@
 //! archive's params identically. Not a migration: nothing is rewritten, and a field an
 //! archive wrote keeps its own value.
 
-use sim_core::params::SimParams;
+use sim_core::params::{CombatParams, SimParams};
 
 /// Leaf names an older archive may omit; every other params field must be present.
 pub const LATER_PARAMS: &[&str] = &[
@@ -29,6 +29,34 @@ pub const LATER_PARAMS: &[&str] = &[
     "founder",
 ];
 
+/// An archive whose founders bite must record every combat parameter: serde would fill
+/// a missing one from today's defaults, which could describe attack rules the run never
+/// had. `wire` is the params object exactly as written.
+pub fn require_recorded_combat(wire: &serde_json::Value) -> Result<(), &'static str> {
+    if wire
+        .pointer("/founder/bite")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return Ok(());
+    }
+    let recorded = wire.get("combat").and_then(serde_json::Value::as_object);
+    let fields = serde_json::to_value(CombatParams::default()).ok();
+    let complete = fields
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|fields| {
+            fields
+                .keys()
+                .all(|field| recorded.is_some_and(|combat| combat.contains_key(field)))
+        });
+    if complete {
+        Ok(())
+    } else {
+        Err("an archive whose founders bite must record every combat parameter")
+    }
+}
+
 /// Serde fills an omitted later field from today's default; this resets it to what the
 /// archived run actually had. `wire` is the params object exactly as written.
 ///
@@ -36,15 +64,9 @@ pub const LATER_PARAMS: &[&str] = &[
 /// Body-trait ranges read as one point at the founders' traits instead: bodies did not
 /// evolve before Phase 3, and a zero range would neither describe that nor validate.
 ///
-/// Refuses an archive whose founders bite but which records no `combat`: today's
-/// defaults could describe attack rules the run never had.
+/// Refuses an archive whose founders bite without every combat parameter recorded.
 pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &'static str> {
-    let biting = wire
-        .pointer("/founder/bite")
-        .and_then(serde_json::Value::as_bool);
-    if biting == Some(true) && wire.pointer("/combat").is_none() {
-        return Err("an archive whose founders bite must record its combat parameters");
-    }
+    require_recorded_combat(wire)?;
     let absent = |path: &str| wire.pointer(path).is_none();
     if absent("/mutation/structural/add_oscillator_rate") {
         params.mutation.structural.add_oscillator_rate = 0.0;

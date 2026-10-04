@@ -121,6 +121,9 @@ fn an_archive_whose_founders_bite_must_record_their_combat() {
     let mut biting: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
     biting["founder"]["bite"] = json!(true);
     assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_ok());
+    let mut empty = biting.clone();
+    empty["combat"] = json!({});
+    assert!(compare_representatives(&genes, &genes, &empty.to_string()).is_err());
     biting.as_object_mut().unwrap().remove("combat");
     assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_err());
 }

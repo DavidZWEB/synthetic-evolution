@@ -12,7 +12,7 @@ use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 use sim_core::ids::{BirthId, SpeciesId};
 
 #[path = "../../shared/later_params.rs"]
-mod later_params;
+pub(crate) mod later_params;
 use later_params::LATER_PARAMS;
 
 use crate::Result;
@@ -625,6 +625,18 @@ mod tests {
             restore_later_params(&mut header.params, &line)
         };
         assert!(restored(&wire).is_ok(), "recorded combat reads");
+        let mut partial = wire.clone();
+        partial["data"]["params"]["combat"]
+            .as_object_mut()
+            .unwrap()
+            .remove("mouthful");
+        assert!(
+            restored(&partial).is_err(),
+            "a missing field read as today's"
+        );
+        let mut empty = wire.clone();
+        empty["data"]["params"]["combat"] = serde_json::json!({});
+        assert!(restored(&empty).is_err(), "empty combat read as today's");
         wire["data"]["params"]
             .as_object_mut()
             .unwrap()
