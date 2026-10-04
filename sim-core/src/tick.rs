@@ -221,7 +221,8 @@ impl World {
         self.field.update(&self.params.chemo);
     }
 
-    /// Rebuilds the neighbour grid from current positions. Step 1 of the tick.
+    /// Rebuilds the neighbour grid from current positions, and the corpse grid if the
+    /// last tick's deaths or decomposition changed it. Step 1 of the tick.
     ///
     /// Lives here rather than in `spatial` because it is the only place that knows
     /// which slices belong together; the hash itself takes plain slices so it can be
@@ -232,6 +233,7 @@ impl World {
             self.pool.alive_flags(),
             &mut self.agents.grid_cell,
         );
+        self.corpses.settle();
     }
 
     /// Grows the plants by one tick, resolves plant deaths and reseeds, and scents the

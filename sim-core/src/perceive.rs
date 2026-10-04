@@ -218,15 +218,17 @@ fn vision_ray(
         |_| world.plant_signature,
         &mut seen,
     );
-    cast(
-        &ray,
-        world.corpses.hash(),
-        world.corpses.position(),
-        u32::MAX,
-        |_| world.corpse_radius,
-        |_| world.corpse_signature,
-        &mut seen,
-    );
+    if let Some(hash) = world.corpses.hash() {
+        cast(
+            &ray,
+            hash,
+            world.corpses.position(),
+            u32::MAX,
+            |_| world.corpse_radius,
+            |_| world.corpse_signature,
+            &mut seen,
+        );
+    }
 
     if let Some(hit) = seen {
         out[0] = 1.0 - (hit.distance / range).clamp(0.0, 1.0);
@@ -683,6 +685,7 @@ mod tests {
             &mut reserve,
             &params.corpses,
         );
+        fixture.corpses.settle();
         let mut neurons = neurons_for(&genes);
         perceive(
             &sensors,

@@ -261,9 +261,11 @@ fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result
     if absent("/data/params/plants/dispersal_radius") {
         params.plants.dispersal_radius = 0.0;
     }
-    // A run from before Phase 3 left no corpses, which a zero share reproduces.
+    // A run from before Phase 3 left no corpses: a zero share reproduces it, and no
+    // slots keep its memory ceiling from paying for a pool it never had.
     if absent("/data/params/corpses") {
         params.corpses.energy_fraction = 0.0;
+        params.corpses.max_corpses = 0;
     }
     Ok(())
 }
@@ -610,6 +612,7 @@ mod tests {
             assert_eq!(header.params.plants.death_stock, 0.0);
             if !present {
                 assert_eq!(header.params.corpses.energy_fraction, 0.0);
+                assert_eq!(header.params.corpses.max_corpses, 0);
             }
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);

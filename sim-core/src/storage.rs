@@ -297,6 +297,10 @@ impl AllocationRequests {
     /// Corpse slots: position, energy pair, liveness, free list, and grid scratch,
     /// with a grid of their own (spec §5.1).
     fn corpses(&mut self, cells: u64, corpses: u64) -> Result<(), ParamError> {
+        // No slots, no grid: a world without corpses is charged nothing for them.
+        if corpses == 0 {
+            return Ok(());
+        }
         self.buffer::<Vec3>(corpses)?;
         self.buffer::<f32>(corpses)?;
         self.buffer::<f64>(corpses)?;

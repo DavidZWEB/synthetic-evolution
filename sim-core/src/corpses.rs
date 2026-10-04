@@ -30,7 +30,11 @@ pub struct Corpses {
     refused: u64,
     /// Grid-cell scratch, kept so a rebuild never allocates.
     cells: Vec<u32>,
-    hash: SpatialHash,
+    /// None for a world with no corpse slots, which builds and is charged no grid.
+    hash: Option<SpatialHash>,
+    /// Set when a corpse appears or is removed, so a tick's deaths and decomposition
+    /// cost one rebuild in step 1 rather than one per death.
+    stale: bool,
 }
 
 /// A checkpoint's corpse state, borrowed for validation and restore.
@@ -56,11 +60,14 @@ impl Corpses {
             free: (0..count as u32).rev().collect(),
             refused: 0,
             cells: vec![0; count],
-            hash: SpatialHash::new(
-                params.world.size,
-                params.sensing.max_sense_radius(),
-                count as u32,
-            ),
+            hash: (count > 0).then(|| {
+                SpatialHash::new(
+                    params.world.size,
+                    params.sensing.max_sense_radius(),
+                    count as u32,
+                )
+            }),
+            stale: false,
         }
     }
 
@@ -95,7 +102,7 @@ impl Corpses {
             &mut self.energy_reserve[i],
             share,
         );
-        self.rebuild();
+        self.stale = true;
         moved
     }
 
@@ -106,14 +113,13 @@ impl Corpses {
         let rate = (params.decay as f64 * dt as f64).clamp(0.0, 1.0);
         let floor = params.min_energy as f64;
         let mut dissipated = 0.0;
-        let mut removed = false;
         for i in 0..self.alive.len() {
             if self.alive[i] == 0 {
                 continue;
             }
             let held = energy::total(self.energy[i], self.energy_reserve[i]);
             let lost = if held - held * rate < floor {
-                removed = true;
+                self.stale = true;
                 self.alive[i] = 0;
                 self.free.push(i as u32);
                 f64::MAX
@@ -124,15 +130,21 @@ impl Corpses {
                 energy::take_amount(&mut self.energy[i], &mut self.energy_reserve[i], lost)
                     .approximate();
         }
-        if removed {
-            self.rebuild();
-        }
         dissipated
     }
 
+    /// Rebuilds the grid if any corpse appeared or was removed since the last rebuild.
+    /// Step 1 of the tick, before anything looks for a corpse (spec §2.4).
+    pub(crate) fn settle(&mut self) {
+        if std::mem::take(&mut self.stale) {
+            self.rebuild();
+        }
+    }
+
     fn rebuild(&mut self) {
-        self.hash
-            .rebuild(&self.position, &self.alive, &mut self.cells);
+        if let Some(hash) = &mut self.hash {
+            hash.rebuild(&self.position, &self.alive, &mut self.cells);
+        }
     }
 
     /// Total energy held across every corpse.
@@ -190,10 +202,12 @@ impl Corpses {
         self.alive.is_empty()
     }
 
-    /// Neighbour grid over live corpses, rebuilt whenever one appears or is removed.
+    /// Neighbour grid over live corpses as of the last [`Self::settle`], or None when
+    /// the world has no corpse slots.
     #[inline]
-    pub fn hash(&self) -> &SpatialHash {
-        &self.hash
+    pub(crate) fn hash(&self) -> Option<&SpatialHash> {
+        debug_assert!(!self.stale, "corpse grid read before it was settled");
+        self.hash.as_ref()
     }
 
     #[inline]
@@ -252,7 +266,10 @@ impl Corpses {
                         && (0.0..=size).contains(&p.y)
                         && e.is_finite()
                         && e >= 0.0
+                        // The residual is never negative (`energy::add`), so a saved
+                        // one that is could only unwind dissipation on the next decay.
                         && r.is_finite()
+                        && r >= 0.0
                 }
                 0 => e == 0.0 && r == 0.0,
                 _ => false,
@@ -283,6 +300,7 @@ impl Corpses {
         self.free.clear();
         self.free.extend_from_slice(saved.free);
         self.refused = saved.refused;
+        self.stale = false;
         self.rebuild();
         Ok(())
     }
@@ -380,18 +398,65 @@ mod tests {
     }
 
     #[test]
-    fn the_grid_finds_a_new_corpse() {
+    fn the_grid_finds_a_new_corpse_once_settled() {
         let (mut corpses, params) = pool(2);
-        let (mut energy, mut reserve) = (100.0f32, 0.0f64);
         let at = Vec3::new(300.0, 400.0, 0.0);
-        corpses.leave(at, &mut energy, &mut reserve, &params.corpses);
+        for _ in 0..2 {
+            let (mut energy, mut reserve) = (100.0f32, 0.0f64);
+            corpses.leave(at, &mut energy, &mut reserve, &params.corpses);
+        }
+        let grid = |corpses: &Corpses| corpses.hash.as_ref().unwrap().live();
+        assert_eq!(grid(&corpses), 0, "deaths defer the rebuild to step 1");
+        corpses.settle();
+        assert_eq!(grid(&corpses), 2, "one rebuild covers every death");
         let mut found = false;
         corpses
             .hash()
+            .unwrap()
             .for_each_within(corpses.position(), at, 1.0, |index, _, _| {
                 found |= index == 0
             });
         assert!(found);
+
+        let mut quick = params.corpses.clone();
+        quick.min_energy = 1e9;
+        corpses.decay(&quick, 1.0);
+        corpses.settle();
+        assert_eq!(grid(&corpses), 0, "decomposed corpses leave the grid");
+    }
+
+    #[test]
+    fn a_pool_without_slots_builds_no_grid_and_takes_no_corpse() {
+        let (mut corpses, params) = pool(0);
+        assert!(corpses.hash().is_none());
+        let (mut energy, mut reserve) = (100.0f32, 0.0f64);
+        let moved = corpses.leave(Vec3::ZERO, &mut energy, &mut reserve, &params.corpses);
+        assert_eq!(moved, 0.0);
+        assert_eq!(
+            corpses.refused(),
+            1,
+            "a share with nowhere to go is refused"
+        );
+        corpses.settle();
+        assert!(corpses.hash().is_none());
+    }
+
+    #[test]
+    fn restore_refuses_a_negative_reserve() {
+        let (mut corpses, params) = pool(1);
+        let saved = |reserve: &'static [f64]| SavedCorpses {
+            position: &[Vec3::ZERO],
+            energy: &[0.0],
+            reserve,
+            alive: &[1],
+            free: &[],
+            refused: 0,
+        };
+        assert!(corpses.restore(saved(&[0.5]), params.world.size).is_ok());
+        assert!(
+            corpses.restore(saved(&[-0.5]), params.world.size).is_err(),
+            "decay would take a negative amount and unwind dissipation"
+        );
     }
 
     #[test]

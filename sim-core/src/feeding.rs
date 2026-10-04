@@ -93,14 +93,14 @@ pub fn ingest(
     )
     .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach));
     let corpses = &*larder.corpses;
-    let corpse = nearest_within(
-        corpses.hash(),
-        corpses.position(),
-        at,
-        larder.corpse_reach,
-        |i| corpses.energy_at(i) > 0.0,
-    )
-    .map(|(index, d2)| (index, d2.sqrt() - larder.corpse_reach));
+    let corpse = corpses
+        .hash()
+        .and_then(|hash| {
+            nearest_within(hash, corpses.position(), at, larder.corpse_reach, |i| {
+                corpses.energy_at(i) > 0.0
+            })
+        })
+        .map(|(index, d2)| (index, d2.sqrt() - larder.corpse_reach));
     match (plant, corpse) {
         (Some((index, plant_edge)), Some((_, corpse_edge))) if plant_edge <= corpse_edge => larder
             .plants
@@ -277,6 +277,7 @@ mod tests {
         let mut corpses = Corpses::new(&params);
         let (mut source, mut reserve) = (energy, 0.0);
         corpses.leave(at, &mut source, &mut reserve, &params.corpses);
+        corpses.settle();
         corpses
     }
 

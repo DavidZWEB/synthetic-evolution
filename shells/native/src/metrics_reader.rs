@@ -229,8 +229,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
                     "dispersal_radius",
                 ][..],
             ),
-            // Pre-Phase-3 runs left no corpses.
-            (&["corpses"][..], &["energy_fraction"][..]),
+            // Pre-Phase-3 runs left no corpses, and had no pool for its ceiling to pay for.
+            (&["corpses"][..], &["energy_fraction", "max_corpses"][..]),
         ] {
             let mut object = Some(&mut *params);
             for key in path {
@@ -243,9 +243,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             }
             if let Some(object) = object {
                 for field in fields {
-                    object
-                        .entry(*field)
-                        .or_insert_with(|| serde_json::json!(0.0));
+                    // An integer zero, which reads as either a rate or a count.
+                    object.entry(*field).or_insert_with(|| serde_json::json!(0));
                 }
             }
         }
@@ -877,6 +876,33 @@ mod tests {
     }
 
     #[test]
+    fn a_run_from_before_corpses_is_not_charged_for_a_corpse_pool() {
+        // The tightest ceiling a pre-Phase-3 run could have recorded and still built.
+        let mut records = final_records();
+        let mut params: SimParams =
+            serde_json::from_value(records[0]["data"]["params"].clone()).unwrap();
+        params.corpses.max_corpses = 0;
+        let (mut low, mut high) = (0, params.storage.max_memory_bytes);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            params.storage.max_memory_bytes = middle;
+            if params.validate().is_ok() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        records[0]["data"]["params"]["storage"]["max_memory_bytes"] = serde_json::json!(high);
+        records[0]["data"]["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("corpses");
+        let data = parse_values(&records).unwrap();
+        assert_eq!(data.header.params.corpses.max_corpses, 0);
+        assert_eq!(data.header.params.storage.max_memory_bytes, high);
+    }
+
+    #[test]
     fn rates_and_counts_older_schema_eight_files_omit_are_zero_and_unknown() {
         let mut records = final_records();
         records[0]["data"]["params"]["mutation"]["structural"]
@@ -926,6 +952,7 @@ mod tests {
         assert_eq!(data.header.params.plants.local_dispersal, 0.0);
         assert_eq!(data.header.params.plants.dispersal_radius, 0.0);
         assert_eq!(data.header.params.corpses.energy_fraction, 0.0);
+        assert_eq!(data.header.params.corpses.max_corpses, 0);
         assert_eq!(
             data.samples[0]
                 .evolving
