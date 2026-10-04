@@ -5,8 +5,7 @@ Phase 2 builds the **genetic architecture** from
 decisions live in the spec; this plan tracks status and the remaining work. Phase 1's
 acceptance evidence is in [`phase-1-implementation-plan.md`](phase-1-implementation-plan.md).
 
-**Status: M1–M8 are implemented; M9 (plant ecology) is in progress; M10 acceptance
-needs human judgment.** The success criterion is **brains grow in complexity and
+**Status: M1–M9 are implemented; M10 acceptance needs human judgment.** The success criterion is **brains grow in complexity and
 distinct species appear**, judged by a human with reproducible multi-seed evidence
 and both controls alongside: the scalar control and the structural null (spec §7.8).
 More genes or more cluster labels alone are not evidence that useful complexity
@@ -23,7 +22,7 @@ evolved.
 | M6 Observation and sharing | Done: schema 8 telemetry, species browser, origin graph, representative comparison |
 | M7 Manual checkpoints | Done: saved-run bundles with exact continuation in both shells |
 | M8 Founder experiments | Evidence reported, including the shipped-configuration rerun, species calibration, and a perception sweep; awaiting human review |
-| M9 Plant ecology | Designed (spec §5.1, §5.3); implementation in progress |
+| M9 Plant ecology | Done: stock-dependent regrowth, patchy fertility, turnover; calibrated and shipped |
 | M10 Acceptance | Not started |
 
 ## Delivered
@@ -55,44 +54,47 @@ evolved.
   After M8: population-wide functional-wiring telemetry (`wired_hidden_neurons`,
   `wired_sensors`, `driven_effectors`), the `supply_captured` foraging measure in
   `native summarize`, and the perception sweep.
+- **M9** — Plant ecology (spec §5.1, §5.3): stock-dependent regrowth, a fertility
+  map for patchy placement, and starvation turnover with local dispersal; plant
+  clustering and reseed telemetry; calibrated defaults.
 
 ## Open work
 
-Evidence is in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md). Brain growth is
-still not distinguished from the structural null, and the threshold (not deletion)
-sets species counts. Evolving lineages disconnect perception. A sweep of food
-patchiness and scarcity found no plant setting where perception pays: selection tunes
-movement, not sensing.
+Evidence is in [`phase-2-m8-evidence.md`](phase-2-m8-evidence.md). Under Phase 1's
+plants, brain growth was not distinguished from the structural null and evolving
+lineages shed perception. With M9's plant ecology shipped, evolving worlds sustain
+more agents than the null on every seed and capture as much food or more; added
+structure exceeds the null's on two of three seeds, and perception is kept on two.
+The threshold, not deletion, sets species counts.
 
-1. **M9 plant ecology**, below. Decided after the perception sweep: the success
-   criterion cannot be judged while blind grazing does as well as perceiving.
-2. **Check whether evolved brains use their sensors.** For example, silence sensors
+1. **Check whether evolved brains use their sensors.** For example, silence sensors
    in a resumed evolved world and compare `supply_captured` against an intact
    continuation. Probably possible as native-shell tooling over a saved run, without
    a sim-core change; confirm that when designing it.
-3. **Species reporting.** Report persistent species at more than one threshold; the
+2. **Species reporting.** Report persistent species at more than one threshold; the
    0.5 default stays a provisional scale.
-4. **M10 acceptance**, below.
+3. **M10 acceptance**, below.
 
-## M9 - Plant ecology
+## M9 - Plant ecology (done)
 
 Spec §5.1 and §5.3 record the design: regrowth that depends on what is left, plants
 that die and reseed near parents, and patchy fertility. Seasons, disturbance, and
-terrain stay in Phase 6. Each mechanism lands disabled, with a zero value that
-reproduces today's plants exactly, so its pull request leaves the golden hash
-unchanged; calibration then enables them together.
+terrain stay in Phase 6. Each mechanism landed disabled, with a zero value that
+reproduces Phase 1's plants exactly, and calibration enabled them together; the
+calibration is in the evidence report.
 
 1. **Stock-dependent regrowth** (`grazing_lag`).
 2. **Fertility map and patchy placement** (`patchiness`, `patch_scale`), charged to the
    construction budget.
 3. **Plant turnover** (`death_stock`, `death_seconds`, `local_dispersal`,
    `dispersal_radius`). Starvation timers join the state hash, which already covers
-   positions; positions and timers join the checkpoint (a new checkpoint format). History and metrics readers treat the new
-   params as absent-means-zero, which is how older runs ran.
+   positions; positions and timers join the checkpoint (a new checkpoint format).
+   History and metrics readers treat the new params as absent-means-zero, which is
+   how older runs ran.
 4. **Calibration.** Multi-seed sweeps for viability and for the perception question,
    against both controls, reporting wired sensors, `supply_captured`, and plant
-   clustering. Ship defaults with their reasons on the fields (a golden-hash change),
-   then rerun the shipped-configuration evidence.
+   clustering. Defaults ship with their reasons on the fields (a golden-hash change);
+   the calibration's shipped-configuration runs are the post-M9 evidence.
 
 ## M10 - Acceptance
 

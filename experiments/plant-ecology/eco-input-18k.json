@@ -1,0 +1,12 @@
+{
+  "plants": {
+    "energy_input_rate": 18000.0,
+    "grazing_lag": 0.8,
+    "patchiness": 4.0,
+    "patch_scale": 150.0,
+    "death_stock": 0.1,
+    "death_seconds": 30.0,
+    "local_dispersal": 0.9,
+    "dispersal_radius": 40.0
+  }
+}
