@@ -3,17 +3,17 @@
 //! Uses plant-funded births, applied edits, an arena refusal, a genome-limit refusal,
 //! and removal/reuse. It exercises mechanisms, not ecological adaptation.
 
+use sim_core::World;
 use sim_core::control::BrainInheritance;
 use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
-use sim_core::{SimParams, World};
 
 // M5 coverage-only refresh: include lifetime birth identities (spec section 7.8).
 pub const EVOLVING_GOLDEN: u64 = 0x185b_736d_e86c_7bdf;
 pub const CONTROL_GOLDEN: u64 = 0x41cc_a964_7649_2502;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default().without_structural_mutation();
+    let mut params = crate::scenario::params();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;

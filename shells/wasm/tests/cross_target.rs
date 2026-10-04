@@ -16,6 +16,9 @@
 
 use wasm_bindgen_test::wasm_bindgen_test;
 
+#[path = "../../../sim-core/tests/common/scenario.rs"]
+mod scenario;
+
 #[allow(dead_code)]
 #[path = "../../../sim-core/tests/common/golden_case.rs"]
 mod common;

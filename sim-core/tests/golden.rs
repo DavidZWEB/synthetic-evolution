@@ -17,6 +17,9 @@
 //! The scenario and its pinned values live in `common/golden_case.rs`, because
 //! `shells/wasm` asserts the same ones — see `wasm_agrees_with_native` there.
 
+#[path = "common/scenario.rs"]
+mod scenario;
+
 #[allow(dead_code)]
 #[path = "common/golden_case.rs"]
 mod common;

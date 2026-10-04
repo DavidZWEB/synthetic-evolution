@@ -7,17 +7,17 @@
 //! The subsequent coverage-only refresh adds full classifier state to both values.
 //! M5's additional coverage-only refresh includes lifetime birth identities.
 
+use sim_core::World;
 use sim_core::control::BrainInheritance;
 use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
-use sim_core::{SimParams, World};
 
 pub const EVOLVING_GOLDEN: u64 = 0xc3f3_265e_d053_882a;
 pub const CONTROL_GOLDEN: u64 = 0x91f5_534a_4715_57bc;
 
 fn run(mode: BrainInheritance) -> u64 {
-    let mut params = SimParams::default().without_structural_mutation();
+    let mut params = crate::scenario::params();
     params.world.max_agents = 4;
     params.plants.max_plants = 8;
     params.plants.max_energy = 300.0;

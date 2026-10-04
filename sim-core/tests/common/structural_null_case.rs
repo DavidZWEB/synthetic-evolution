@@ -4,8 +4,8 @@
 //! transfer, scalar redraw, and slot reuse all reach the hash. It pins mechanics, not
 //! evidence about whether inherited structure is useful.
 
+use sim_core::World;
 use sim_core::control::BrainInheritance;
-use sim_core::{SimParams, World};
 
 // New scenario for the structural_null_v1 heredity mode (spec section 7.8).
 pub const NULL_GOLDEN: u64 = 0xb41e_ed86_1fb8_72c9;
@@ -16,7 +16,7 @@ const FOUNDERS: u32 = 32;
 const TICKS: u64 = 500;
 
 fn run(mode: BrainInheritance) -> World {
-    let mut params = SimParams::default().without_structural_mutation();
+    let mut params = crate::scenario::params();
     params.world.max_agents = 512;
     params.body.size = 1.5;
     params.metabolism.k_sensor = 0.003_125;

@@ -12,6 +12,9 @@ use sim_core::checkpoint::{CHECKPOINT_FORMAT, CheckpointError, CheckpointLimits}
 use sim_core::control::BrainInheritance;
 use sim_core::species::SpeciesEventCounts;
 
+#[path = "common/scenario.rs"]
+mod scenario;
+
 #[path = "common/checkpoint_case.rs"]
 mod case;
 use case::{CONTINUE_TICKS, LIMITS, MODES, churned, params, step};
