@@ -23,6 +23,12 @@ pub(crate) fn validate(args: &RunArgs) -> Result<()> {
         )
         .into());
     }
+    if args.retune.is_some() && args.history.is_some() {
+        return Err(conflict(
+            "--retune cannot be combined with --history; an archive records one set of params",
+        )
+        .into());
+    }
     let metrics = args.metrics.as_deref().map(identity).transpose()?;
     let history = args.history.as_deref().map(identity).transpose()?;
     let params = args.params.as_deref().map(file_identity).transpose()?;

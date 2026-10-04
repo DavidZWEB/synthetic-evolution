@@ -185,7 +185,11 @@ fn add(groups: &mut BTreeMap<String, Group>, run: Run) -> Result<()> {
         .seed
         .parse()
         .map_err(|_| invalid("seed is not a decimal u64".to_owned()))?;
-    let params = serde_json::to_string(&header.params)?;
+    // A retuned run is a different experiment from the same params left alone.
+    let mut params = serde_json::to_string(&header.params)?;
+    if let Some(retune) = &header.retune {
+        params.push_str(&serde_json::to_string(retune)?);
+    }
     let group = groups.entry(params).or_insert_with(|| Group {
         founders: header.founders,
         ticks: header.ticks,
@@ -653,6 +657,7 @@ mod tests {
             sample_every: 1_000,
             params: sim_core::SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            retune: None,
         };
         add(
             &mut groups,

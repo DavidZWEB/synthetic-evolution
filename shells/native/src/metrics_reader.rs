@@ -446,6 +446,7 @@ mod tests {
                 sample_every: 5,
                 params: SimParams::default(),
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+                retune: None,
             })))
             .unwrap(),
             serde_json::to_value(MetricsRecord::Sample(Box::new(RunSample {
@@ -719,6 +720,7 @@ mod tests {
             sample_every: 5,
             params: SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            retune: None,
         };
         let records = [
             MetricsRecord::Header(Box::new(header)),
@@ -753,6 +755,7 @@ mod tests {
             sample_every: 5,
             params: SimParams::default(),
             control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+            retune: None,
         };
         let final_sample = RunSample {
             tick: 0,
@@ -796,6 +799,7 @@ mod tests {
                 sample_every: 5,
                 params,
                 control: RANDOMIZED_AT_BIRTH_PROTOCOL.to_owned(),
+                retune: None,
             })),
             MetricsRecord::Sample(Box::new(RunSample {
                 tick: 0,
@@ -837,6 +841,7 @@ mod tests {
                 sample_every: 5,
                 params: SimParams::default(),
                 control: "randomized_at_birth".to_owned(),
+                retune: None,
             }));
             let jsonl = serde_json::to_string(&header).unwrap();
             let error = parse_metrics(Cursor::new(jsonl))

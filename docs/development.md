@@ -273,6 +273,26 @@ on every gene the two share, and then mutates like an evolving child. The header
 saved runs carry the scalar control. Run it as a separate invocation with the same
 seed, params, and founders as the scalar-control run it is compared with.
 
+### Mid-run interventions
+
+`--retune PARAMS.json --retune-at TICK` lays a partial params document over the run's
+params and applies it to both worlds after tick `TICK`. It must be a legal live retune
+(the same rules as the browser's), checked before the run starts, and it is recorded
+in the metrics header. Two runs of one seed, with and without the retune, are
+identical up to that tick, so the difference afterwards is the intervention's effect.
+For a sensory knockout, silence food scent and sight:
+
+```bash
+echo '{"plants":{"scent_rate":0.0},"sensing":{"vision_range":0.001}}' > knockout.json
+cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
+  --sample-every 5000 --metrics intact.jsonl
+cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
+  --sample-every 5000 --metrics knockout.jsonl --retune knockout.json --retune-at 300000
+```
+
+`summarize` treats a retuned run as its own configuration. `--retune` cannot be
+combined with `--history`, whose archive records a single set of params.
+
 ### Multi-seed experiments (M8)
 
 `scripts/experiment.sh` runs each params file for every listed seed under both

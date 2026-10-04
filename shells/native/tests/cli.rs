@@ -753,3 +753,127 @@ fn half_founder_slot(params: &str) -> String {
     value["storage"]["genes_per_slot"] = (founder / 2).into();
     value.to_string()
 }
+
+fn retune_run(
+    retune: Option<(&str, &str)>,
+    extra: &[&str],
+) -> (std::process::Output, std::path::PathBuf) {
+    let params = temporary("retune-params.json");
+    fs::write(&params, include_str!("fixtures/sustaining.json")).expect("write params");
+    let metrics = temporary("retune.jsonl");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_native"));
+    command
+        .args([
+            "--seed",
+            "7",
+            "--ticks",
+            "40",
+            "--sample-every",
+            "10",
+            "--founders",
+            "8",
+        ])
+        .arg("--params")
+        .arg(&params)
+        .arg("--metrics")
+        .arg(&metrics)
+        .args(extra);
+    let file = retune.map(|(json, at)| {
+        let file = temporary("retune.json");
+        fs::write(&file, json).expect("write retune");
+        command.arg("--retune").arg(&file).args(["--retune-at", at]);
+        file
+    });
+    let output = command.output().expect("run native shell");
+    fs::remove_file(params).expect("remove params");
+    if let Some(file) = file {
+        fs::remove_file(file).expect("remove retune");
+    }
+    (output, metrics)
+}
+
+fn samples(metrics: &std::path::Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(metrics)
+        .expect("metrics file")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("JSON line"))
+        .collect()
+}
+
+#[test]
+fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
+    // Silencing food scent and sight at tick 20: a sensory knockout.
+    let knockout = r#"{"plants":{"scent_rate":0.0},"sensing":{"vision_range":0.001}}"#;
+    let (plain, plain_metrics) = retune_run(None, &[]);
+    let (retuned, retuned_metrics) = retune_run(Some((knockout, "20")), &[]);
+    for output in [&plain, &retuned] {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let (plain, retuned) = (samples(&plain_metrics), samples(&retuned_metrics));
+    let retune = &retuned[0]["data"]["retune"];
+    assert_eq!(retune["at_tick"], 20);
+    assert_eq!(retune["params"]["plants"]["scent_rate"], 0.0);
+    assert_eq!(retune["params"]["sensing"]["vision_range"], 0.001);
+    assert_eq!(
+        retune["params"]["plants"]["max_plants"],
+        plain[0]["data"]["params"]["plants"]["max_plants"],
+        "fields the retune did not name keep the run's values"
+    );
+    assert!(
+        plain[0]["data"].get("retune").is_none(),
+        "a plain run records no retune"
+    );
+    // Samples at ticks 0, 10, and 20 precede any effect of the retune.
+    for index in 1..=3 {
+        assert_eq!(
+            plain[index], retuned[index],
+            "sample {index} differs before the retune acted"
+        );
+    }
+    let last = plain.len() - 1;
+    assert_ne!(
+        plain[last]["data"]["final_state_hashes"], retuned[last]["data"]["final_state_hashes"],
+        "the retune changed nothing"
+    );
+    for path in [plain_metrics, retuned_metrics] {
+        fs::remove_file(path).expect("remove metrics");
+    }
+}
+
+#[test]
+fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
+    let cases: [(&str, &str, &[&str], &str); 3] = [
+        (
+            r#"{"plants":{"max_plants":7}}"#,
+            "10",
+            &[],
+            "--retune: invalid SimParams: plants.max_plants is fixed",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "41",
+            &[],
+            "--retune-at must be at most --ticks",
+        ),
+        (
+            r#"{"plants":{"scent_rate":0.0}}"#,
+            "10",
+            &["--history", "-"],
+            "cannot be combined with --history",
+        ),
+    ];
+    for (json, at, extra, message) in cases {
+        let (output, metrics) = retune_run(Some((json, at)), extra);
+        assert!(
+            !output.status.success(),
+            "{json} at {at} {extra:?} was accepted"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(message), "{stderr}");
+        let _ = fs::remove_file(metrics);
+    }
+}
