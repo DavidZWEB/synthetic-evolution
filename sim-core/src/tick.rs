@@ -28,12 +28,15 @@ use glam::Vec3;
 
 use crate::agents::SpawnSpec;
 use crate::brain;
+use crate::combat::{self, Swing};
 use crate::control::{self, BrainInheritance};
 use crate::effectors::{self, AgentIntents};
 use crate::energy;
 use crate::feeding;
 use crate::genome::{self, BodyTrait, Gene};
 use crate::history::Event as HistoryEvent;
+use crate::ids::AgentId;
+use crate::math;
 use crate::metabolism;
 use crate::movement;
 use crate::mutate::{MutationState, structural::StructuralMutationEvent};
@@ -46,9 +49,9 @@ use crate::world::World;
 impl World {
     /// Advances the world one tick, in spec §2.4's order.
     ///
-    /// Steps 6 (collision) and the rest of 7 (bite, grab) have no Phase 1 content and
-    /// are absent rather than stubbed — an empty function in the sequence reads as a
-    /// step that runs and does nothing, which is a different claim.
+    /// Step 6 (collision) and the rest of 7 (grab) have no content yet and are absent
+    /// rather than stubbed — an empty function in the sequence reads as a step that
+    /// runs and does nothing, which is a different claim.
     ///
     /// Plant growth sits between feeding and the field update: it is where energy
     /// enters the world (spec §5.1), and its scent deposit is the "deposit" half of
@@ -98,10 +101,12 @@ impl World {
         self.step_brains(); // 3
         self.drive_effectors(); // 4
         self.integrate_movement(); // 5
+        self.resolve_bites(); // 7, before anyone eats
         self.resolve_feeding(); // 7
         self.grow_plants(); // 8, deposit
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
+        self.recover_from_bites(); // 9
         self.decay_corpses(); // 9
         self.resolve_deaths_with_history_observer(&mut on_species, &mut on_history); // 10
         self.resolve_births_with_history_observer(
@@ -261,8 +266,8 @@ impl World {
         absorbed
     }
 
-    /// Charges every live agent its upkeep and notes who ran out. Step 9 of the tick
-    /// (spec §2.4).
+    /// Charges every live agent its upkeep and notes who ran out, of energy or of the
+    /// health bites took. Step 9 of the tick (spec §2.4, §4.2).
     ///
     /// An agent is charged only what it has left, so energy never goes negative and the
     /// amount dissipated is exactly the amount that existed. The death itself is
@@ -290,23 +295,41 @@ impl World {
                 cost as f64,
             );
             self.ledger.record_dissipated_amount(charged);
-            if energy::total(self.agents.energy[i], self.agents.energy_reserve[i]) <= 0.0 {
+            if energy::total(self.agents.energy[i], self.agents.energy_reserve[i]) <= 0.0
+                || self.agents.health[i] <= 0.0
+            {
                 self.dying.push(id);
             }
         }
     }
 
-    /// Removes the agents that ran out of energy. Part of step 10 (spec §2.4).
+    /// Regenerates living health and counts down bite cooldowns. Step 9 of the tick,
+    /// after the charge that notes who a bite killed (spec §2.4, §4.2).
+    pub fn recover_from_bites(&mut self) {
+        let combat = &self.params.combat;
+        let dt = self.params.world.dt;
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            combat::recover(
+                &mut self.agents.health[i],
+                &mut self.agents.cooldown[i],
+                combat,
+                dt,
+            );
+        }
+    }
+
+    /// Removes the agents that ran out of energy, or of the health bites took. Part of
+    /// step 10 (spec §2.4).
     ///
     /// Agent-index order, because `iter_live` is ascending and that is what fills
     /// `dying`. Deaths resolved in any other order would hand the free list back in a
     /// different sequence and the next births would land in different slots.
     ///
     /// A starving agent holds no energy by the time it gets here — `charge_metabolism`
-    /// took exactly what was left — so `despawn` finds nothing to dissipate. It would
-    /// dissipate a remainder if there were one, which is what makes any *other* route
-    /// to removal safe too. Corpses that return part of an agent to the world arrive
-    /// with predation in Phase 3.
+    /// took exactly what was left — so it leaves nothing. One a bite killed still holds
+    /// what it had: `despawn` leaves its corpse share and dissipates the rest, which is
+    /// what makes every route to removal safe (spec §4.2, §5.1).
     pub fn resolve_deaths(&mut self) -> usize {
         self.resolve_deaths_with_observer(|_| {})
     }
@@ -327,8 +350,8 @@ impl World {
         let mut removed = 0;
         for &id in &dying {
             debug_assert!(
-                self.agents.energy[id.index()] <= 0.0,
-                "starvation should have drained this agent before step 10"
+                self.agents.energy[id.index()] <= 0.0 || self.agents.health[id.index()] <= 0.0,
+                "a dying agent ran out of neither energy nor health"
             );
             if self.despawn_with_history_observer(id, &mut on_species, &mut on_history) {
                 removed += 1;
@@ -337,6 +360,106 @@ impl World {
         self.dying = dying;
         self.dying.clear();
         removed
+    }
+
+    /// Resolves this tick's swings before anyone eats. The first half of step 7 (spec
+    /// §2.4, §4.2).
+    ///
+    /// Two passes. The first fixes who swings, from drives, cooldowns, and energy at the
+    /// start of the step, charges every swing its cost, and finds each target, so an
+    /// earlier biter's mouthful cannot drain a later one below the cost and cancel its
+    /// swing. The second applies hits in agent-index order. Damage accumulates, so order
+    /// cannot decide who dies; a victim holding less than every biter asks serves
+    /// earlier slots first, as food does.
+    pub fn resolve_bites(&mut self) {
+        let combat = &self.params.combat;
+        let cooldown = combat::cooldown_ticks(combat, self.params.world.dt);
+        self.swings.clear();
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            if !combat::swings(
+                self.intents.bite[i],
+                self.agents.cooldown[i],
+                self.agents.energy[i],
+                self.agents.energy_reserve[i],
+                combat,
+            ) {
+                continue;
+            }
+            // Paid whether or not the swing connects.
+            let paid = energy::take_amount(
+                &mut self.agents.energy[i],
+                &mut self.agents.energy_reserve[i],
+                combat.attack_cost as f64,
+            );
+            self.ledger.record_dissipated_amount(paid);
+            self.agents.cooldown[i] = cooldown;
+            self.swings.push(Swing {
+                biter: id,
+                target: AgentId::NULL,
+            });
+        }
+        if self.swings.is_empty() {
+            return;
+        }
+
+        // Step 1 placed everyone before step 5 moved them; a swing aims at where they
+        // are. Only on ticks with a swing, so a world without bites pays nothing.
+        self.hash.rebuild(
+            &self.agents.position,
+            self.pool.alive_flags(),
+            &mut self.agents.grid_cell,
+        );
+        let targets = combat::Targets {
+            positions: &self.agents.position,
+            sizes: &self.agents.size,
+            hash: &self.hash,
+            largest: self.params.body.size_range[1],
+            world_size: self.params.world.size,
+            arc: combat.arc,
+        };
+        for swing in &mut self.swings {
+            let i = swing.biter.index();
+            let aim = combat::Aim {
+                position: self.agents.position[i],
+                heading: math::yaw_of(self.agents.orientation[i]) + self.intents.bite_azimuth[i],
+                reach: self.intents.bite_reach[i],
+                radius: self.agents.size[i],
+            };
+            if let Some(victim) = combat::target(i, &aim, &targets) {
+                swing.target = AgentId::from(victim);
+            }
+        }
+
+        let reference = self.params.body.size;
+        let agents = &mut self.agents;
+        for swing in &self.swings {
+            if swing.target.is_null() {
+                continue;
+            }
+            let (i, j) = (swing.biter.index(), swing.target.index());
+            let (mut biter_energy, mut biter_reserve) =
+                (agents.energy[i], agents.energy_reserve[i]);
+            let (mut victim_energy, mut victim_reserve) =
+                (agents.energy[j], agents.energy_reserve[j]);
+            let dissipated = combat::hit(
+                combat::Hit {
+                    biter_energy: &mut biter_energy,
+                    biter_reserve: &mut biter_reserve,
+                    victim_energy: &mut victim_energy,
+                    victim_reserve: &mut victim_reserve,
+                    victim_health: &mut agents.health[j],
+                    gape: agents.mouth[i] * (agents.size[i] / reference),
+                    victim_scale: agents.size[j] / reference,
+                },
+                combat,
+            );
+            agents.energy[i] = biter_energy;
+            agents.energy_reserve[i] = biter_reserve;
+            agents.energy[j] = victim_energy;
+            agents.energy_reserve[j] = victim_reserve;
+            self.ledger.record_dissipated_amount(dissipated);
+        }
     }
 
     /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
@@ -883,5 +1006,143 @@ mod tests {
         for (i, &(_, _, intake)) in cases.iter().enumerate() {
             assert_eq!(held(&world, i) - before[i], intake, "body {i}");
         }
+    }
+
+    /// Founders placed at `at`, each facing `yaw` and holding `energy`.
+    fn duel(params: SimParams, agents: &[(Vec3, f32, f32)]) -> World {
+        let mut world = World::new(23, params).expect("valid params");
+        for &(at, yaw, energy) in agents {
+            let i = world.spawn_founder(at).expect("room").index();
+            let a = world.agents_mut();
+            a.orientation[i] = crate::math::yaw_quat(yaw);
+            a.energy[i] = energy;
+            a.energy_reserve[i] = 0.0;
+        }
+        world
+    }
+
+    /// Every living agent asks to bite straight ahead, as a bite effector would.
+    fn ask_to_bite(world: &mut World, reach: f32) {
+        let live: Vec<usize> = world.pool().iter_live().map(|id| id.index()).collect();
+        let intents = world.intents_mut();
+        for i in live {
+            intents.bite[i] = 1.0;
+            intents.bite_azimuth[i] = 0.0;
+            intents.bite_reach[i] = reach;
+        }
+    }
+
+    fn duel_params(agents: u32) -> SimParams {
+        let mut params = SimParams::default();
+        params.world.max_agents = agents;
+        params.plants.max_plants = 0;
+        params
+    }
+
+    #[test]
+    fn index_order_decides_neither_who_swings_nor_who_dies() {
+        // Two founders face each other, each able to kill the other in one hit. The
+        // first's mouthful leaves the second short of a swing's cost, which must not
+        // cancel the second's swing: both are fixed before either lands (spec §4.2).
+        let mut params = duel_params(2);
+        params.combat.attack_damage = 1.0;
+        for (first, second) in [(50.0, 10.0), (10.0, 50.0)] {
+            let mut world = duel(
+                params.clone(),
+                &[
+                    (Vec3::new(100.0, 100.0, 0.0), 0.0, first),
+                    (Vec3::new(104.0, 100.0, 0.0), core::f32::consts::PI, second),
+                ],
+            );
+            ask_to_bite(&mut world, 4.0);
+            world.resolve_bites();
+            assert_eq!(&world.agents().cooldown[..2], &[30, 30], "both swung");
+            assert_eq!(&world.agents().health[..2], &[0.0, 0.0], "both hits landed");
+            world.charge_metabolism();
+            assert_eq!(world.dying.len(), 2, "both die in step 10");
+        }
+    }
+
+    #[test]
+    fn a_held_drive_swings_once_per_cooldown_and_every_swing_pays() {
+        // At 0.5 s and 60 ticks a second, a held drive swings every 30 ticks and pays
+        // the cost to the ledger whether or not it hits (spec §4.2).
+        let mut world = duel(
+            duel_params(1),
+            &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
+        );
+        let mut swings = Vec::new();
+        for tick in 0..90 {
+            ask_to_bite(&mut world, 4.0);
+            let before = world.ledger().dissipated();
+            world.resolve_bites();
+            let paid = world.ledger().dissipated() - before;
+            if paid != 0.0 {
+                assert_eq!(paid, 8.0);
+                swings.push(tick);
+            }
+            world.recover_from_bites();
+        }
+        assert_eq!(swings, [0, 30, 60]);
+        assert_eq!(world.agents().energy[0], 76.0);
+        // Short of the cost, a ready drive does not swing.
+        world.agents_mut().energy[0] = 7.5;
+        world.agents_mut().cooldown[0] = 0;
+        ask_to_bite(&mut world, 4.0);
+        world.resolve_bites();
+        assert_eq!(world.agents().energy[0], 7.5);
+        assert_eq!(world.agents().cooldown[0], 0);
+    }
+
+    #[test]
+    fn a_bitten_agent_regenerates_and_a_killed_one_dies_leaving_a_corpse() {
+        // Health regenerates only above 0, so lethal damage holds until step 10; and the
+        // victim still holds energy, so unlike the starved it leaves a corpse (§4.2).
+        let mut world = duel(
+            duel_params(2),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(200.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        world.agents_mut().health[0] = 0.5;
+        world.agents_mut().health[1] = 0.0;
+        world.charge_metabolism();
+        world.recover_from_bites();
+        let dt = world.params().world.dt;
+        assert_eq!(world.agents().health[0], 0.5 + 0.02 * dt);
+        assert_eq!(world.agents().health[1], 0.0);
+        assert_eq!(world.resolve_deaths(), 1);
+        assert_eq!(world.population(), 1);
+        assert_eq!(
+            world.corpses().count(),
+            1,
+            "a killed agent leaves its share"
+        );
+    }
+
+    #[test]
+    fn dormant_founders_never_swing_until_their_bite_wakes() {
+        // A founder's bite reads a neuron biased below the gate, with nothing wired to
+        // it, so no founder swings (spec §4.2).
+        let mut params = SimParams::default();
+        params.world.max_agents = 32;
+        params.plants.max_plants = 64;
+        params.founder.bite = true;
+        let mut world = World::new(5, params.clone()).unwrap();
+        world.seed_founders(32);
+        for _ in 0..300 {
+            world.step();
+            assert!(
+                world.agents().cooldown.iter().all(|&ticks| ticks == 0),
+                "a dormant founder swung"
+            );
+        }
+        // Biased above the gate, the same bite swings at once.
+        params.combat.dormant_bias = 3.0;
+        let mut world = World::new(5, params).unwrap();
+        world.seed_founders(32);
+        world.step();
+        assert!(world.agents().cooldown.iter().any(|&ticks| ticks > 0));
     }
 }

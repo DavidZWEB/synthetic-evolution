@@ -134,6 +134,41 @@ fn evolving_bodies_conserve_energy() {
 }
 
 #[test]
+fn biting_conserves_energy() {
+    // A swing's cost and the unassimilated share of a mouthful are dissipated, the kept
+    // share moves between agents, and a kill leaves a corpse: the ledger balances
+    // through all of it (spec §4.2, §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 300;
+    params.plants.max_plants = 400;
+    // Packed within reach of bites awake from the start, which take two hits to kill.
+    params.world.founder_spread = 0.03;
+    params.founder.bite = true;
+    params.combat.dormant_bias = 3.0;
+    params.combat.reach = 8.0;
+    params.combat.attack_damage = 0.5;
+    let mut world = World::new(19, params).expect("valid params");
+    world.seed_founders(200);
+    let (mut wounded, mut killed) = (false, false);
+    for t in 0..3_000 {
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+        let health = &world.agents().health;
+        wounded |= world.pool().iter_live().any(|id| health[id.index()] < 1.0);
+        // The starved die empty, so a corpse is a bite's kill.
+        killed |= world.corpses().count() > 0;
+    }
+    assert!(
+        wounded && killed,
+        "no bite wounded and killed; the test proved nothing"
+    );
+}
+
+#[test]
 fn corpses_conserve_energy_as_they_form_feed_and_decay() {
     // A death splits an agent's energy between a corpse and dissipation; eating moves
     // corpse energy into agents; decomposition dissipates the rest (spec §5.1).

@@ -151,6 +151,9 @@ pub struct World {
     /// Agents that asked to reproduce and can, resolved at step 10 after the deaths.
     /// Owned and sized for the same reason.
     pub(crate) breeding: Vec<AgentId>,
+    /// This tick's swings, fixed before any hit lands (spec §4.2). Owned and sized for
+    /// the same reason.
+    pub(crate) swings: Vec<crate::combat::Swing>,
     /// Requests from outside the simulation, waiting for the tick they are stamped for
     /// (spec §2.2b). Kept in submission order, which is what makes two runs fed the same
     /// commands apply them the same way.
@@ -236,6 +239,7 @@ impl World {
             ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
+            swings: Vec::with_capacity(capacity as usize),
             // Not sized at capacity: commands arrive at human speed, a handful per
             // second at most, and reserving a slot per agent for them would cost more
             // memory than the queue will ever hold.
