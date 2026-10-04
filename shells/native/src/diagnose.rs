@@ -7,7 +7,7 @@
 use std::io;
 
 use serde::Serialize;
-use sim_core::control::{STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL};
+use sim_core::control::STRUCTURAL_NULL_PROTOCOL;
 use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOperator};
 
 use crate::Result;
@@ -139,8 +139,7 @@ impl Cohort {
 /// The reader admits only known protocols, so anything else is a scalar control.
 pub(crate) fn control_label(protocol: &str) -> &'static str {
     match protocol {
-        STRUCTURAL_NULL_PROTOCOL => "structural null v1",
-        STRUCTURAL_NULL_V2_PROTOCOL => "structural null v2",
+        STRUCTURAL_NULL_PROTOCOL => "structural null",
         _ => "scalar control",
     }
 }
@@ -1838,16 +1837,14 @@ mod tests {
     }
 
     #[test]
-    fn structural_null_controls_are_named_by_version() {
+    fn the_structural_null_control_is_named_as_one() {
         let samples = vec![sample(0, 100, 4), sample(1_000, 100, 4)];
         assert_eq!(
             diagnose(&header(1_000), &samples).control_label,
             "scalar control"
         );
-        for (protocol, label) in [
-            (STRUCTURAL_NULL_PROTOCOL, "structural null v1"),
-            (STRUCTURAL_NULL_V2_PROTOCOL, "structural null v2"),
-        ] {
+        {
+            let (protocol, label) = (STRUCTURAL_NULL_PROTOCOL, "structural null");
             let mut null = header(1_000);
             null.control = protocol.to_owned();
             let report = diagnose(&null, &samples);

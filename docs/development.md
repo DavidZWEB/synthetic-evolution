@@ -264,14 +264,12 @@ use `--metrics -` to stream JSONL to stdout. `diagnose --json` emits a machine-r
 report. Species history is a separate opt-in stream, described below; it does not add
 records or fields to metrics.
 
-`--control structural-null` replaces the scalar control with the structural null v2
+`--control structural-null` replaces the scalar control with the structural null
 (spec section 7.8): each control child starts from a random living non-parent's
 neural and sensory structure with its parent's body, keeps the parent's neural scalars
 on every gene the two share, and then mutates like an evolving child. The header's
 `control` field becomes `structural_null_v2`, the JSON keys stay `random_control`, and
-`diagnose` labels the cohort "structural null v2". `--control structural-null-v1`
-reproduces the superseded v1 null, which redraws every neural scalar instead.
-It writes metrics only; `--history` and `--save-run` are refused because archives and
+`diagnose` labels the cohort "structural null". It writes metrics only; `--history` and `--save-run` are refused because archives and
 saved runs carry the scalar control. Run it as a separate invocation with the same
 seed, params, and founders as the scalar-control run it is compared with.
 
@@ -810,8 +808,8 @@ Native schema 1 output and historical experiment reading remain unchanged.
 ### Telemetry protocol and observations
 
 Metrics use schema **8** with `phase: 2`. The header's `control` names the paired
-control world's protocol: `randomized_at_birth_v3` (scalar control),
-`structural_null_v1`, or `structural_null_v2`. **Only schema 8 is read**; older
+control world's protocol: `randomized_at_birth_v3` (scalar control) or
+`structural_null_v2` (structural null). **Only schema 8 is read**; older
 metrics files, and any other schema, phase, or control, are rejected rather than
 migrated. The header must carry explicit species capacity and threshold and all
 distance coefficients. Mutation rates a schema-8 file omits (written before M8 added

@@ -273,7 +273,7 @@ pub struct SensingParams {
     ///
     /// Default 0 since Phase 2 M8 (was 3): the shipped founder is the minimal
     /// chemo-led one. It was the most viable founder measured (2.2x the dense
-    /// founder's final population over 3 seeds x 200k ticks) and a human approved
+    /// founder's final population over 3 seeds x 400k ticks) and a human approved
     /// it (`docs/phase-2-m8-evidence.md`). Vision remains reachable through sensor
     /// addition.
     pub vision_rays: u32,

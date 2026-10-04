@@ -1,6 +1,7 @@
 //! The structural null's birth contract (spec section 7.8): a child starts from a
-//! living non-parent donor's topology with its parent's body, then redraws every
-//! neural scalar. These tests pin the transfer, not its ecological consequences.
+//! living non-parent donor's topology with its parent's body, keeps the parent's
+//! neural scalars on shared genes, then mutates like an evolving child. These tests
+//! pin the transfer, not its ecological consequences.
 
 use glam::Vec3;
 use sim_core::control::BrainInheritance;
@@ -47,84 +48,6 @@ fn breed(world: &mut World, parent: AgentId) -> AgentId {
         .iter_live()
         .find(|id| !before.contains(id))
         .unwrap()
-}
-
-#[test]
-fn a_child_takes_the_donor_topology_and_the_parent_body() {
-    let mut world =
-        World::new_with_brain_inheritance(42, breeder_params(), BrainInheritance::StructuralNull)
-            .unwrap();
-    let parent = world.spawn_founder(Vec3::ZERO).unwrap();
-    // A donor that differs from the parent in both topology and body.
-    let mut donor_genes = world.genome(parent).to_vec();
-    let last_connection = donor_genes
-        .iter()
-        .rposition(|gene| matches!(gene, Gene::Connection(_)))
-        .unwrap();
-    donor_genes.remove(last_connection);
-    for gene in &mut donor_genes {
-        if let Gene::Body(trait_gene) = gene {
-            trait_gene.value += 0.25;
-        }
-    }
-    let donor = world
-        .spawn(
-            &SpawnSpec {
-                position: Vec3::ONE,
-                yaw: 0.0,
-                energy: 0.0,
-                size: 3.0,
-                signature: Vec3::ONE,
-                parent_a: AgentId::NULL,
-            },
-            &donor_genes,
-        )
-        .unwrap();
-
-    let child = breed(&mut world, parent);
-    let (parent_genes, donor_genes, child_genes) = (
-        world.genome(parent),
-        world.genome(donor),
-        world.genome(child),
-    );
-    assert_eq!(topology(child_genes), topology(donor_genes));
-    assert_ne!(topology(child_genes), topology(parent_genes));
-    assert_eq!(body(child_genes), body(parent_genes));
-    let weights = |genes: &[Gene]| -> Vec<f32> {
-        genes
-            .iter()
-            .filter_map(|gene| match gene {
-                Gene::Connection(connection) => Some(connection.weight),
-                _ => None,
-            })
-            .collect()
-    };
-    assert_ne!(
-        weights(child_genes),
-        weights(donor_genes),
-        "the donor's neural scalars were inherited, not redrawn"
-    );
-}
-
-#[test]
-fn a_lone_parent_is_its_own_donor_and_the_draw_is_skipped() {
-    let params = breeder_params();
-    let mut null =
-        World::new_with_brain_inheritance(42, params.clone(), BrainInheritance::StructuralNull)
-            .unwrap();
-    let mut scalar =
-        World::new_with_brain_inheritance(42, params, BrainInheritance::RandomizedAtBirth).unwrap();
-    let null_parent = null.spawn_founder(Vec3::ZERO).unwrap();
-    let scalar_parent = scalar.spawn_founder(Vec3::ZERO).unwrap();
-    let null_child = breed(&mut null, null_parent);
-    let scalar_child = breed(&mut scalar, scalar_parent);
-    // Without another living agent there is nothing to draw, so the null reduces to
-    // the scalar control exactly, random stream included.
-    assert_eq!(null.genome(null_child), scalar.genome(scalar_child));
-    assert_eq!(
-        null.rng_mut().state_fingerprint(),
-        scalar.rng_mut().state_fingerprint()
-    );
 }
 
 #[test]
@@ -194,14 +117,14 @@ fn spawn_with(world: &mut World, genes: &[Gene], x: f32) -> AgentId {
 }
 
 #[test]
-fn a_v2_child_keeps_parent_scalars_on_shared_genes_and_the_donor_structure() {
+fn a_child_keeps_parent_scalars_on_shared_genes_and_the_donor_structure() {
     let mut params = breeder_params();
     // No mutation, so every scalar's origin is exact.
     params.mutation.weight_perturb_rate = 0.0;
     params.mutation.weight_reset_rate = 0.0;
     params.mutation.neuron_perturb_rate = 0.0;
     let mut world =
-        World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNullV2).unwrap();
+        World::new_with_brain_inheritance(42, params, BrainInheritance::StructuralNull).unwrap();
     let founder = world.spawn_founder(Vec3::ZERO).unwrap();
     let base = world.genome(founder).to_vec();
     assert!(world.despawn(founder));
@@ -275,10 +198,10 @@ fn a_v2_child_keeps_parent_scalars_on_shared_genes_and_the_donor_structure() {
 }
 
 #[test]
-fn a_lone_v2_parent_reduces_to_the_evolving_child() {
+fn a_lone_parent_is_its_own_donor_and_reduces_to_the_evolving_child() {
     let params = breeder_params();
     let mut null =
-        World::new_with_brain_inheritance(42, params.clone(), BrainInheritance::StructuralNullV2)
+        World::new_with_brain_inheritance(42, params.clone(), BrainInheritance::StructuralNull)
             .unwrap();
     let mut evolving =
         World::new_with_brain_inheritance(42, params, BrainInheritance::Evolving).unwrap();

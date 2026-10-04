@@ -6,9 +6,7 @@
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 
-use sim_core::control::{
-    RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL,
-};
+use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 
 use crate::Result;
 use crate::metrics::{MetricsRecord, RunHeader, RunSample, SCHEMA_VERSION, WorldMetrics};
@@ -60,11 +58,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                let controls = [
-                    RANDOMIZED_AT_BIRTH_PROTOCOL,
-                    STRUCTURAL_NULL_PROTOCOL,
-                    STRUCTURAL_NULL_V2_PROTOCOL,
-                ];
+                let controls = [RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL];
                 if next.phase != 2 || !controls.contains(&next.control.as_str()) {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -559,12 +553,15 @@ mod tests {
     }
 
     #[test]
-    fn reads_current_structural_null_controls() {
-        for protocol in [STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL] {
-            let mut records = final_records();
-            records[0]["data"]["control"] = protocol.into();
-            assert_eq!(parse_values(&records).unwrap().header.control, protocol);
-        }
+    fn reads_the_structural_null_control_and_refuses_the_retired_one() {
+        let mut records = final_records();
+        records[0]["data"]["control"] = STRUCTURAL_NULL_PROTOCOL.into();
+        assert_eq!(
+            parse_values(&records).unwrap().header.control,
+            STRUCTURAL_NULL_PROTOCOL
+        );
+        records[0]["data"]["control"] = "structural_null_v1".into();
+        assert!(parse_values(&records).is_err());
     }
 
     #[test]
@@ -856,11 +853,9 @@ mod tests {
             records[0]["data"][field] = value;
             assert!(parse_values(&records).is_err(), "{field}");
         }
-        for control in [STRUCTURAL_NULL_PROTOCOL, STRUCTURAL_NULL_V2_PROTOCOL] {
-            let mut records = final_records();
-            records[0]["data"]["control"] = control.into();
-            parse_values(&records).unwrap();
-        }
+        let mut records = final_records();
+        records[0]["data"]["control"] = STRUCTURAL_NULL_PROTOCOL.into();
+        parse_values(&records).unwrap();
     }
 
     #[test]

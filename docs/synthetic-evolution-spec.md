@@ -1193,63 +1193,41 @@ disrupted, the preserved quantities, metabolic and sensory confounds, cohort/see
 matching, measurements, and limits on interpretation. Resetting to founder topology
 or arbitrary rewiring is not assumed to control those confounds.
 
-**DECIDED (M0, implemented in M8): the structural null is donor topology,
-protocol `structural_null_v1`.** It is a third heredity mode run as the paired
+**DECIDED (M8): the structural null is donor topology with parent scalars,
+protocol `structural_null_v2`.** It is a third heredity mode run as the paired
 control world, selected natively with `--control structural-null`; the metrics
 header's `control` field names the protocol, and `diagnose` labels the cohort
-"structural null".
+"structural null". It writes metrics only; history archives and saved runs carry the
+scalar control. (An earlier version redrew every neural scalar, collapsed exactly like
+the scalar control, and so could not isolate structure; it was retired, which is why
+the protocol is versioned.)
 
-- *What it disrupts:* parent-to-child inheritance of neural and sensory structure.
-  Each birth draws a donor uniformly from the living agents other than the parent,
-  in slot order, including agents born earlier that tick. The child starts from the
-  donor's neuron, sensor, effector, and connection genes with the parent's body and
-  meta genes, then receives the same organ and structural edits as every mode and
-  the scalar control's redraw of all neural scalars. With no other living agent the
-  parent is its own donor and no donor draw is made.
+- *Birth rule:* each birth draws a donor uniformly from the living agents other than
+  the parent, in slot order, including agents born earlier that tick; with no other
+  living agent the parent is its own donor and no draw is made. The child starts from
+  the donor's neuron, sensor, effector, and connection genes with the parent's body
+  and meta genes. Wherever the parent has the same gene (same innovation ID and
+  structural fields: connection endpoints, neuron activation), the child takes the
+  parent's neural scalars (weight, bias, tau, oscillator period); donor-only genes
+  keep the donor's, and enable states and sensor/effector parameters stay the
+  donor's as structure. The child then receives the evolving mutation pipeline.
+- *What it disrupts:* the coupling between a lineage's structure and its weights,
+  while brains stay functional because shared genes carry the lineage's scalars.
 - *What it preserves:* founders and seed/params match the other worlds exactly; the
-  population's distribution of genome sizes, sensor complexity, and therefore
-  metabolic costs and sensory opportunity is carried forward by whichever
-  topologies survive; body, placement near the parent, and energy accounting are
-  unchanged. It does not reset to founder topology or rewire arbitrarily.
-- *Confounds:* donors are themselves selection-filtered survivors, so structure that
-  helps survival can still spread by being copied; the null removes lineage
-  coupling between a body and its ancestors' brains, not selection on topologies.
-  Sensor parameters travel with the donor's sensors.
+  population's distribution of topologies, costs, and sensory opportunity is
+  carried by whichever topologies survive; body, placement near the parent, and
+  energy accounting are unchanged.
+- *Confounds:* donors are selection-filtered survivors, so useful structure can
+  still spread by being copied. Early in a run most genes are shared founder genes,
+  so the comparison has power only where structure has diverged.
 - *Matching and measures:* the same seeds and params as the evolving world and the
   scalar control, at least three seeds per configuration, reporting neurons,
   connections, sensors, genome sizes, species persistence, population, energy, and
   behavior metrics with their variance, separately from the scalar control.
-- *Claims it cannot support:* that any specific circuit is adaptive, or that
-  structure is useful when the evolving world merely matches the null. A difference
-  in favor of the evolving world is evidence that parent-inherited structure matters,
-  for a human to weigh. History archives and saved runs carry only the scalar
-  control; the null writes metrics.
-
-**DECIDED (M8, superseding v1 as the comparison of record): structural null v2,
-`structural_null_v2`.** M8's first experiments showed v1 is uninformative at the
-current tuning: redrawing neural scalars is already lethal, so v1 collapses exactly
-like the scalar control and cannot isolate structure (`docs/phase-2-m8-evidence.md`).
-v2 keeps everything v1 specifies (donor choice, donor topology and organs, parent
-body and meta genes, no draw for a lone parent) but, instead of redrawing, gives every
-neural scalar (weight, bias, tau, oscillator period) the parent's value wherever the
-parent has the same gene: same innovation ID and the same structural fields
-(connection endpoints, neuron activation). Donor-only genes keep the donor's scalars;
-connection enable states and sensor/effector parameters stay the donor's as
-structure. The child then receives evolving offspring's full mutation pipeline.
-
-- *What it disrupts:* the coupling between a lineage's structure and its weights.
-  Brains remain functional because shared genes carry the lineage's evolved scalars.
-- *Interpretation:* if evolved structure is useful because it fits its lineage's
-  weights, the evolving world should outgrow or outperform v2; if structural change
-  is neutral drift, the two should match. Early in a run most genes are shared founder
-  genes, so the test has power only where structure has diverged; runs must be long
-  enough for that.
-- *Claims it cannot support:* that a particular circuit is adaptive, or anything about
-  the value of scalar inheritance (both worlds have it). Matching the evolving world is
-  evidence against useful inherited structure only where structure had diverged.
-
-Native runs select v2 with `--control structural-null`; v1 remains available as
-`--control structural-null-v1` to reproduce published results. Both write metrics only.
+- *Interpretation and limits:* if evolved structure is useful because it fits its
+  lineage's weights, the evolving world should outperform the null; if structural
+  change is neutral drift, the two should match. It cannot show that a particular
+  circuit is adaptive, nor anything about scalar inheritance, which both worlds have.
 
 Report the structural-null and scalar-heredity comparisons distinctly across
 multiple seeds. Early viability experiments need not wait for the structural-null
