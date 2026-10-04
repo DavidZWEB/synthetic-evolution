@@ -631,7 +631,7 @@ pub struct PlantParams {
     /// reseeds elsewhere, carrying what stock it had left.
     ///
     /// **0.1 after M9 calibration**: a plant grazed below a tenth of capacity is
-    /// starving. Shipped worlds reseeded 3,000–7,600 plants over 300,000 ticks, a
+    /// starving. Shipped worlds reseeded 2,900–7,600 plants over 300,000 ticks, a
     /// sustained turnover rather than a churn. Zero disables death entirely: Phase 1's
     /// sites are permanent, and nothing is counted or drawn.
     pub death_stock: f32,
