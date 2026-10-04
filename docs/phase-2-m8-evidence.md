@@ -426,7 +426,9 @@ own added structure and those weights. Its deficit is therefore evidence that th
 added structure matters, though not that it matters for foraging.
 
 **Complexity keeps growing, and only under selection.** Window means over the 50,000
-ticks before each mark (enabled connections; evolving / structural null / scalar):
+ticks before each mark (enabled connections; evolving / structural null / scalar),
+computed by [`trajectories.py`](../experiments/phase-2-acceptance/trajectories.py)
+([`results/trajectories.json`](../experiments/phase-2-acceptance/results/trajectories.json)):
 
 | Seed (shipped) | 100k | 250k | 500k | 750k | 1M |
 |---|---|---|---|---|---|
@@ -457,7 +459,11 @@ half of that directly.
 Food scent is the shipped founders' only sense of food; eyes appear only by mutation.
 At tick 300,000 the knockout run sets `plants.scent_rate` to 0, so no new scent
 enters the field. The intact run of the same seed continues unchanged. The two are
-identical until the retune. Supply captured over ticks 350,000–400,000:
+identical until the retune. Supply captured over ticks 350,000–400,000, computed by
+[`knockout_window.py`](../experiments/phase-2-acceptance/knockout_window.py) from the
+runs' metrics ([`results/knockout-window.txt`](../experiments/phase-2-acceptance/results/knockout-window.txt)).
+`summarize`'s own `supply_captured` covers the run's second half, which mixes ticks
+before and after the knockout:
 
 | Seed | evolving intact / knockout | null intact / knockout | evolving wired sensors |
 |---|---|---|---|

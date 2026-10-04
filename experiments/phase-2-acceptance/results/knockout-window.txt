@@ -1,0 +1,11 @@
+supply captured, ticks 350000-400000: intact / knockout; wired sensors at 400000
+   42 evolving 0.244 / 0.247  wired sensors 0.95
+   42 null     0.240 / 0.242  wired sensors 0.97
+  117 evolving 0.223 / 0.235  wired sensors 1.00
+  117 null     0.172 / 0.145  wired sensors 0.99
+  314 evolving 0.235 / 0.240  wired sensors 0.26
+  314 null     0.155 / 0.136  wired sensors 0.99
+    7 evolving 0.242 / 0.238  wired sensors 0.08
+    7 null     0.171 / 0.148  wired sensors 1.00
+ 2026 evolving 0.243 / 0.250  wired sensors 0.48
+ 2026 null     0.214 / 0.211  wired sensors 0.20
