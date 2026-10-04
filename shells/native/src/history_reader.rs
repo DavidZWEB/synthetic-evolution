@@ -220,17 +220,18 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
 
 /// Params fields added after archives were first written. An archive written before
 /// one existed ran without it, so its value is zero, not today's default.
-const LATER_PARAMS: &[&str] = &["add_oscillator_rate"];
+const LATER_PARAMS: &[&str] = &["add_oscillator_rate", "grazing_lag"];
 
 /// Serde fills an omitted later field from today's default; reset it to the zero the
 /// archived run actually used.
 fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result<()> {
     let wire: serde_json::Value = serde_json::from_slice(line)?;
-    if wire
-        .pointer("/data/params/mutation/structural/add_oscillator_rate")
-        .is_none()
-    {
+    let absent = |path: &str| wire.pointer(path).is_none();
+    if absent("/data/params/mutation/structural/add_oscillator_rate") {
         params.mutation.structural.add_oscillator_rate = 0.0;
+    }
+    if absent("/data/params/plants/grazing_lag") {
+        params.plants.grazing_lag = 0.0;
     }
     Ok(())
 }
@@ -561,9 +562,13 @@ mod tests {
                     header.params.mutation.structural.add_oscillator_rate, 0.0,
                     "serde filled today's nonzero default"
                 );
+                // Grazing lag still defaults to zero; stand in for the nonzero default
+                // serde will fill once calibration ships one.
+                header.params.plants.grazing_lag = 0.5;
             }
             restore_later_params(&mut header.params, line).unwrap();
             assert_eq!(header.params.mutation.structural.add_oscillator_rate, 0.0);
+            assert_eq!(header.params.plants.grazing_lag, 0.0);
         }
     }
 }

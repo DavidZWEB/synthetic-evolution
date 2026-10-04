@@ -197,12 +197,13 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
     {
-        // Mutation rates shipped at zero until Phase 2 M8, and oscillator addition
-        // did not exist before it; a schema-8 file written earlier omits some rates.
-        // It ran without those mutations, so today's defaults must not rewrite it.
-        for (section, fields) in [
+        // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
+        // not exist before it, and M9's plant ecology fields came later still; a
+        // schema-8 file written earlier omits some of them. It ran without them, so
+        // today's defaults must not rewrite it.
+        for (path, fields) in [
             (
-                "structural",
+                &["mutation", "structural"][..],
                 &[
                     "remove_connection_rate",
                     "remove_neuron_rate",
@@ -212,19 +213,22 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
                     "add_oscillator_rate",
                 ][..],
             ),
-            ("organs", &["remove_sensor_rate", "add_sensor_rate"][..]),
+            (
+                &["mutation", "organs"][..],
+                &["remove_sensor_rate", "add_sensor_rate"][..],
+            ),
+            (&["plants"][..], &["grazing_lag"][..]),
         ] {
-            if let Some(object) = params
-                .entry("mutation")
-                .or_insert_with(|| serde_json::json!({}))
-                .as_object_mut()
-                .and_then(|mutation| {
-                    mutation
-                        .entry(section)
+            let mut object = Some(&mut *params);
+            for key in path {
+                object = object.and_then(|parent| {
+                    parent
+                        .entry(*key)
                         .or_insert_with(|| serde_json::json!({}))
                         .as_object_mut()
-                })
-            {
+                });
+            }
+            if let Some(object) = object {
                 for field in fields {
                     object
                         .entry(*field)
@@ -870,6 +874,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("add_sensor_rate");
+        records[0]["data"]["params"]["plants"]
+            .as_object_mut()
+            .unwrap()
+            .remove("grazing_lag");
         for cohort in ["evolving", "random_control"] {
             let mut counts =
                 serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
@@ -881,6 +889,7 @@ mod tests {
         let mutation = &data.header.params.mutation;
         assert_eq!(mutation.structural.add_oscillator_rate, 0.0);
         assert_eq!(mutation.organs.add_sensor_rate, 0.0);
+        assert_eq!(data.header.params.plants.grazing_lag, 0.0);
         assert_eq!(
             data.samples[0]
                 .evolving

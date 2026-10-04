@@ -20,6 +20,10 @@
 //! camp on a plant rather than forage between them, relocating a depleted site is the
 //! small change that breaks it — see the note in the M7 plan.
 //!
+//! Regrowth depends on what a plant still holds (`grazing_lag`, spec §5.1): grass
+//! regrows from the leaf area and reserves left to it, so stripping a site has a cost
+//! that outlasts the meal.
+//!
 //! Deliberately not here: being eaten. The plant-to-agent transfer is part of the energy
 //! ledger and lands with metabolism and death.
 
@@ -81,20 +85,32 @@ impl Plants {
     /// Absorbs one tick of the world's energy input, and reports how much actually
     /// landed.
     ///
-    /// The nominal rate is shared evenly across every plant and each one is capped at
-    /// `max_energy`, so a world at carrying capacity absorbs **less** than its input
-    /// rate — the surplus is not stored anywhere, it simply never enters. That is the
-    /// honest behaviour for a saturated ecosystem, and it is exactly why the ledger
-    /// records the returned figure rather than `energy_input_rate * dt`: conservation
-    /// has to be measured, not inferred (spec §5.1).
+    /// The nominal rate is offered evenly to every plant, and each one is capped at
+    /// `max_energy` and, with a non-zero `grazing_lag`, takes less the less it holds.
+    /// So a world absorbs **less** than its input rate both at carrying capacity and
+    /// when overgrazed — the surplus is not stored anywhere, it simply never enters.
+    /// That is the honest behaviour for a saturated or stripped ecosystem, and it is
+    /// exactly why the ledger records the returned figure rather than
+    /// `energy_input_rate * dt`: conservation has to be measured, not inferred
+    /// (spec §5.1).
     pub fn grow(&mut self, params: &PlantParams, dt: f32) -> f64 {
         if self.energy.is_empty() {
             return 0.0;
         }
-        let share = params.energy_input_rate * dt / self.energy.len() as f32;
+        let share = (params.energy_input_rate * dt / self.energy.len() as f32) as f64;
+        let ceiling = params.max_energy as f64;
+        let lag = params.grazing_lag as f64;
         let mut absorbed = 0.0f64;
         for (energy, reserve) in self.energy.iter_mut().zip(self.energy_reserve.iter_mut()) {
-            absorbed += energy::add_capped(energy, reserve, share as f64, params.max_energy as f64);
+            // Skipped at zero rather than multiplied by one, so Phase 1's plants stay
+            // bit-identical and an empty ceiling never divides by zero.
+            let offered = if lag > 0.0 && ceiling > 0.0 {
+                let held = (energy::total(*energy, *reserve) / ceiling).clamp(0.0, 1.0);
+                share * (1.0 - lag * (1.0 - held))
+            } else {
+                share
+            };
+            absorbed += energy::add_capped(energy, reserve, offered, ceiling);
         }
         absorbed
     }
@@ -284,6 +300,61 @@ mod tests {
             "absorbed {absorbed}, input was {expected}"
         );
         assert!((plants.total_energy() - absorbed).abs() < 1e-2);
+    }
+
+    #[test]
+    fn grazing_lag_slows_regrowth_in_proportion_to_what_was_eaten() {
+        // Spec §5.1: a plant at stock fraction x takes 1 - lag * (1 - x) of its share.
+        let (mut plants, mut params) = filled(0.0);
+        params.plants.grazing_lag = 0.8;
+        let ceiling = params.plants.max_energy;
+        plants.energy[1] = ceiling * 0.5;
+        plants.energy[2] = ceiling * 0.9;
+        let before: Vec<f32> = plants.energy().to_vec();
+        let dt = params.world.dt;
+        plants.grow(&params.plants, dt);
+        let share = (params.plants.energy_input_rate * dt / plants.len() as f32) as f64;
+        for (index, fraction) in [(0, 0.0), (1, 0.5), (2, 0.9)] {
+            let grew = plants.energy_at(index) - before[index] as f64;
+            let expected = share * (1.0 - 0.8 * (1.0 - fraction));
+            assert!(
+                (grew - expected).abs() < expected * 1e-4,
+                "plant at {fraction}: grew {grew}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_emptied_plant_still_regrows_under_heavy_grazing_lag() {
+        let (mut plants, mut params) = filled(0.0);
+        params.plants.grazing_lag = 0.99;
+        for _ in 0..1_000 {
+            plants.grow(&params.plants, params.world.dt);
+        }
+        assert!(plants.energy()[0] > 0.0, "an emptied plant never regrew");
+    }
+
+    #[test]
+    fn grazing_lag_conserves_what_it_absorbs() {
+        let (mut plants, mut params) = filled(0.3);
+        params.plants.grazing_lag = 0.5;
+        let before = plants.total_energy();
+        let mut absorbed = 0.0;
+        for _ in 0..500 {
+            absorbed += plants.grow(&params.plants, params.world.dt);
+        }
+        assert!((plants.total_energy() - before - absorbed).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_stripped_world_absorbs_less_of_its_input_under_grazing_lag() {
+        let (mut lagged, mut params) = filled(0.0);
+        params.plants.grazing_lag = 0.5;
+        let (mut even, plain) = filled(0.0);
+        let dt = params.world.dt;
+        let slow = lagged.grow(&params.plants, dt);
+        let fast = even.grow(&plain.plants, dt);
+        assert!((slow - fast * 0.5).abs() < fast * 1e-4, "{slow} vs {fast}");
     }
 
     #[test]

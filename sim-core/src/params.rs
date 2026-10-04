@@ -576,6 +576,18 @@ pub struct PlantParams {
     pub max_plants: u32,
     /// Energy at which a plant stops growing.
     pub max_energy: f32,
+    /// How much grazing slows regrowth, in `[0, 1)` (spec §5.1).
+    ///
+    /// A plant holding fraction `x` of [`Self::max_energy`] takes
+    /// `1 - grazing_lag * (1 - x)` of its share of the input: a full plant its whole
+    /// share, a stripped one only `1 - grazing_lag`. Grass regrows from the leaf area
+    /// and reserves it has left, so stripping a site has a lasting cost and an
+    /// overgrazed world absorbs less of its input. Below 1 so an emptied plant always
+    /// regrows.
+    ///
+    /// **0 until M9 calibration**, which reproduces Phase 1's plants: every plant takes
+    /// its full share until it is full, however hard it was grazed.
+    pub grazing_lag: f32,
     /// Collision and ingest radius.
     pub radius: f32,
     /// Concentration deposited into chemo channel 0 per unit of stored energy, per
@@ -1023,6 +1035,11 @@ impl SimParams {
         if !(0.0..=1.0).contains(&self.plants.initial_fill) {
             return Err(ParamError("plants.initial_fill must be in [0, 1]"));
         }
+        if !(0.0..1.0).contains(&self.plants.grazing_lag) {
+            return Err(ParamError(
+                "plants.grazing_lag must be in [0, 1); at 1 an emptied plant never regrows",
+            ));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -1192,6 +1209,7 @@ impl Default for PlantParams {
             energy_input_rate: 12_000.0,
             max_plants: 4_000,
             max_energy: 60.0,
+            grazing_lag: 0.0,
             radius: 2.0,
             scent_rate: 0.02,
             initial_fill: 1.0,
@@ -1575,6 +1593,13 @@ mod tests {
             }),
             ("plant stock overflows the ledger", |p| {
                 p.plants.max_energy = f32::MAX
+            }),
+            ("grazing stops regrowth outright", |p| {
+                p.plants.grazing_lag = 1.0
+            }),
+            ("negative grazing lag", |p| p.plants.grazing_lag = -0.1),
+            ("unrepresentable grazing lag", |p| {
+                p.plants.grazing_lag = f32::NAN
             }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
             ("sense radius too small for the world", |p| {
