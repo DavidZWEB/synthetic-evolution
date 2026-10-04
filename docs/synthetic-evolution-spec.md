@@ -150,12 +150,15 @@ in deterministic hashing, but the render snapshot needs only the rounded visible
 A narrow projection of (a), containing only what's needed to draw a frame:
 
 ```
-agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount, incarnation
+agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount, incarnation,
+        health, swingAge, hurtAge, biteAt                           (combat: Phase 3)
 plants: positions, energy
 corpses: positions, energy            (Phase 3)
 ```
 
 Plant energy is the current stock, used to show whether a plant is full or depleted (§5.1); it is not a history. Plant positions change when a plant dies and reseeds, so they travel with every frame too. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+
+**DECIDED (Phase 3): combat travels with the frame,** so attacks can be drawn. Each agent carries `health` quantized to a byte, `swingAge` and `hurtAge` (ticks since it last swung and since it was last hit, saturating at 255, so a renderer that skipped frames still learns that it happened), and `biteAt`, where its latest swing landed (the victim's centre, x and y), or NaN in both if that swing missed. `swingAge` is therefore always the age of whatever `biteAt` describes: a miss cannot replay an old hit, and two hits on the same spot are told apart by `swingAge` restarting. A slot index would not do: deaths and births resolve before a frame is published, so a killed victim's slot can already hold a newborn, and the killing blow is the hit most worth drawing. That is 11 bytes, taking an agent from 61 to 72. A renderer turns a newly seen event into a wall-clock animation, as it does for plant reseeds, so attacks stay visible at any sim speed.
 
 `incarnation` changes whenever a pool slot is allocated. A slot index alone is not an agent identity because the free list reuses it; `(index, incarnation)` lets a click-driven inspector reject a response for a replacement born after the displayed frame.
 
@@ -210,11 +213,12 @@ Order of operations within one `step()`. This is normative — changing it chang
  2. Perception    → sensorScratch           (§2.2c; reads world, writes scratch)
  3. Brain         → CTRNN integration       (all agents, from previous activations)
  4. Effectors     → intent buffer           (no world mutation yet)
- 5. Movement      → integrate velocity, position
+ 5. Movement      → integrate velocity (force ÷ mass, Phase 3), position
  6. Collision     → sphere overlap resolution
- 7. Interaction   → bite damage, ingest (plants and corpses), grab
+ 7. Interaction   → bites (damage, mouthful), ingest (plants and corpses), grab
  8. Plants/fields → grow, plant deaths and reseeds, deposit, diffuse, decay
- 9. Metabolism    → charge costs, update energy, regenerate living health, decay corpses
+ 9. Metabolism    → charge costs, update energy, regenerate living health, count down
+                    bite cooldowns, decay corpses
 10. Births/deaths → resolve deferred, in agent-index order; deaths leave corpses
 11. tick += 1
 ```
@@ -286,10 +290,10 @@ Evaluation: Euler integration, one step per tick. Topologically sorting is point
 | Disable/enable connection | 0.02 since M8 | Retain identity and weight |
 | Remove connection | 0.02 since M8 | Physical deletion, enabled before distance calibration (§3.4) |
 | Remove neuron | 0.01 since M8 | Remove an eligible neuron and incident edges; same caveat |
-| Add sensor | 0.001 since M8 | Configured modality mixture and fresh target neurons |
+| Add sensor | 0.001 since M8 | Configured modality mixture and fresh target neurons; from Phase 3, one connection into the network |
 | Remove sensor | 0.001 since M8 | Retain target neurons and wiring |
 | Add effector | 0.01 | |
-| Mutate body trait | 0.1 | |
+| Mutate body trait | 0.1 | Phase 3: size, muscle, mouth, and colour; multiplicative steps, clamped (§3.5) |
 | **Gene duplication** | 0.005 | Duplicate a subgraph with fresh IDs |
 | Mutate meta-genes | 0.05 | Mutation rates evolve |
 
@@ -354,13 +358,28 @@ in `mutate/organs.rs`; neural logic remains in `mutate/structural.rs`.
 Addition chooses vision, food chemo, or energy interoception using configurable
 nonnegative weights, before checking the selected modality's
 limits. Do not reroll a different modality on refusal. A successful edit atomically
-adds one fresh sigmoid target neuron per channel and one sensor, with no automatic
-connections. Target bias is configurable, tau uses the existing
+adds one fresh sigmoid target neuron per channel and one sensor; through Phase 2 it
+added no connections (but see the Phase 3 decision below). Target bias is configurable, tau uses the existing
 brain range, and sensor initialization matches founders: random vision azimuth,
 zero elevation, configured range/FOV, food channel zero/current chemo radius, or
 energy selector zero. Deleting a sensor leaves its neurons and connections intact.
 All gene/neuron/sensor/ray, scratch, and ID checks precede changes or initialization
 draws; the same refusal/consumption rules as neural edits apply.
+
+**DECIDED (Phase 3): a new sensor arrives wired.** The same edit also adds one
+enabled connection from a uniformly chosen channel's target neuron to a uniformly
+chosen effector source or hidden neuron, weighted as an added connection (above)
+scaled by `mutation.organs.wired_weight_scale`, so the new input nudges behaviour rather
+than overriding it. The starting value is 0.25. Zero adds no connection and draws
+nothing, which is how Phase 2 ran. Phase 2's unwired organ paid upkeep from birth and
+could act only once a later add-connection happened to wire it. That is the
+nonfunctional structure NEAT rejects: new structure usually lowers fitness at first
+and needs generations of tuning, and unconnected structure may never join the
+working network (Stanley & Miikkulainen 2002). NEAT protects innovation with explicit
+fitness sharing inside species, which needs a fitness score this simulation does not
+have (§1). Protection here comes from wiring new organs at once, as oscillator
+addition already does, and from ecological niches; Phase 3 also measures how long
+sensor innovations persist. The extra draws happen only on a successful addition.
 
 Runtime sensor admission checks allocated channel and sensing-envelope bounds.
 Inherited genes remain valid after live range reductions because the world's
@@ -684,6 +703,17 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 
 ### 3.5 Morphology
 
+**DECIDED (Phase 3): scalar body traits evolve before body plans.** Three body genes become evolvable, so predators and prey can diverge in the dimensions that decide an encounter: `size` (radius), `muscle`, and `mouth`. With relative size `s = size / body.size`:
+
+- **Mass is `s²`.** Thrust force divided by mass is the acceleration (§2.4 step 5), so a large body is sluggish unless it pays for muscle.
+- **`muscle` multiplies the force** a full thrust drive produces. Movement still pays `k_move · force²` on that larger force.
+- **`mouth` is gape relative to the body**, so gape is `g = mouth · s`. Grazing and scavenging intake per tick is `feeding.rate · g²`, since bite area grows with the square of mouth width, and the bite's damage and mouthful scale with it (§4.2).
+- **Costs** (§5.2): size already pays `k_size · size²`. Muscle and mouth add `k_muscle · (muscle² − 1)` and `k_mouth · (mouth² − 1)`, which are zero at the default of 1.
+- **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
+- **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
+
+The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
+
 **Bodies are multi-part and genome-derived from Phase 5** (§8), before the volumetric-3D step. The `partOffset`/`partCount` indirection in §2.2 exists to receive this.
 
 Crucially, this is the **rigid** version: parts are fixed relative to the agent root. The body is a *shape*, not a machine. No joints, no torques, no physics engine — locomotion stays `thrust`/`turn` on the whole assembly. That single restriction is what makes morphology affordable this early, and it still delivers the thing you actually want, which is that every organism looks like itself.
@@ -761,6 +791,8 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 | `clock` | period | sine oscillator (also available as internal neuron) |
 | `light` | — | ambient light level (day/night, depth) |
 
+**DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1; a live retune to 0 silences that sense in every existing agent. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
+
 **Every directional param is stored as an `(azimuth, elevation)` pair, with `elevation` clamped to 0 and its mutation operator disabled in V1.** The field exists in the gene, occupies its slot in the serialized genome, and simply doesn't vary. Going 3D is then a matter of unclamping it. If you store a single scalar angle instead, every saved world and every evolved population you've accumulated becomes unloadable the day you switch — and by then you will have runs you care about.
 
 ### 4.2 Effectors
@@ -769,8 +801,8 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 |---|---|---|
 | `thrust` | — | forward force, cost ∝ force² |
 | `turn` | — | angular velocity |
-| `bite` | azimuth, **elevation**, reach | damage to target, transfers energy on kill |
-| `ingest` | — | absorb food/corpse in contact radius |
+| `bite` | azimuth, **elevation**, reach | damage scaled by gape and victim size; takes a mouthful of energy |
+| `ingest` | — | crop food (plant or corpse) in reach; intake grows with gape² |
 | `reproduce` | — | **gated by the brain** — the agent decides when |
 | `emit_chemo` | channel | deposit pheromone, costs energy |
 | `emit_sound` | channel | broadcast, costs energy |
@@ -783,7 +815,19 @@ Two of these are disproportionately valuable and cheap:
 
 **Brain-gated reproduction.** Letting the network decide *when* to reproduce, rather than triggering it at an energy threshold, turns life-history strategy into an evolvable trait. You will get r-strategists and K-strategists in the same world, and reproductive timing tied to seasons or population density.
 
-**DECIDED (Phase 3): the bite.** A `bite` effector is a fifth action. Its gene carries `[azimuth, elevation, reach, _]`; Phase 3 founds it facing forward (azimuth and elevation 0) with `combat.reach`, and nothing mutates those params yet, the treatment sensor elevation gets. An agent whose bite drive exceeds `combat.gate`, whose cooldown has elapsed, and who holds at least `combat.attack_cost` energy, swings: it pays `attack_cost` (dissipated, whether or not it hits), restarts its cooldown of `combat.cooldown_seconds`, and damages the nearest other living agent whose centre lies within `reach` plus both radii and within `combat.arc` radians of its bite direction, by `combat.attack_damage`. Health is a fraction in `[0, 1]`, full at birth, regenerating at `combat.health_regen` per second only while above 0, so lethal damage cannot heal before step 10; an agent whose health reaches 0 dies in step 10, as a starved one does. Swings resolve in agent-index order; damage accumulates, so the order cannot decide who dies. Founders carry a bite effector only when `founder.bite` is set, so predation is a capability lineages start with and selection then prices — no mutation adds or removes effectors yet.
+**DECIDED (Phase 3): the bite.** A `bite` effector is a fifth action. Its gene carries `[azimuth, elevation, reach, _]`; Phase 3 founds it facing forward (azimuth and elevation 0) with `combat.reach`, and nothing mutates those params yet, the treatment sensor elevation gets.
+
+- **The swing.** An agent swings when three things hold: its bite drive exceeds `combat.gate`, its cooldown has elapsed, and it holds at least `combat.attack_cost` energy. It pays `attack_cost` (dissipated, whether or not it hits) and restarts its cooldown of `combat.cooldown_seconds`.
+- **The hit.** A swing hits the nearest other living agent whose centre lies within `reach` plus both radii and within `combat.arc` radians of the bite direction.
+  - Damage is `combat.attack_damage · g / s_victim`, clamped to `[0, 1]`, where `g` is the biter's gape and `s_victim` the victim's relative size (§3.5). A bigger mouth wounds faster, and a big enough victim is nearly immune.
+  - A hit also takes a mouthful: up to `combat.mouthful · g²` of energy leaves the victim, and the biter keeps `combat.assimilation` of it. The rest is dissipated. This is the omnivory bridge real predators crossed: biting pays from the first hit, not only after a kill, and kills still leave corpses for anyone to scavenge.
+- **Health** is a fraction in `[0, 1]`, full at birth. It regenerates at `combat.health_regen` per second, but only while above 0, so lethal damage cannot heal before step 10. An agent whose health reaches 0 dies in step 10, as a starved one does.
+- **Order.** Swings resolve in two passes.
+  1. Every swing is fixed first: eligibility and target come from the state at the start of step 7, and every cost is paid.
+  2. Hits then apply in agent-index order.
+
+  An earlier biter's mouthful therefore cannot drain a later one below `attack_cost` and cancel its swing. Damage accumulates, so order cannot decide who swings or who dies. Mouthfuls are taken in index order, as food is (§2.4): a victim holding less than every biter asks serves earlier slots first, and that is the one place index order shows.
+- **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. No mutation adds or removes effectors yet.
 
 ---
 
@@ -797,7 +841,7 @@ sunlight → autotrophs → herbivores → carnivores
               └──── decomposition ◀──── corpses
 ```
 
-Energy enters at a fixed global rate and leaves only through dissipation: metabolism, and from Phase 3 the cost of a bite, the share of a dying agent's energy it does not leave as a corpse, a corpse share refused by a full pool, and decomposition. Every one is recorded in the ledger. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
+Energy enters at a fixed global rate and leaves only through dissipation: metabolism, and from Phase 3 the cost of a bite, the part of a mouthful the biter does not assimilate, the share of a dying agent's energy it does not leave as a corpse, a corpse share refused by a full pool, and decomposition. Every one is recorded in the ledger. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
 
 Autotrophs (plants) should be simple non-brained entities that grow where nutrients are, get eaten, and reseed. They are the substrate, not agents.
 
@@ -818,9 +862,11 @@ Every agent pays, per tick:
 ```
 cost = base
      + k_size   * size²
+     + k_muscle * (muscle² − 1)               ← Phase 3: speed costs upkeep at rest
+     + k_mouth  * (mouth² − 1)                ← Phase 3: a big mouth costs to carry
      + k_brain  * (neurons + connections)     ← keeps brains from bloating
      + k_sensor * Σ sensor costs              ← eyes are expensive
-     + k_move   * |force|²
+     + k_move   * |force|²                    ← force includes muscle
      + k_signal * emissions
 ```
 
@@ -864,6 +910,16 @@ the absolutes are the **relationships**, which are stated alongside.
 | `attack_damage` | 0.25 of full health | Several bites to kill, so prey can escape |
 | `combat_cooldown_seconds` | 0.5 | A biter cannot drain its own tank in a burst; a held drive costs `attack_cost` per swing |
 | `combat_health_regen` | 0.02 /second | A wounded agent recovers within about an idle lifetime, so an escape is real |
+| `combat_gate` | 0.5 | A sigmoid with no input rests at the gate and does not swing |
+| `combat_reach` | 4 | Matches `feeding_reach`: a biter must get as close to prey as to a plant |
+| `combat_arc` | π/4 | A quarter-turn cone: biting means facing what you bite |
+| `combat_dormant_bias` | −1 | A founder's unwired bite neuron rests at σ(−1) ≈ 0.27, below the gate |
+| `combat_mouthful` | 20 per hit at gape 1 | Assimilated (×0.8 = 16), it repays a swing twice over, so biting can pay from the first hit |
+| `combat_assimilation` | 0.8 | Animals assimilate 60–90% of meat; the rest is dissipated |
+| `k_muscle`, `k_mouth` | 0.008 each | Doubling either trait adds about 40% to a founder's idle upkeep |
+| `body_trait_rate`, `body_trait_sigma` | 0.1, 0.05 | A trait drifts a few percent per mutation: visible over thousands of births, not per generation |
+| `body_size_range` | [1.5, 6] | Half to double the founder radius: room for a size refuge, and still far below the 60-unit grid cell |
+| `body_muscle_range`, `body_mouth_range` | [0.25, 4] each | Quarter to quadruple. At the floor each trait saves `k · 0.9375 = 0.0075` of upkeep, so even the smallest, weakest body still pays a positive cost |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
 | `corpse_decay` | 0.02 /second | Carrion lasts long enough to be found, not long enough to be a second plant layer |
 | `plant_energy_input_rate` | 24000 /sim-second | A ceiling, not an income: with grazing lag the world captures about a quarter of it, and the 2,000-founder web profile settles near 800–1,000 agents |
@@ -1028,7 +1084,7 @@ Two things follow, and the order matters.
 
 The first lever is **not** lazy allocation. A full world is a full world, and 50k *is* the full world — growing on demand only buys headroom for the common case where population sits below the ceiling. The first lever is the genome arena's layout: `Gene` is an enum sized by its widest variant, so the ~85% of genes that are connections pay 40 bytes for a 20-byte payload. Splitting the arena by gene class roughly halves genome memory and needs no new machinery. Lazy growth composes on top of that, and can be made behaviourally invisible — keep `max_agents` as the ceiling the simulation sees and let allocation track live population underneath, so allocation strategy never reaches the golden hash.
 
-And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **61 bytes per agent** — about 0.5% of per-agent state and 3.1 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the 99.5% that is expensive is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
+And the detach hazard in §7.3 is narrower than it looks. It applies only to what JS actually views, which is the render snapshot at **72 bytes per agent** (61 before Phase 3's combat fields) — under 1% of per-agent state and 3.6 MB even at 50k. Pre-allocate that at capacity and stop thinking about it; the rest, which is where the cost is, is never viewed from JS at all, since inspector data is pulled per-agent on demand (§2.2b). Keeping those two questions separate is what makes the rest tractable.
 
 ### 7.6 Tuning discipline
 
@@ -1270,14 +1326,14 @@ One JSON line per sample interval: population by species, trophic biomass by tie
 | Population → 0 early | Energy input too low, or mutation rate past error catastrophe |
 | Species count → 1, stays there | World too homogeneous (§5.3) |
 | Mean brain size climbing without bound | `k_brain` too low |
-| Carnivore biomass → 0 | `attack_cost` too high relative to prey energy |
+| Carnivore biomass → 0 | `attack_cost` too high relative to the mouthful and prey energy |
 | Prey biomass → 0, then total collapse | `attack_cost` too low; no refugia |
 | Mean speed ≈ 0, population stable | Metabolism too cheap — idling isn't fatal |
 | Signal emission uncorrelated with anything | Spatial viscosity too loose (§5.4) |
 
 `cargo run -p native -- diagnose run.jsonl` reporting which of these matches turns the most common debugging session into one command.
 
-**Sweeps.** Grid over the parameters that interact — `attack_cost` × `attack_damage` × plant growth is the Phase 3 one — and report which cells produce stable coexistence. **Require N seeds per cell and report variance.** A single seed can look excellent by luck, and a single good run is the most common way an automated report misleads.
+**Sweeps.** Grid over the parameters that interact — `attack_cost` × `mouthful` × plant growth × founder vision is the Phase 3 one — and report which cells produce stable coexistence. **Require N seeds per cell and report variance.** A single seed can look excellent by luck, and a single good run is the most common way an automated report misleads.
 
 #### Where this goes wrong
 
@@ -1449,11 +1505,18 @@ also deferred, not requirements of the Phase 2 save/load milestone.
 
 **Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, connection enable/disable, add/remove sensor, genetic distance, species clustering, phylogenetic tree, and basic manual portable checkpoints (§7.10). Plant ecology also lands here, ahead of the seasons and terrain in Phase 6: stock-dependent regrowth and plant turnover with local dispersal (§5.1), and patchy fertility (§5.3). The success criterion cannot be judged in a world where blind grazing does as well as perceiving. **Revisit founder composition here (§3.3)** once the structural operators exist; the minimal viable founder remains a multi-seed measurement, not an assumed starting configuration. Build order and implementation decisions under review live in [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md). *Success: brains grow in complexity, distinct species appear.*
 
-**Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.* Measured as a species whose members take most of their energy from corpses, persisting for at least half a run on several seeds while plant-eaters persist beside it, against both controls (§7.8). Build order and decisions under review live in [`phase-3-implementation-plan.md`](phase-3-implementation-plan.md).
+**Phase 3 — predation and bodies.** It covers:
+
+- a bite that founders carry dormant and lineages must evolve into use, with a mouthful per hit, health, kills, corpses, and decomposition (§4.2, §5.1);
+- evolvable body size, muscle, and mouth, with mass entering movement (§3.5);
+- new sensors that arrive wired (§3.3);
+- attacks drawn in the browser (§2.2b).
+
+Tune the attack cost against the mouthful and prey energy. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.* Measured as a species whose members take most of their energy from other agents (bites and corpses), persisting for at least half a run on several seeds while plant-eaters persist beside it, against both controls (§7.8). Build order and decisions under review live in [`phase-3-implementation-plan.md`](phase-3-implementation-plan.md).
 
 **Phase 4 — signaling and sociality.** Pheromone emit/sense, sound, `set_signature`, kin sense. Verify spatial viscosity is tight enough. *Success: signal emission correlates with something — predator presence, food location. Look for warning coloration.*
 
-**Phase 5 — morphology.** Multi-part rigid bodies from the genome (§3.5), bilateral symmetry, sensors and effectors mounted on parts, per-part metabolic cost. Three.js render pass with LOD. *Success: body plans visibly co-vary with trophic role — you can guess what something eats by looking at it. If morphology is uncorrelated with niche, the functional coupling in §3.5 is too weak and parts are cosmetic.*
+**Phase 5 — morphology.** Multi-part rigid bodies from the genome (§3.5), bilateral symmetry, sensors and effectors mounted on parts, per-part metabolic cost. Phase 3's scalar traits (size, muscle, mouth) and mass are the starting point; parts distribute them. Three.js render pass with LOD. *Success: body plans visibly co-vary with trophic role — you can guess what something eats by looking at it. If morphology is uncorrelated with niche, the functional coupling in §3.5 is too weak and parts are cosmetic.*
 
 **Phase 5b — generated appearance (optional).** Per-species assets from an image model, structurally conditioned on the Phase 5 part assembly and inherited via img2img from the parent species (§3.6). *Gated on Phase 5's success criterion — do not start this until body plans provably co-vary with niche.* Best done before the 3D branch, since sprite assets don't survive volumetric rendering.
 
@@ -1602,6 +1665,8 @@ Worth knowing in advance, because you will hit most of these:
 | Total extinction in the first minutes | Energy input too low, or mutation rate too high (error catastrophe) |
 | Brains bloat, sim slows over hours | No metabolic cost on brain complexity |
 | Predators evolve then wipe everything out | Attack too cheap relative to prey energy; add prey refugia |
+| No lineage ever bites | The mouthful does not repay a swing, or prey cannot be found: check founder vision before the attack cost |
+| Bodies run away to the largest or smallest size | Trait costs out of balance with intake: `k_size`, `k_muscle`, `k_mouth` against `feeding.rate` (§3.5) |
 | Communication never evolves | Almost always insufficient spatial viscosity — offspring aren't near kin |
 | Behavior looks smart but isn't | You're pattern-matching. Check against a random-weights control run |
 
