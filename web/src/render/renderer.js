@@ -331,7 +331,7 @@ function buildRenderer(
   gl.bindVertexArray(null);
 
   // Corpses are food drawn like plants, from the same program over their own arrays.
-  // They never glow, so that attribute is a zero buffer uploaded once.
+  // They never glow: WebGL zero-fills a buffer created by size, and nothing writes it.
   const corpseVao = resources.vertexArray();
   gl.bindVertexArray(corpseVao);
   gl.bindBuffer(gl.ARRAY_BUFFER, corners);

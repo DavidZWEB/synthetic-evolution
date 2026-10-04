@@ -1,10 +1,11 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
 //! Spec §2.2b's render fields: agent appearance and identity, plant position and
-//! current stock, and corpse position and energy. A slot incarnation lets click selection survive free-list reuse without
-//! exposing private agent state. No agent energy, genomes, or brain state. The buffer is
-//! written once per tick and read by the main thread at whatever rate it happens to be
-//! drawing, so every field added is bandwidth paid 60 times a second at capacity.
+//! current stock, and corpse position and energy. A slot incarnation lets click
+//! selection survive free-list reuse without exposing private agent state. No agent
+//! energy, genomes, or brain state. The buffer is written once per tick and read by the
+//! main thread at whatever rate it happens to be drawing, so every field added is
+//! bandwidth paid 60 times a second at capacity.
 //!
 //! **Slot-indexed, not compacted.** Arrays are `capacity` long and `alive` says which
 //! entries are real, which costs a byte per slot and buys the thing compaction destroys:
