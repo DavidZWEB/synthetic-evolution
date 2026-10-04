@@ -154,7 +154,7 @@ agents: positions, orientation, size, signature, alive, speciesId, partOffset, p
 plants: positions, energy
 ```
 
-Plant energy is the current stock, used to show whether a persistent site is full or depleted (§5.1); it is not a history. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
+Plant energy is the current stock, used to show whether a plant is full or depleted (§5.1); it is not a history. Plant positions change when a plant dies and reseeds, so they travel with every frame too. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
 
 `incarnation` changes whenever a pool slot is allocated. A slot index alone is not an agent identity because the free list reuses it; `(index, incarnation)` lets a click-driven inspector reject a response for a replacement born after the displayed frame.
 
@@ -212,7 +212,7 @@ Order of operations within one `step()`. This is normative — changing it chang
  5. Movement      → integrate velocity, position
  6. Collision     → sphere overlap resolution
  7. Interaction   → bite damage, ingest, grab
- 8. Fields        → deposit, diffuse, decay
+ 8. Plants/fields → grow, plant deaths and reseeds, deposit, diffuse, decay
  9. Metabolism    → charge costs, update energy
 10. Births/deaths → resolve deferred, in agent-index order
 11. tick += 1
@@ -794,9 +794,17 @@ sunlight → autotrophs → herbivores → carnivores
               └──── decomposition ◀──── corpses
 ```
 
-Energy enters at a fixed global rate and leaves only through metabolic dissipation. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works.
+Energy enters at a fixed global rate and leaves only through metabolic dissipation. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
 
 Autotrophs (plants) should be simple non-brained entities that grow where nutrients are, get eaten, and reseed. They are the substrate, not agents.
+
+**DECIDED (Phase 2, M9): plants are a population, not fixed scenery.** Phase 1 read "reseed" as regrowth in place: fixed, uniformly scattered sites that refill at a constant rate however hard they are grazed. That world rewards covering ground over sensing. M8's perception sweep found no plant density or input rate where evolving lineages kept sensors wired better than the structural null ([`phase-2-m8-evidence.md`](phase-2-m8-evidence.md)). Three rules replace it, each a `PlantParams` field whose zero value reproduces the Phase 1 behavior exactly:
+
+- **Regrowth depends on what is left.** A plant holding fraction `x` of `max_energy` takes `1 − grazing_lag · (1 − x)` of its share. A full plant takes its whole share; a stripped one only `1 − grazing_lag`, as grass regrows from remaining leaf area and reserves. This is the lower half of a logistic (Noy-Meir) growth curve, with `max_energy` as the upper cap. Stripping a site therefore has a lasting cost, and an overgrazed world absorbs less of its input. `grazing_lag` stays below 1, so an emptied plant always regrows.
+- **Plants die and reseed elsewhere.** A plant whose stock stays below `death_stock · max_energy` for `death_seconds` dies, and its slot re-establishes at once. With probability `local_dispersal` the new site lies within `dispersal_radius` of a uniformly chosen plant (seed falls near parents); otherwise it can be anywhere. Either way the site must pass the fertility test in §5.3. The dead plant's remaining stock moves with its slot, so turnover neither creates nor destroys energy, and the plant count never changes. Patches drift as overgrazed plants die and their neighbours spread.
+- **Fertility is patchy** (§5.3), so plants cluster where the soil allows.
+
+Deaths are found after growth in step 8 (§2.4) and resolved in plant-index order. Reseeding draws from the world RNG only when a plant dies. Plant positions and starvation timers are world state: hashed, checkpointed (§7.10), and sent in the render snapshot every frame.
 
 ### 5.2 Metabolic costs
 
@@ -817,11 +825,13 @@ Charging for brain and sensor complexity is what makes the "why not just add eve
 
 A uniform world produces one optimal strategy and then stagnates. Introduce variation deliberately:
 
-- **Spatial:** nutrient input varies by region (Perlin noise), terrain affects movement cost, obstacles create ambush geography.
+- **Spatial:** fertility varies by region, terrain affects movement cost, obstacles create ambush geography.
 - **Temporal:** day/night cycle (drives light-sensing and activity rhythms), seasons (drives storage, migration, dormancy).
 - **Stochastic:** occasional local disturbances — a fire, a bloom — that reset a region and open niches.
 
 Every one of these creates a niche, and niches are what let multiple species coexist instead of one clone sweeping the world.
+
+**DECIDED (Phase 2, M9): spatial fertility ships first.** A static map of smoothed value noise, periodic across the torus with feature size `patch_scale`, decides where plants can establish. A candidate site is accepted with probability `(fertility / peak fertility)^patchiness`, both when the world is built and at every reseed (§5.1). Zero `patchiness` is uniform. The map is drawn from the world RNG only when `patchiness` is non-zero, and is regenerated from the seed rather than saved. Fertility decides where plants live, not how fast they grow; a dense patch already receives more input because every plant is offered an equal share. Terrain and obstacles remain later work, and temporal cycles and disturbances stay in Phase 6 (§8).
 
 ### 5.4 Reproduction and spatial viscosity
 
@@ -849,6 +859,10 @@ the absolutes are the **relationships**, which are stated alongside.
 | `attack_damage` | 25 | Several bites to kill, so prey can escape |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
 | `plant_energy_input_rate` | 12000 /sim-second | Supports the 2,000-founder web profile while plant caps reject unused supply |
+| `plant_grazing_lag` | 0 until M9 calibration | A stripped plant must regrow clearly slower than a lightly grazed one, or stripping a site costs nothing |
+| `plant_death_stock`, `plant_death_seconds` | 0 until M9 calibration | Only sustained overgrazing kills: longer than one grazer's meal, within a few agent lifetimes |
+| `plant_local_dispersal`, `plant_dispersal_radius` | 0 until M9 calibration | Dispersal radius comparable to chemo range, so a patch creeps rather than jumps |
+| `plant_patchiness`, `plant_patch_scale` | 0 patchiness until M9 calibration | A patch is wider than chemo range and much smaller than the world, so finding the next one takes sensing |
 | `chemo_decay` | 0.98 /tick per channel | Trails persist ~50 ticks; **make this per-channel** |
 | `chemo_diffuse` | 0.1 | Too high and every gradient flattens to zero |
 | `mutation_rate_init` | see §3.3 | Evolvable — this is only the seed value |
@@ -1177,7 +1191,7 @@ unchanged.
 acceptance.** A scalar-heredity control that inherits/evolves topology cannot alone
 establish that structural growth is adaptive. Decide the structural-null protocol at
 M0 and implement/report it with M8's experiments, rather than discovering the missing
-instrument at M9. Approval must name the structural contribution or inheritance
+instrument at acceptance. Approval must name the structural contribution or inheritance
 disrupted, the preserved quantities, metabolic and sensory confounds, cohort/seed
 matching, measurements, and limits on interpretation. Resetting to founder topology
 or arbitrary rewiring is not assumed to control those confounds.
@@ -1350,15 +1364,16 @@ seeded control is not a continuation.
 
 **DECIDED core checkpoint encoding (M7):** `World::checkpoint()` writes the 8-byte
 magic `SEVCKPT\0`, a little-endian `u32` format number (the simulation-compatibility
-identity, currently 1), and a postcard-encoded record. It stores the construction
-seed, current params, heredity mode, RNG, tick, innovation/birth counters, ledger,
-pool free order and incarnations, every live agent's physical and identity fields,
-genome and exact arena placements, recurrent neuron values, the parts arena, plant
-stocks, chemo concentrations, active species with their representatives and blocks,
-queued commands, the spatial grid's cell count, and the saved `state_hash`. It does
-not store derived data: compiled neurons, synapses, sensors, and effectors are
-recompiled from validated genomes, and seed-derived plant sites and founder topology
-are regenerated by constructing the world from its seed; the hash confirms them.
+identity), and a postcard-encoded record. It stores the construction seed, current
+params, heredity mode, RNG, tick, innovation/birth counters, ledger, pool free order
+and incarnations, every live agent's physical and identity fields, genome and exact
+arena placements, recurrent neuron values, the parts arena, plant stocks, plant
+positions and starvation timers, chemo concentrations, active species with their
+representatives and blocks, queued commands, the spatial grid's cell count, and the
+saved `state_hash`. It does not store derived data: compiled neurons, synapses,
+sensors, and effectors are recompiled from validated genomes, and the seed-derived
+fertility map and founder topology are regenerated by constructing the world from its
+seed; the hash confirms them.
 
 `World::from_checkpoint` decodes untrusted bytes under the host's limits: an encoded
 byte ceiling, and a ceiling on the saved params' core construction budget, checked
@@ -1423,7 +1438,7 @@ also deferred, not requirements of the Phase 2 save/load milestone.
 
 **Because the goal is to share early, the renderer needs to be presentable from Phase 2, not Phase 5.** A clean instanced 2D renderer plus seed URLs makes every phase from 3 onward shareable, which is where the feedback actually comes from. The Three.js pass at Phase 5 then upgrades a working presentation rather than creating one — don't defer *all* visual polish to Phase 5 on the strength of that line item.
 
-**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, connection enable/disable, add/remove sensor, genetic distance, species clustering, phylogenetic tree, and basic manual portable checkpoints (§7.10). **Revisit founder composition here (§3.3)** once the structural operators exist; the minimal viable founder remains a multi-seed measurement, not an assumed starting configuration. Build order and implementation decisions under review live in [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md). *Success: brains grow in complexity, distinct species appear.*
+**Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, connection enable/disable, add/remove sensor, genetic distance, species clustering, phylogenetic tree, and basic manual portable checkpoints (§7.10). Plant ecology also lands here, ahead of the seasons and terrain in Phase 6: stock-dependent regrowth and plant turnover with local dispersal (§5.1), and patchy fertility (§5.3). The success criterion cannot be judged in a world where blind grazing does as well as perceiving. **Revisit founder composition here (§3.3)** once the structural operators exist; the minimal viable founder remains a multi-seed measurement, not an assumed starting configuration. Build order and implementation decisions under review live in [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md). *Success: brains grow in complexity, distinct species appear.*
 
 **Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.*
 
@@ -1574,6 +1589,7 @@ Worth knowing in advance, because you will hit most of these:
 |---|---|
 | Agents jitter in place, never learn | Selection pressure too weak, or metabolic cost too low to make idleness fatal |
 | One clone sweeps the world, diversity → 0 | World too homogeneous; add spatial/temporal niches |
+| Lineages drop or disconnect their sensors | Food too dense or too uniform for perception to pay; check plant patchiness and regrowth (§5.1, §5.3) before sensor costs |
 | Total extinction in the first minutes | Energy input too low, or mutation rate too high (error catastrophe) |
 | Brains bloat, sim slows over hours | No metabolic cost on brain complexity |
 | Predators evolve then wipe everything out | Attack too cheap relative to prey energy; add prey refugia |
