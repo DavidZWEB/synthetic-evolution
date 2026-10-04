@@ -1333,8 +1333,9 @@ impl SimParams {
                 "metabolism costs must be finite and non-negative",
             ));
         }
-        // Positive because mass and force divide by them, and holding the founders'
-        // traits so a first mutation cannot jump a body to a bound (spec §3.5).
+        // Positive because they bound magnitudes: the tick divides by the mass that size
+        // sets, and muscle and mouth multiply force and gape. Each holds the founders'
+        // trait, so a first mutation cannot jump a body to a bound (spec §3.5).
         for (range, founder, message) in [
             (
                 self.body.size_range,

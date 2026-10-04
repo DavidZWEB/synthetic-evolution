@@ -282,8 +282,10 @@ pub enum GenomeError {
     DuplicateInnovation,
     /// Runtime architecture has at most one retained connection per ordered pair.
     DuplicateConnection,
-    /// A size, muscle, or mouth that is not positive. Mass and force divide by them
-    /// (spec §3.5), so zero would make an agent infinitely quick or immovable.
+    /// A size, muscle, or mouth that is not positive. All three are magnitudes (spec
+    /// §3.5): the tick divides force by the mass that size sets, so a zero size has no
+    /// mass, and muscle and mouth multiply force and gape, so zero or less describes no
+    /// working body. Mutation's multiplicative step never carries one through zero.
     BadBodyTrait,
 }
 
