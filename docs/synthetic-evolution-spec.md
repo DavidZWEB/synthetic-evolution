@@ -858,11 +858,11 @@ the absolutes are the **relationships**, which are stated alongside.
 | `attack_cost` | 8 | **20–40% of typical prey energy** — the single most sensitive ratio in the sim |
 | `attack_damage` | 25 | Several bites to kill, so prey can escape |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
-| `plant_energy_input_rate` | 12000 /sim-second | Supports the 2,000-founder web profile while plant caps reject unused supply |
-| `plant_grazing_lag` | 0 until M9 calibration | A stripped plant must regrow clearly slower than a lightly grazed one, or stripping a site costs nothing |
-| `plant_death_stock`, `plant_death_seconds` | 0 until M9 calibration | Only sustained overgrazing kills: longer than one grazer's meal, within a few agent lifetimes |
-| `plant_local_dispersal`, `plant_dispersal_radius` | 0 until M9 calibration | Dispersal radius comparable to chemo range, so a patch creeps rather than jumps |
-| `plant_patchiness`, `plant_patch_scale` | 0 patchiness until M9 calibration | A patch is wider than chemo range and much smaller than the world, so finding the next one takes sensing |
+| `plant_energy_input_rate` | 24000 /sim-second | A ceiling, not an income: with grazing lag the world captures about a quarter of it, and the 2,000-founder web profile settles near 800–1,000 agents |
+| `plant_grazing_lag` | 0.8 | A stripped plant must regrow clearly slower than a lightly grazed one, or stripping a site costs nothing |
+| `plant_death_stock`, `plant_death_seconds` | 0.1, 30 s | Only sustained overgrazing kills: longer than one grazer's meal, within a few agent lifetimes |
+| `plant_local_dispersal`, `plant_dispersal_radius` | 0.9, 40 | Dispersal radius comparable to chemo range, so a patch creeps rather than jumps |
+| `plant_patchiness`, `plant_patch_scale` | 4, 150 | A patch is wider than chemo range and much smaller than the world, so finding the next one takes sensing |
 | `chemo_decay` | 0.98 /tick per channel | Trails persist ~50 ticks; **make this per-channel** |
 | `chemo_diffuse` | 0.1 | Too high and every gradient flattens to zero |
 | `mutation_rate_init` | see §3.3 | Evolvable — this is only the seed value |

@@ -377,11 +377,16 @@ mod tests {
         filled(1.0)
     }
 
-    /// A world stocked to `fill` of `max_energy`. Growth is only measurable from empty.
+    /// A world stocked to `fill` of `max_energy`, with Phase 1's plants: uniform,
+    /// regrowing at the full share, never dying. Tests of the M9 ecology switch on what
+    /// they measure. Growth is only measurable from empty.
     fn filled(fill: f32) -> (Plants, SimParams) {
         let mut params = SimParams::default();
         params.plants.max_plants = 200;
         params.plants.initial_fill = fill;
+        params.plants.grazing_lag = 0.0;
+        params.plants.patchiness = 0.0;
+        params.plants.death_stock = 0.0;
         let mut rng = Rng::from_seed(4);
         (Plants::new(&params, &mut rng), params)
     }

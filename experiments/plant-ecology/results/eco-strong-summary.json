@@ -1,0 +1,1314 @@
+{
+  "configurations": [
+    {
+      "params_digest": "14c8333191df627c",
+      "founders": 2000,
+      "ticks": 300000,
+      "sample_every": 5000,
+      "source_revisions": [
+        "257114b836cc67e9be957d2720c183aede4ab7f6"
+      ],
+      "seeds": [
+        "42",
+        "117",
+        "314"
+      ],
+      "cohorts": [
+        {
+          "name": "evolving",
+          "protocol": null,
+          "seeds": [
+            "42",
+            "117",
+            "314"
+          ],
+          "metrics": [
+            {
+              "name": "extinct",
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 0.0,
+              "min": 1.0,
+              "max": 1.0
+            },
+            {
+              "name": "population",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "descendants",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_variants",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "agent_energy_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "speed_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "supply_captured",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "plant_stock",
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 0.0,
+              "min": 1.0,
+              "max": 1.0
+            },
+            {
+              "name": "plant_clustering",
+              "values": [
+                0.4170076532017725,
+                0.5258607414125829,
+                0.4367320520969937
+              ],
+              "n": 3,
+              "mean": 0.4598668155704497,
+              "sd": 0.057997083236893746,
+              "min": 0.4170076532017725,
+              "max": 0.5258607414125829
+            },
+            {
+              "name": "plants_reseeded",
+              "values": [
+                5569.0,
+                1703.0,
+                10217.0
+              ],
+              "n": 3,
+              "mean": 5829.666666666667,
+              "sd": 4262.981272927825,
+              "min": 1703.0,
+              "max": 10217.0
+            },
+            {
+              "name": "brain_units_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "sensor_load_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_genes_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_genes_max",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "neurons_max",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "enabled_connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "wired_hidden_neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "wired_sensors_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "driven_effectors_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "active_species",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "persistent_species",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "longest_species_span",
+              "values": [
+                35000.0,
+                15000.0,
+                20000.0
+              ],
+              "n": 3,
+              "mean": 23333.333333333332,
+              "sd": 10408.329997330664,
+              "min": 15000.0,
+              "max": 35000.0
+            },
+            {
+              "name": "species_created",
+              "values": [
+                11.0,
+                10.0,
+                13.0
+              ],
+              "n": 3,
+              "mean": 11.333333333333334,
+              "sd": 1.5275252316519468,
+              "min": 10.0,
+              "max": 13.0
+            },
+            {
+              "name": "species_extinct",
+              "values": [
+                11.0,
+                10.0,
+                13.0
+              ],
+              "n": 3,
+              "mean": 11.333333333333334,
+              "sd": 1.5275252316519468,
+              "min": 10.0,
+              "max": 13.0
+            },
+            {
+              "name": "unclassified_population",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "structural_edits_applied",
+              "values": [
+                62.0,
+                35.0,
+                124.0
+              ],
+              "n": 3,
+              "mean": 73.66666666666667,
+              "sd": 45.63259069276402,
+              "min": 35.0,
+              "max": 124.0
+            },
+            {
+              "name": "sensor_edits_applied",
+              "values": [
+                1.0,
+                0.0,
+                2.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 1.0,
+              "min": 0.0,
+              "max": 2.0
+            },
+            {
+              "name": "capacity_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "pool_full_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "peak_arena_use",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            }
+          ]
+        },
+        {
+          "name": "scalar control",
+          "protocol": "randomized_at_birth_v3",
+          "seeds": [
+            "42",
+            "117",
+            "314"
+          ],
+          "metrics": [
+            {
+              "name": "extinct",
+              "values": [
+                1.0,
+                1.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.6666666666666666,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "population",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "descendants",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "genome_variants",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "agent_energy_mean",
+              "values": [
+                0.0,
+                0.0,
+                30793.54928977698
+              ],
+              "n": 3,
+              "mean": 10264.51642992566,
+              "sd": 17778.66397175675,
+              "min": 0.0,
+              "max": 30793.54928977698
+            },
+            {
+              "name": "speed_mean",
+              "values": [
+                0.0,
+                0.0,
+                2.9893215293601703
+              ],
+              "n": 3,
+              "mean": 0.9964405097867234,
+              "sd": 1.7258855896704381,
+              "min": 0.0,
+              "max": 2.9893215293601703
+            },
+            {
+              "name": "supply_captured",
+              "values": [
+                0.0008916429174244411,
+                0.0,
+                0.0014001714021831047
+              ],
+              "n": 3,
+              "mean": 0.0007639381065358486,
+              "sd": 0.0007087675062500529,
+              "min": 0.0,
+              "max": 0.0014001714021831047
+            },
+            {
+              "name": "plant_stock",
+              "values": [
+                1.0,
+                1.0,
+                0.9993826491876453
+              ],
+              "n": 3,
+              "mean": 0.9997942163958817,
+              "sd": 0.0003564276576974202,
+              "min": 0.9993826491876453,
+              "max": 1.0
+            },
+            {
+              "name": "plant_clustering",
+              "values": [
+                0.33539322136749045,
+                0.5804604517467439,
+                0.4809845003862264
+              ],
+              "n": 3,
+              "mean": 0.4656127245001536,
+              "sd": 0.12325463671545285,
+              "min": 0.33539322136749045,
+              "max": 0.5804604517467439
+            },
+            {
+              "name": "plants_reseeded",
+              "values": [
+                5978.0,
+                1067.0,
+                3269.0
+              ],
+              "n": 3,
+              "mean": 3438.0,
+              "sd": 2459.8579227264327,
+              "min": 1067.0,
+              "max": 5978.0
+            },
+            {
+              "name": "brain_units_mean",
+              "values": [
+                0.0,
+                0.0,
+                13.0
+              ],
+              "n": 3,
+              "mean": 4.333333333333333,
+              "sd": 7.505553499465136,
+              "min": 0.0,
+              "max": 13.0
+            },
+            {
+              "name": "sensor_load_mean",
+              "values": [
+                0.0,
+                0.0,
+                3.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 1.7320508075688772,
+              "min": 0.0,
+              "max": 3.0
+            },
+            {
+              "name": "genome_genes_mean",
+              "values": [
+                0.0,
+                0.0,
+                25.0
+              ],
+              "n": 3,
+              "mean": 8.333333333333334,
+              "sd": 14.433756729740644,
+              "min": 0.0,
+              "max": 25.0
+            },
+            {
+              "name": "genome_genes_max",
+              "values": [
+                0.0,
+                0.0,
+                25.0
+              ],
+              "n": 3,
+              "mean": 8.333333333333334,
+              "sd": 14.433756729740644,
+              "min": 0.0,
+              "max": 25.0
+            },
+            {
+              "name": "neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                9.0
+              ],
+              "n": 3,
+              "mean": 3.0,
+              "sd": 5.196152422706632,
+              "min": 0.0,
+              "max": 9.0
+            },
+            {
+              "name": "neurons_max",
+              "values": [
+                0.0,
+                0.0,
+                9.0
+              ],
+              "n": 3,
+              "mean": 3.0,
+              "sd": 5.196152422706632,
+              "min": 0.0,
+              "max": 9.0
+            },
+            {
+              "name": "connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                4.0
+              ],
+              "n": 3,
+              "mean": 1.3333333333333333,
+              "sd": 2.3094010767585034,
+              "min": 0.0,
+              "max": 4.0
+            },
+            {
+              "name": "enabled_connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                4.0
+              ],
+              "n": 3,
+              "mean": 1.3333333333333333,
+              "sd": 2.3094010767585034,
+              "min": 0.0,
+              "max": 4.0
+            },
+            {
+              "name": "wired_hidden_neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "wired_sensors_mean",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "driven_effectors_mean",
+              "values": [
+                0.0,
+                0.0,
+                4.0
+              ],
+              "n": 3,
+              "mean": 1.3333333333333333,
+              "sd": 2.3094010767585034,
+              "min": 0.0,
+              "max": 4.0
+            },
+            {
+              "name": "active_species",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "persistent_species",
+              "values": [
+                0.0,
+                0.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 0.3333333333333333,
+              "sd": 0.5773502691896258,
+              "min": 0.0,
+              "max": 1.0
+            },
+            {
+              "name": "longest_species_span",
+              "values": [
+                295000.0,
+                55000.0,
+                300000.0
+              ],
+              "n": 3,
+              "mean": 216666.66666666666,
+              "sd": 140029.75874196645,
+              "min": 55000.0,
+              "max": 300000.0
+            },
+            {
+              "name": "species_created",
+              "values": [
+                17.0,
+                11.0,
+                21.0
+              ],
+              "n": 3,
+              "mean": 16.333333333333332,
+              "sd": 5.033222956847167,
+              "min": 11.0,
+              "max": 21.0
+            },
+            {
+              "name": "species_extinct",
+              "values": [
+                17.0,
+                11.0,
+                20.0
+              ],
+              "n": 3,
+              "mean": 16.0,
+              "sd": 4.58257569495584,
+              "min": 11.0,
+              "max": 20.0
+            },
+            {
+              "name": "unclassified_population",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "structural_edits_applied",
+              "values": [
+                48.0,
+                4.0,
+                56.0
+              ],
+              "n": 3,
+              "mean": 36.0,
+              "sd": 28.0,
+              "min": 4.0,
+              "max": 56.0
+            },
+            {
+              "name": "sensor_edits_applied",
+              "values": [
+                0.0,
+                0.0,
+                2.0
+              ],
+              "n": 3,
+              "mean": 0.6666666666666666,
+              "sd": 1.1547005383792517,
+              "min": 0.0,
+              "max": 2.0
+            },
+            {
+              "name": "capacity_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "pool_full_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "peak_arena_use",
+              "values": [
+                0.0,
+                0.0,
+                0.0002
+              ],
+              "n": 3,
+              "mean": 0.00006666666666666667,
+              "sd": 0.00011547005383792516,
+              "min": 0.0,
+              "max": 0.0002
+            }
+          ]
+        },
+        {
+          "name": "structural null",
+          "protocol": "structural_null_v2",
+          "seeds": [
+            "42",
+            "117",
+            "314"
+          ],
+          "metrics": [
+            {
+              "name": "extinct",
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 0.0,
+              "min": 1.0,
+              "max": 1.0
+            },
+            {
+              "name": "population",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "descendants",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_variants",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "agent_energy_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "speed_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "supply_captured",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "plant_stock",
+              "values": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "n": 3,
+              "mean": 1.0,
+              "sd": 0.0,
+              "min": 1.0,
+              "max": 1.0
+            },
+            {
+              "name": "plant_clustering",
+              "values": [
+                0.4198293384825751,
+                0.4415668443921143,
+                0.4388889040962616
+              ],
+              "n": 3,
+              "mean": 0.43342836232365034,
+              "sd": 0.011852971278529169,
+              "min": 0.4198293384825751,
+              "max": 0.4415668443921143
+            },
+            {
+              "name": "plants_reseeded",
+              "values": [
+                5418.0,
+                5143.0,
+                9682.0
+              ],
+              "n": 3,
+              "mean": 6747.666666666667,
+              "sd": 2544.924425858916,
+              "min": 5143.0,
+              "max": 9682.0
+            },
+            {
+              "name": "brain_units_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "sensor_load_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_genes_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "genome_genes_max",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "neurons_max",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "enabled_connections_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "wired_hidden_neurons_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "wired_sensors_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "driven_effectors_mean",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "active_species",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "persistent_species",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "longest_species_span",
+              "values": [
+                45000.0,
+                20000.0,
+                35000.0
+              ],
+              "n": 3,
+              "mean": 33333.333333333336,
+              "sd": 12583.057392117917,
+              "min": 20000.0,
+              "max": 45000.0
+            },
+            {
+              "name": "species_created",
+              "values": [
+                14.0,
+                11.0,
+                14.0
+              ],
+              "n": 3,
+              "mean": 13.0,
+              "sd": 1.7320508075688772,
+              "min": 11.0,
+              "max": 14.0
+            },
+            {
+              "name": "species_extinct",
+              "values": [
+                14.0,
+                11.0,
+                14.0
+              ],
+              "n": 3,
+              "mean": 13.0,
+              "sd": 1.7320508075688772,
+              "min": 11.0,
+              "max": 14.0
+            },
+            {
+              "name": "unclassified_population",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "structural_edits_applied",
+              "values": [
+                69.0,
+                95.0,
+                131.0
+              ],
+              "n": 3,
+              "mean": 98.33333333333333,
+              "sd": 31.13411847689498,
+              "min": 69.0,
+              "max": 131.0
+            },
+            {
+              "name": "sensor_edits_applied",
+              "values": [
+                0.0,
+                2.0,
+                4.0
+              ],
+              "n": 3,
+              "mean": 2.0,
+              "sd": 2.0,
+              "min": 0.0,
+              "max": 4.0
+            },
+            {
+              "name": "capacity_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "pool_full_refusals",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            },
+            {
+              "name": "peak_arena_use",
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "n": 3,
+              "mean": 0.0,
+              "sd": 0.0,
+              "min": 0.0,
+              "max": 0.0
+            }
+          ]
+        }
+      ],
+      "unpaired": []
+    }
+  ],
+  "notes": [
+    "values are each run's final sample; spread is across seeds, not time",
+    "cohorts are reported side by side and are not ranked or scored",
+    "persistent_species: species alive at the end that were first sampled at least half the run earlier",
+    "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
+    "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
+    "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
+    "plant_stock: plant energy as a fraction of every plant full; plant_clustering: Clark-Evans ratio, near 1 random and below 1 clustered",
+    "plants_reseeded: plants that died of starvation and reseeded over the run",
+    "capacity_refusals: births refused for genome or arena limits, a warning that growth met allocator bounds",
+    "peak_arena_use: the fullest arena's used fraction at the final sample"
+  ]
+}

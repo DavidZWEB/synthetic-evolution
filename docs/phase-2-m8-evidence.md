@@ -1,11 +1,21 @@
-# Phase 2 M8 — Founder and structural-evidence experiments
+# Phase 2 — Founder, structural-evidence, and plant-ecology experiments
 
 Multi-seed evidence for Phase 2's success criterion (spec §8: *brains grow in
 complexity and distinct species appear*). This report records what headless runs
 measured. It is not a judgment: whether anything interesting evolved is for a human
 watching the sim to decide (spec §7.8 tier 3). Nothing here is ranked.
 
-**Headline.** Every evolving world was viable, and the minimal chemo-led founder was
+**Headline (M9).** With M9's plant ecology shipped — regrowth that depends on what a
+plant has left, plants that cluster on fertile ground, and starved plants that die and
+reseed near their parents — **the structural null is distinguished for the first
+time**: on every seed, evolving worlds sustain more agents than worlds whose children
+take a random survivor's structure (824–964 against 424–792), and capture as much of
+the food supply or more. Added structure exceeds the null's on two of three seeds.
+Perception is kept on two seeds and still shed on the third. See
+[Plant ecology calibration (M9)](#plant-ecology-calibration-m9); everything above it
+measured the Phase 1 plants.
+
+**Headline (M8).** Every evolving world was viable, and the minimal chemo-led founder was
 the most viable configuration, so it now ships. Brains grow, and on the shipped
 configuration that growth is still **not distinguished from the structural null**
 (spec §7.8): lineages that inherit their own structure grow no more than lineages
@@ -232,10 +242,113 @@ that plants are fixed sites regrowing in place (spec §5.1 as read in
 food. Changing that, for example by relocating depleted sites or adding spec §5.3's
 nutrient heterogeneity, is a design change for discussion, not tuning.
 
+## Plant ecology calibration (M9)
+
+Spec §5.1 and §5.3's plant ecology, calibrated before shipping. Seeds 42/117/314,
+2,000 founders, 300,000 ticks, both controls, revision `257114b` (the mechanisms in
+place, defaults still off), run as
+
+```bash
+JOBS=9 scripts/experiment.sh OUT 300000 2000 5000 "42 117 314" \
+  experiments/plant-ecology/<config>.json ...
+```
+
+Each configuration file states the input rate and all seven M9 plant fields, so its
+plant settings stay fixed when plant defaults change. Every other param comes from
+the running revision's defaults, so exact reproduction needs revision `257114b`; at
+that revision each file resolves to exactly the params its runs used (checked
+against the run headers). Configs, summaries, and wall-clock times:
+[`experiments/plant-ecology/`](../experiments/plant-ecology/).
+
+| Config | Plants |
+|---|---|
+| baseline | Phase 1's plants: input 12,000/s, everything else off |
+| patchy-only | patchiness 4, patch scale 150 |
+| lag-only | grazing lag 0.8 |
+| turnover-only | death below 0.1 of capacity for 30 s, dispersal 0.9 within 40 |
+| eco | all three together, input 12,000/s |
+| eco-input-18k | eco at 18,000/s |
+| **eco-input-24k** | **eco at 24,000/s — now the shipped defaults** |
+| eco-strong | grazing lag 0.9, patchiness 8, death after 15 s |
+| eco-sparse | eco on 1,000 sites of 240 |
+
+The shipped values were chosen by rules fixed before the input-scaling round was
+read: viable on every seed; mechanisms visibly operating (clustering below 0.85,
+sustained reseeding, unsaturated stock); ecology values from spec §5.5's
+relationships; and the lowest tested input that keeps the evolving population near
+half the baseline. Wired sensors and the evolving-versus-null gaps were not criteria:
+they are what this section reports.
+
+Reseeding in the shipped configuration is sustained rather than an early burst. Per
+quarter of the run, from the evolving worlds' per-sample metrics: seed 42 reseeded
+914, 1,400, 1,675, 1,688; seed 117 436, 792, 888, 833; seed 314 2,189, 1,902, 1,765,
+1,719. Most land far from where the plant died, near a randomly chosen plant on
+fertile ground, so the patch map itself shifts slowly.
+
+| Per seed (42, 117, 314) | evolving population | null population | scalar control | evolving supply captured | null supply captured | plant clustering | plants reseeded (evolving) |
+|---|---|---|---|---|---|---|---|
+| baseline | 1439, 1716, 1612 | 1462, 1432, 1934 | 19–32 | 0.69, 0.69, 0.69 | 0.63, 0.64, 0.70 | 1.00–1.01 | 0 |
+| patchy-only | 1890, 1869, 1801 | 1899, 1678, 2152 | 123–537 | 0.85, 0.78, 0.79 | 0.84, 0.76, 0.80 | 0.78–0.86 | 0 |
+| lag-only | 359, 338, 315 | 107, 175, 217 | 2–8 | 0.21, 0.19, 0.17 | 0.11, 0.15, 0.18 | 1.00–1.01 | 0 |
+| turnover-only | 1483, 1415, 1408 | 982, 960, 1394 | 12–16 | 0.68, 0.66, 0.70 | 0.52, 0.59, 0.63 | 0.87–0.94 | 1051–3721 |
+| eco | 468, 416, 431 | 175, 362, 68 | 2–54 | 0.25, 0.22, 0.18 | 0.16, 0.20, 0.05 | 0.70–0.76 | 4682–9211 |
+| eco-input-18k | 676, 669, 736 | 441, 536, 408 | 5–99 | 0.25, 0.23, 0.24 | 0.23, 0.19, 0.18 | 0.68–0.76 | 3151–6431 |
+| **eco-input-24k** | **964, 824, 936** | **792, 424, 478** | 50–152 | **0.25, 0.23, 0.24** | **0.23, 0.17, 0.18** | 0.68–0.76 | 2949–7575 |
+| eco-strong | 0, 0, 0 | 0, 0, 0 | 0–1 | 0 | 0 | 0.42–0.53 (empty worlds) | 1703–10217 |
+| eco-sparse | 493, 485, 3 | 45, 43, 24 | 4–11 | 0.18, 0.26, 0.00 | 0.05, 0.07, 0.02 | 0.72–0.80 | 1118–6699 |
+
+Structure and perception, evolving against the structural null (founder: 1 wired
+sensor, 0 hidden neurons, 25 genes):
+
+| Per seed (42, 117, 314) | wired sensors, evolving | wired sensors, null | wired hidden, evolving | wired hidden, null | genes, evolving | genes, null | persistent species, evolving / null |
+|---|---|---|---|---|---|---|---|
+| baseline | 0.68, 0.06, 0.35 | 0.83, 0.50, 1.00 | 2.33, 0.56, 0.19 | 1.10, 0.99, 1.96 | 35.5, 26.4, 26.7 | 31.5, 28.9, 34.5 | 8–27 / 19–36 |
+| lag-only | 0.99, 0.01, 0.99 | 0.91, 0.99, 1.00 | 1.29, 0.84, 1.86 | 0.10, 0.82, 0.11 | 30.5, 27.8, 32.4 | 25.5, 27.8, 26.6 | 7–8 / 5–10 |
+| turnover-only | 0.20, 0.13, 0.77 | 0.85, 0.98, 0.02 | 1.94, 0.86, 0.53 | 0.51, 0.18, 0.22 | 34.7, 27.2, 29.1 | 27.4, 26.7, 26.3 | 11–30 / 20–41 |
+| **eco-input-24k** | **0.93, 0.99, 0.34** | **0.98, 0.99, 1.00** | **0.81, 0.47, 1.44** | **0.41, 0.97, 0.78** | **29.3, 28.1, 31.6** | **26.5, 29.4, 30.0** | 6–10 / 17–28 |
+
+- **Inherited structure now pays ecologically.** With grazing lag or turnover on,
+  evolving worlds outnumber the structural null on every seed of every viable
+  configuration (eco-sparse seed 314, where both collapsed, is the exception), and
+  capture as much of the supply or more on every other seed pair but one (lag-only
+  seed 314, 0.17 against 0.18). Under Phase 1's plants and under patchiness alone the null
+  matched them. A lineage's own wiring now matters for how many of it the world can
+  feed.
+- **Added structure exceeds the null more often.** In the shipped configuration,
+  evolving worlds have more wired hidden neurons and larger genomes than the null on
+  two of three seeds; turnover alone gives more of both on all three. Under Phase 1's
+  plants, neither was distinguished.
+- **Perception is no longer reliably shed, nor reliably kept.** Shipped evolving
+  worlds keep sensors wired on seeds 42 and 117 (0.93, 0.99) and shed them on 314
+  (0.34); at baseline they shed on all three. The null keeps its sensors throughout,
+  so wired sensors alone still do not separate useful perception from inherited
+  scenery.
+- **Patchiness alone makes foraging easier, not harder.** Clustered food let random
+  brains survive in the hundreds (123–537) and left evolving and null equal. It ships
+  only together with grazing lag and turnover, which make a patch something to find
+  and leave.
+- **Limits.** Grazing lag 0.9 with patchiness 8 and 15-second starvation killed
+  every evolving and structural-null world on all three seeds, and two of three
+  scalar controls (the third held a single agent); fewer, larger sites with the
+  ecology on nearly killed seed 314. The shipped values sit inside that boundary.
+- **Species.** Evolving worlds hold fewer persistent species than the null under the
+  ecology (6–10 against 17–28 shipped); at the 0.5 threshold, species counts still
+  do not favour the evolving world.
+
 ## Unranked shortlist for watching
 
 In the browser against the scalar control, at shipped defaults unless a params
-override is given:
+override is given. The M9 entries come first; the rest describe Phase 1's plants and
+need the baseline config (`experiments/plant-ecology/baseline.json`) to reproduce:
+
+- **M9 seed 42**: sensors kept wired (0.93) and the largest population (964). Do
+  agents move between patches, turn toward fat plants, and leave stripped ones?
+- **M9 seed 117**: the widest gap over the null (824 against 424). What does the
+  evolving world do that a world of reshuffled brains cannot?
+- **M9 seed 314**: sensors shed (0.34 wired) yet more agents than the null. What
+  replaces perception here?
+- **Patch drift, any seed**: do patches visibly creep as overgrazed plants die and
+  survivors reseed nearby?
 
 - **seed 42** — the largest genomes in the shipped rerun (max 51 genes). Are the added
   neurons and clocks visible in behavior?
@@ -252,12 +365,16 @@ override is given:
 ## Limitations
 
 - Three seeds per configuration; final samples only. Trajectories are reproducible
-  from the command above but are not committed (`*.jsonl` is ignored).
+  from the M8 and M9 commands above, at their stated revisions, but are not committed
+  (`*.jsonl` is ignored).
 - The M8 functional-wiring table covers one seed and species-founding genomes; the
   perception sweep's population-wide `wired_*` metrics cover three seeds, at the final
   sample only.
 - `supply_captured` is a population measure: it rises with per-agent foraging and with
   population size, which is itself an outcome of foraging. Compare cohorts at similar
   populations.
+- The M9 calibration ran 300,000 ticks, final samples only; the shipped configuration
+  has not yet been run longer. Its random-brain control survives at 50–152 agents,
+  more than under Phase 1's plants, because clustered food is easier to stumble on.
 - Species persistence uses 5k-tick sampling, so species living between samples are
   counted only in created/extinct totals.
