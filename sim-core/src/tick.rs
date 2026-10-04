@@ -102,6 +102,7 @@ impl World {
         self.grow_plants(); // 8, deposit
         self.update_chemo(); // 8, diffuse and decay
         self.charge_metabolism(); // 9
+        self.decay_corpses(); // 9
         self.resolve_deaths_with_history_observer(&mut on_species, &mut on_history); // 10
         self.resolve_births_with_history_observer(
             &mut on_refusal,
@@ -138,6 +139,9 @@ impl World {
                 plants: &self.plants,
                 plant_radius: self.params.plants.radius,
                 plant_signature: Vec3::from(self.params.plants.signature),
+                corpses: &self.corpses,
+                corpse_radius: self.params.corpses.radius,
+                corpse_signature: Vec3::from(self.params.corpses.signature),
             };
             perceive::perceive(
                 self.sensors.get(self.agents.sensors[i]),
@@ -323,35 +327,47 @@ impl World {
         removed
     }
 
-    /// Moves energy from plants into the agents eating them. Step 7 of the tick
-    /// (spec §2.4).
+    /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
+    /// tick (spec §2.4).
     ///
     /// A transfer, not a flow: nothing is recorded in the ledger, because the same
     /// joules are still in the world afterwards. If this is ever written wrongly the
     /// conservation test says so without knowing that eating exists.
     ///
-    /// Agent-index order, because two agents can reach the same plant in one tick and
-    /// the plant may not hold enough for both. Whoever is asked first gets what is
-    /// there; resolving in any other order would make the outcome depend on pool
-    /// layout.
+    /// Agent-index order, because two agents can reach the same food in one tick and
+    /// it may not hold enough for both. Whoever is asked first gets what is there;
+    /// resolving in any other order would make the outcome depend on pool layout.
     pub fn resolve_feeding(&mut self) {
         let feeding = self.params.feeding.clone();
         let plant_radius = self.params.plants.radius;
+        let corpse_radius = self.params.corpses.radius;
         for id in self.pool.iter_live() {
             let i = id.index();
             if self.intents.ingest[i] <= feeding.gate {
                 continue;
             }
-            let reach = self.agents.size[i] + plant_radius + feeding.reach;
+            let body = self.agents.size[i] + feeding.reach;
             feeding::ingest(
                 self.agents.position[i],
-                reach,
                 feeding.rate,
                 &mut self.agents.energy[i],
                 &mut self.agents.energy_reserve[i],
-                &mut self.plants,
+                &mut feeding::Larder {
+                    plants: &mut self.plants,
+                    plant_reach: body + plant_radius,
+                    corpses: &mut self.corpses,
+                    corpse_reach: body + corpse_radius,
+                },
             );
         }
+    }
+
+    /// Decomposes every corpse into dissipation. Step 9 of the tick (spec §2.4, §5.1).
+    pub fn decay_corpses(&mut self) {
+        let dissipated = self
+            .corpses
+            .decay(&self.params.corpses, self.params.world.dt);
+        self.ledger.record_dissipated(dissipated);
     }
 
     /// Notes which agents asked to reproduce and can afford to. Part of step 4's

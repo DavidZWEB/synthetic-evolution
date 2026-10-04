@@ -175,6 +175,7 @@ impl StorageLayout {
             u64::from(params.plants.max_plants),
             u64::from(crate::fertility::Fertility::cells_per_axis(params)),
         )?;
+        requests.corpses(grid_cells, u64::from(params.corpses.max_corpses))?;
 
         let field_cells = params
             .chemo
@@ -291,6 +292,17 @@ impl AllocationRequests {
         self.buffer::<u32>(starts)?;
         self.buffer::<u32>(cells)?;
         self.buffer::<u32>(entries)
+    }
+
+    /// Corpse slots: position, energy pair, liveness, free list, and grid scratch,
+    /// with a grid of their own (spec §5.1).
+    fn corpses(&mut self, cells: u64, corpses: u64) -> Result<(), ParamError> {
+        self.buffer::<Vec3>(corpses)?;
+        self.buffer::<f32>(corpses)?;
+        self.buffer::<f64>(corpses)?;
+        self.buffer::<u8>(corpses)?;
+        self.buffers::<u32>(corpses, 2)?;
+        self.spatial_hash(cells, corpses)
     }
 
     fn plants(&mut self, cells: u64, plants: u64, fertility_cells: u64) -> Result<(), ParamError> {

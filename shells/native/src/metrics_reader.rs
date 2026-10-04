@@ -229,6 +229,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
                     "dispersal_radius",
                 ][..],
             ),
+            // Pre-Phase-3 runs left no corpses.
+            (&["corpses"][..], &["energy_fraction"][..]),
         ] {
             let mut object = Some(&mut *params);
             for key in path {
@@ -885,6 +887,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("add_sensor_rate");
+        records[0]["data"]["params"]
+            .as_object_mut()
+            .unwrap()
+            .remove("corpses");
         records[0]["data"]["params"]["plants"]
             .as_object_mut()
             .unwrap()
@@ -919,6 +925,7 @@ mod tests {
         assert_eq!(data.header.params.plants.death_seconds, 0.0);
         assert_eq!(data.header.params.plants.local_dispersal, 0.0);
         assert_eq!(data.header.params.plants.dispersal_radius, 0.0);
+        assert_eq!(data.header.params.corpses.energy_fraction, 0.0);
         assert_eq!(
             data.samples[0]
                 .evolving

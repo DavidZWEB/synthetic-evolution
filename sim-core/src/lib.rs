@@ -15,6 +15,7 @@ pub mod checkpoint;
 pub mod chemo;
 pub mod command;
 pub mod control;
+pub mod corpses;
 pub mod crossover;
 pub mod distance;
 pub mod effectors;

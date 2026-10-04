@@ -1,21 +1,56 @@
-//! Eating: moving energy from a plant into the agent touching it.
+//! Eating: moving energy from a plant or a corpse into the agent touching it.
 //!
 //! Step 7 of the tick, and the first **transfer** in the simulation — energy changes
 //! hands without entering or leaving the world. That distinction is the whole reason
 //! the ledger records flows rather than events: a transfer cancels, so one written
 //! wrongly shows up as drift without any test having to predict the mistake (spec §5.1).
 //!
-//! An agent eats the *nearest* plant in reach rather than every plant at once. It is the
-//! more physical reading of "absorb food in contact radius" (spec §4.2), and it means a
-//! crowded patch is not worth more per tick than a single plant — so a population cannot
-//! feed faster simply by standing where plants overlap.
+//! An agent eats the *nearest* food in reach rather than everything at once. It is the
+//! more physical reading of "absorb food/corpse in contact radius" (spec §4.2), and it
+//! means a crowded patch is not worth more per tick than a single plant — so a
+//! population cannot feed faster simply by standing where food overlaps. Plants and
+//! corpses compete on distance to their edge; a tie goes to the plant.
 //!
 //! Deliberately not here: whether the agent asked. The gate on the ingest drive belongs
-//! with the caller that reads the intent buffer, and biting other agents is Phase 3.
+//! with the caller that reads the intent buffer, and biting is its own step.
 
 use glam::Vec3;
 
+use crate::corpses::Corpses;
 use crate::plants::Plants;
+use crate::spatial::SpatialHash;
+
+/// The food one agent can reach this tick. Each reach is the agent's body plus that
+/// food's radius plus the feeding reach, so comparing distance minus reach compares
+/// distance to the food's edge.
+pub struct Larder<'a> {
+    pub plants: &'a mut Plants,
+    pub plant_reach: f32,
+    pub corpses: &'a mut Corpses,
+    pub corpse_reach: f32,
+}
+
+/// The nearest entry within `reach` that still holds food, and its squared distance.
+fn nearest_within(
+    hash: &SpatialHash,
+    positions: &[Vec3],
+    at: Vec3,
+    reach: f32,
+    has_food: impl Fn(usize) -> bool,
+) -> Option<(usize, f32)> {
+    let mut best: Option<(usize, f32)> = None;
+    hash.for_each_within(positions, at, reach, |index, _, d2| {
+        let index = index as usize;
+        // Empty food is still there, but choosing it would block a fuller one beside it.
+        if !has_food(index) {
+            return;
+        }
+        if best.is_none_or(|(_, best_d2)| d2 < best_d2) {
+            best = Some((index, d2));
+        }
+    });
+    best
+}
 
 /// The nearest plant within `reach` of `at`, or `None` if there is nothing to eat.
 ///
@@ -23,24 +58,14 @@ use crate::plants::Plants;
 /// in plant-index order whenever a plant reseeds, so that is a function of where the
 /// plants are rather than an artifact of when the query happened to run.
 pub fn nearest(at: Vec3, reach: f32, plants: &Plants) -> Option<usize> {
-    let mut best: Option<(usize, f32)> = None;
-    plants
-        .hash()
-        .for_each_within(plants.position(), at, reach, |index, _, d2| {
-            let index = index as usize;
-            // An empty plant is still a plant, but there is nothing to take from it and
-            // choosing it would block a fuller one right beside it.
-            if plants.energy_at(index) <= 0.0 {
-                return;
-            }
-            if best.is_none_or(|(_, best_d2)| d2 < best_d2) {
-                best = Some((index, d2));
-            }
-        });
-    best.map(|(index, _)| index)
+    nearest_within(plants.hash(), plants.position(), at, reach, |index| {
+        plants.energy_at(index) > 0.0
+    })
+    .map(|(index, _)| index)
 }
 
-/// Moves up to `wanted` from the nearest plant in reach into `agent_energy`.
+/// Moves up to `wanted` from the nearest food in reach, plant or corpse, into
+/// `agent_energy`.
 ///
 /// Both stores are `f32`, so independently debiting and crediting a nominal amount can
 /// round to different endpoint deltas. The agent's reserve keeps any debit too small
@@ -48,21 +73,50 @@ pub fn nearest(at: Vec3, reach: f32, plants: &Plants) -> Option<usize> {
 /// closed economy without permanently stalling at a float boundary (spec §5.1).
 pub fn ingest(
     at: Vec3,
-    reach: f32,
     wanted: f32,
     agent_energy: &mut f32,
     agent_energy_reserve: &mut f64,
-    plants: &mut Plants,
+    larder: &mut Larder<'_>,
 ) -> f64 {
     if wanted <= 0.0 {
         return 0.0;
     }
-    // Found first, taken second: the search borrows the plants to read and the take
-    // borrows them to write, and they cannot overlap.
-    let Some(index) = nearest(at, reach, plants) else {
-        return 0.0;
-    };
-    plants.transfer_to(index, agent_energy, agent_energy_reserve, wanted)
+    // Found first, taken second: the search borrows the food to read and the take
+    // borrows it to write, and they cannot overlap.
+    let plants = &*larder.plants;
+    let plant = nearest_within(
+        plants.hash(),
+        plants.position(),
+        at,
+        larder.plant_reach,
+        |i| plants.energy_at(i) > 0.0,
+    )
+    .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach));
+    let corpses = &*larder.corpses;
+    let corpse = nearest_within(
+        corpses.hash(),
+        corpses.position(),
+        at,
+        larder.corpse_reach,
+        |i| corpses.energy_at(i) > 0.0,
+    )
+    .map(|(index, d2)| (index, d2.sqrt() - larder.corpse_reach));
+    match (plant, corpse) {
+        (Some((index, plant_edge)), Some((_, corpse_edge))) if plant_edge <= corpse_edge => larder
+            .plants
+            .transfer_to(index, agent_energy, agent_energy_reserve, wanted),
+        (_, Some((index, _))) => {
+            larder
+                .corpses
+                .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
+        }
+        (Some((index, _)), None) => {
+            larder
+                .plants
+                .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
+        }
+        (None, None) => 0.0,
+    }
 }
 
 #[cfg(test)]
@@ -70,6 +124,12 @@ mod tests {
     use super::*;
     use crate::params::SimParams;
     use crate::rng::Rng;
+
+    fn no_corpses() -> Corpses {
+        let mut params = SimParams::default();
+        params.corpses.max_corpses = 0;
+        Corpses::new(&params)
+    }
 
     /// A world of plants at exactly these positions, each holding `energy`.
     fn plants_at(positions: &[Vec3], energy: f32) -> Plants {
@@ -90,13 +150,18 @@ mod tests {
         let mut agent_energy = 0.0;
         let mut agent_reserve = 0.0;
         let before = plants.total_energy();
+        let mut corpses = no_corpses();
         ingest(
             at,
-            reach,
             wanted,
             &mut agent_energy,
             &mut agent_reserve,
-            plants,
+            &mut Larder {
+                plants,
+                plant_reach: reach,
+                corpses: &mut corpses,
+                corpse_reach: reach,
+            },
         );
         let removed = before - plants.total_energy();
         assert_eq!(removed, agent_energy as f64 + agent_reserve);
@@ -202,5 +267,66 @@ mod tests {
             0.0
         );
         assert_eq!(plants.total_energy(), before);
+    }
+
+    /// A pool holding one corpse of `energy` at `at`.
+    fn corpse_at(at: Vec3, energy: f32) -> Corpses {
+        let mut params = SimParams::default();
+        params.corpses.max_corpses = 1;
+        params.corpses.energy_fraction = 1.0;
+        let mut corpses = Corpses::new(&params);
+        let (mut source, mut reserve) = (energy, 0.0);
+        corpses.leave(at, &mut source, &mut reserve, &params.corpses);
+        corpses
+    }
+
+    fn eat(at: Vec3, plants: &mut Plants, corpses: &mut Corpses) -> f64 {
+        let (mut energy, mut reserve) = (0.0, 0.0);
+        ingest(
+            at,
+            2.0,
+            &mut energy,
+            &mut reserve,
+            &mut Larder {
+                plants,
+                plant_reach: 5.0,
+                corpses,
+                corpse_reach: 5.0,
+            },
+        )
+    }
+
+    #[test]
+    fn a_nearer_corpse_is_eaten_before_a_plant() {
+        let mut plants = plants_at(&[Vec3::new(504.0, 500.0, 0.0)], 60.0);
+        let mut corpses = corpse_at(Vec3::new(501.0, 500.0, 0.0), 50.0);
+        let plant_before = plants.total_energy();
+        let taken = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
+        assert!(taken > 0.0);
+        assert_eq!(plants.total_energy(), plant_before, "ate the farther plant");
+        assert!((corpses.total_energy() - (50.0 - taken)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_tie_goes_to_the_plant() {
+        let at = Vec3::new(500.0, 500.0, 0.0);
+        let mut plants = plants_at(&[Vec3::new(503.0, 500.0, 0.0)], 60.0);
+        let mut corpses = corpse_at(Vec3::new(497.0, 500.0, 0.0), 50.0);
+        eat(at, &mut plants, &mut corpses);
+        assert_eq!(
+            corpses.total_energy(),
+            50.0,
+            "a tied corpse was eaten first"
+        );
+    }
+
+    #[test]
+    fn a_corpse_alone_feeds_and_conserves() {
+        let mut plants = plants_at(&[Vec3::new(900.0, 900.0, 0.0)], 60.0);
+        let mut corpses = corpse_at(Vec3::new(500.0, 501.0, 0.0), 50.0);
+        let before = corpses.total_energy() + plants.total_energy();
+        let taken = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
+        assert!(taken > 0.0, "a corpse in reach fed nothing");
+        assert!((corpses.total_energy() + plants.total_energy() + taken - before).abs() < 1e-6);
     }
 }

@@ -11,6 +11,7 @@ use crate::arena::{Arena, Block};
 use crate::brain;
 use crate::command::{Command, Kind};
 use crate::control::BrainInheritance;
+use crate::corpses::SavedCorpses;
 use crate::effectors;
 use crate::genome::{self, Gene};
 use crate::ids::{BirthId, NULL_ID, SpeciesId};
@@ -28,7 +29,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 5;
+pub const CHECKPOINT_FORMAT: u32 = 6;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -158,6 +159,12 @@ struct Checkpoint {
     plant_reserve: Vec<f64>,
     plant_starved: Vec<u32>,
     plants_reseeded: u64,
+    corpse_position: Vec<Vec3>,
+    corpse_energy: Vec<f32>,
+    corpse_reserve: Vec<f64>,
+    corpse_alive: Vec<u8>,
+    corpse_free: Vec<u32>,
+    corpses_refused: u64,
     chemo: Vec<f32>,
     species_next_id: u32,
     species: Vec<SpeciesState>,
@@ -258,6 +265,12 @@ impl World {
             plant_reserve: self.plants.energy_reserve().to_vec(),
             plant_starved: self.plants.starved().to_vec(),
             plants_reseeded: self.plants.reseeded(),
+            corpse_position: self.corpses.position().to_vec(),
+            corpse_energy: self.corpses.energy().to_vec(),
+            corpse_reserve: self.corpses.energy_reserve().to_vec(),
+            corpse_alive: self.corpses.alive().to_vec(),
+            corpse_free: self.corpses.free_slots().to_vec(),
+            corpses_refused: self.corpses.refused(),
             chemo: self.field.concentrations().to_vec(),
             species_next_id: self.classifier.next_id(),
             species,
@@ -491,6 +504,21 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
             starved: &c.plant_starved,
             reseeded: c.plants_reseeded,
         })
+        .map_err(invalid)?;
+    let size = world.params.world.size;
+    world
+        .corpses
+        .restore(
+            SavedCorpses {
+                position: &c.corpse_position,
+                energy: &c.corpse_energy,
+                reserve: &c.corpse_reserve,
+                alive: &c.corpse_alive,
+                free: &c.corpse_free,
+                refused: c.corpses_refused,
+            },
+            size,
+        )
         .map_err(invalid)?;
     world
         .field

@@ -98,6 +98,35 @@ fn plant_ecology_conserves_energy() {
 }
 
 #[test]
+fn corpses_conserve_energy_as_they_form_feed_and_decay() {
+    // A death splits an agent's energy between a corpse and dissipation; eating moves
+    // corpse energy into agents; decomposition dissipates the rest (spec §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 200;
+    params.plants.max_plants = 400;
+    params.corpses.decay = 0.2;
+    let mut world = World::new(9, params).expect("valid params");
+    world.seed_founders(150);
+    let mut most = 0;
+    for t in 0..6_000 {
+        let victim = world.pool().iter_live().nth(t / 40 % 7);
+        if t % 40 == 0
+            && let Some(id) = victim
+        {
+            world.despawn(id);
+        }
+        world.step();
+        most = most.max(world.corpses().count());
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+    }
+    assert!(most > 0, "no corpse ever formed; the test proved nothing");
+}
+
+#[test]
 fn fractional_growth_in_a_large_plant_pool_is_recorded_exactly() {
     let mut params = SimParams::default();
     params.world.max_agents = 1;
