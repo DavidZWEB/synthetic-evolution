@@ -888,3 +888,56 @@ fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
         let _ = fs::remove_file(metrics);
     }
 }
+
+#[test]
+fn diagnose_refuses_a_retuned_run_and_readers_refuse_an_impossible_retune() {
+    let (output, metrics) = retune_run(Some((r#"{"plants":{"scent_rate":0.0}}"#, "20")), &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let diagnosis = Command::new(env!("CARGO_BIN_EXE_native"))
+        .arg("diagnose")
+        .arg(&metrics)
+        .output()
+        .expect("diagnose");
+    assert!(!diagnosis.status.success(), "diagnose read a retuned run");
+    assert!(String::from_utf8_lossy(&diagnosis.stderr).contains("does not read retuned runs"));
+
+    // Edit the recorded retune into two the run could not have applied.
+    let text = fs::read_to_string(&metrics).expect("metrics");
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    for (edit, message) in [
+        (
+            ("at_tick", serde_json::json!(41)),
+            "after the run's last tick",
+        ),
+        (
+            ("max_plants", serde_json::json!(7)),
+            "not a legal live retune",
+        ),
+    ] {
+        let mut edited = lines.clone();
+        let retune = &mut edited[0]["data"]["retune"];
+        match edit.0 {
+            "at_tick" => retune["at_tick"] = edit.1,
+            _ => retune["params"]["plants"]["max_plants"] = edit.1,
+        }
+        let path = temporary("bad-retune.jsonl");
+        let body: Vec<String> = edited.iter().map(|value| value.to_string()).collect();
+        fs::write(&path, body.join("\n") + "\n").expect("write edited metrics");
+        let read = summarize(&[&path]);
+        assert!(!read.status.success(), "an impossible retune was accepted");
+        assert!(
+            String::from_utf8_lossy(&read.stderr).contains(message),
+            "{}",
+            String::from_utf8_lossy(&read.stderr)
+        );
+        fs::remove_file(path).expect("remove edited metrics");
+    }
+    fs::remove_file(metrics).expect("remove metrics");
+}

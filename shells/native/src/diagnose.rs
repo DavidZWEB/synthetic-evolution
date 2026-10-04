@@ -146,6 +146,15 @@ pub(crate) fn control_label(protocol: &str) -> &'static str {
 
 pub fn run(args: DiagnoseArgs) -> Result<()> {
     let data = read_metrics(&args.metrics)?;
+    // Idle thresholds, observation windows, and noise floors all derive from one set of
+    // params; a run that changed them partway would be judged against the wrong ones.
+    if data.header.retune.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "diagnose does not read retuned runs; compare them with summarize",
+        )
+        .into());
+    }
     let report = diagnose(&data.header, &data.samples);
     if args.json {
         serde_json::to_writer_pretty(io::stdout(), &report)?;

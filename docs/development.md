@@ -295,7 +295,9 @@ cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
 ```
 
 `summarize` treats a retuned run as its own configuration and measures supply and
-plant capacity under the params in force. `--retune` cannot be combined with
+plant capacity under the params in force; `diagnose` refuses retuned runs, whose
+thresholds would assume one set of params, and every reader refuses a recorded retune
+the run could not have applied. `--retune` cannot be combined with
 `--history`, whose archive records a single set of params, and no output may overwrite
 the retune file.
 

@@ -89,6 +89,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                         format!("metrics header contains {error}"),
                     )
                 })?;
+                validate_retune(&next)?;
                 header = Some(*next);
             }
             MetricsRecord::Header(_) if !samples.is_empty() => {
@@ -273,6 +274,32 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
         }
     }
     Ok(serde_json::from_value(value)?)
+}
+
+/// A recorded retune must be one the run could have applied: within the run, and a
+/// legal live retune of the world its params build.
+fn validate_retune(header: &RunHeader) -> Result<()> {
+    let Some(retune) = &header.retune else {
+        return Ok(());
+    };
+    let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+    if retune.at_tick > header.ticks {
+        return Err(invalid("metrics retune comes after the run's last tick".to_owned()).into());
+    }
+    let params = &header.params;
+    // The grid a world built from these params would have, which bounds a retune.
+    let cell = sim_core::spatial::SpatialHash::new(
+        params.world.size,
+        params.sensing.max_sense_radius(),
+        1,
+    )
+    .cell_size();
+    params.check_retune(&retune.params, cell).map_err(|error| {
+        invalid(format!(
+            "metrics retune is not a legal live retune: {error}"
+        ))
+    })?;
+    Ok(())
 }
 
 fn validate_complexity(metrics: &WorldMetrics) -> Result<()> {
