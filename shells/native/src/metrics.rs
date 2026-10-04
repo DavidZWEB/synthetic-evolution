@@ -145,6 +145,21 @@ pub struct WorldMetrics {
     /// record availability, so readers must use the schema to tell the two apart.
     #[serde(default)]
     pub history: Option<HistoryAvailability>,
+    /// Plant ecology (spec §5.1, §5.3). Files written before M9 did not record it;
+    /// its absence is unknown, not a world without plants.
+    #[serde(default)]
+    pub plants: Option<PlantMetrics>,
+}
+
+/// How the plants are spread and how fast they turn over, at one sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlantMetrics {
+    /// Plants that have died and reseeded since the world was built.
+    pub reseeded: u64,
+    /// Clark–Evans ratio: the mean distance from each plant to its nearest neighbour,
+    /// over that expected for the same density scattered at random on the torus. Near
+    /// 1 is random, below 1 clustered; absent with fewer than two plants.
+    pub clustering: Option<f64>,
 }
 
 #[derive(Default)]
@@ -315,7 +330,57 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         }),
         complexity: Some(complexity::sample_complexity(world)),
         history: None,
+        plants: Some(PlantMetrics {
+            reseeded: world.plants().reseeded(),
+            clustering: plant_clustering(world.plants(), world.params().world.size),
+        }),
     })
+}
+
+/// The Clark–Evans aggregation ratio of `plants` on a torus of side `size`.
+///
+/// Each nearest neighbour is found through the plant grid, widening the search until
+/// something answers, so a sample costs about one grid query per plant rather than
+/// comparing every pair.
+fn plant_clustering(plants: &sim_core::Plants, size: f32) -> Option<f64> {
+    let positions = plants.position();
+    if positions.len() < 2 {
+        return None;
+    }
+    let first = plants.hash().cell_size().min(size * 0.5);
+    let mut total = 0.0f64;
+    for (index, &at) in positions.iter().enumerate() {
+        let mut radius = first;
+        let nearest = loop {
+            let mut best = f32::INFINITY;
+            plants
+                .hash()
+                .for_each_within(positions, at, radius, |other, _, d2| {
+                    if other as usize != index {
+                        best = best.min(d2);
+                    }
+                });
+            if best.is_finite() || radius >= size * 0.5 {
+                break best;
+            }
+            radius = (radius * 2.0).min(size * 0.5);
+        };
+        // Beyond half the world on both axes the grid cannot look; compare directly.
+        let nearest = if nearest.is_finite() {
+            nearest
+        } else {
+            positions
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != index)
+                .map(|(_, &p)| sim_core::spatial::min_image(p - at, size).length_squared())
+                .fold(f32::INFINITY, f32::min)
+        };
+        total += f64::from(nearest).sqrt();
+    }
+    let observed = total / positions.len() as f64;
+    let density = positions.len() as f64 / (f64::from(size) * f64::from(size));
+    Some(observed / (0.5 / density.sqrt()))
 }
 
 fn finite(value: f64, name: &str) -> Result<f64> {
@@ -339,6 +404,55 @@ mod tests {
     use super::*;
 
     use super::complexity_case;
+
+    #[test]
+    fn plant_clustering_reads_one_for_scatter_and_less_for_patches() {
+        let ratio = |patchiness: f32| {
+            let mut params = SimParams::default();
+            params.plants.patchiness = patchiness;
+            let world = World::new(3, params).unwrap();
+            sample_world(&world)
+                .unwrap()
+                .plants
+                .unwrap()
+                .clustering
+                .unwrap()
+        };
+        let scattered = ratio(0.0);
+        assert!(
+            (0.9..1.1).contains(&scattered),
+            "uniform scatter read {scattered}"
+        );
+        let patchy = ratio(6.0);
+        assert!(patchy < 0.8, "patchy plants read {patchy}");
+    }
+
+    #[test]
+    fn plant_metrics_count_reseeds_and_skip_clustering_below_two_plants() {
+        let mut params = SimParams::default();
+        params.plants.max_plants = 50;
+        params.plants.initial_fill = 0.0;
+        params.plants.grazing_lag = 0.9;
+        params.plants.death_stock = 0.5;
+        params.plants.death_seconds = 0.1;
+        let mut world = World::new(4, params.clone()).unwrap();
+        for _ in 0..30 {
+            world.step();
+        }
+        let plants = sample_world(&world).unwrap().plants.unwrap();
+        assert_eq!(plants.reseeded, world.plants().reseeded());
+        assert!(
+            plants.reseeded > 0,
+            "nothing starved, so nothing was counted"
+        );
+
+        params.plants.max_plants = 1;
+        let lone = World::new(4, params).unwrap();
+        assert_eq!(
+            sample_world(&lone).unwrap().plants.unwrap().clustering,
+            None
+        );
+    }
 
     #[test]
     fn complexity_matches_the_shared_cross_target_reference() {

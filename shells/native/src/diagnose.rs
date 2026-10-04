@@ -931,6 +931,7 @@ mod tests {
             species: None,
             complexity: None,
             history: None,
+            plants: None,
         }
     }
 
