@@ -1,7 +1,8 @@
 # Phase 2 — Founder, structural-evidence, and plant-ecology experiments
 
 Multi-seed evidence for Phase 2's success criterion (spec §8: *brains grow in
-complexity and distinct species appear*). This report records what headless runs
+complexity and distinct species appear*). The M10 acceptance runs, and the decision
+they informed, are in [`phase-2-acceptance.md`](phase-2-acceptance.md). This report records what headless runs
 measured. It is not a judgment: whether anything interesting evolved is for a human
 watching the sim to decide (spec §7.8 tier 3). Nothing here is ranked.
 
