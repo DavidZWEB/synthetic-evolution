@@ -18,6 +18,7 @@ use crate::brain::{Neuron, Synapse};
 use crate::chemo::ChemoField;
 use crate::command::Command;
 use crate::control::BrainInheritance;
+use crate::corpses::Corpses;
 use crate::effectors::{Effector, Intents};
 use crate::founder::FounderPlan;
 use crate::genome::Gene;
@@ -139,6 +140,8 @@ pub struct World {
     pub(crate) field: ChemoField,
     /// The autotrophs. Every joule in the world enters through them (spec §5.1).
     pub(crate) plants: Plants,
+    /// What dead agents left behind, decomposing (spec §5.1).
+    pub(crate) corpses: Corpses,
     /// Every joule that entered and left. The acceptance criterion for M7 is that this
     /// agrees with the stock actually present (spec §5.1).
     pub(crate) ledger: EnergyLedger,
@@ -239,6 +242,7 @@ impl World {
             commands: Vec::new(),
             due_commands: Vec::new(),
             plants,
+            corpses: Corpses::new(&params),
             params,
         })
     }
@@ -305,6 +309,11 @@ impl World {
         &self.plants
     }
 
+    #[inline]
+    pub fn corpses(&self) -> &Corpses {
+        &self.corpses
+    }
+
     /// One agent's part offsets, as flat `xyz` triples relative to its own origin.
     ///
     /// Exactly one part, at the origin, for all of V1. The indirection is cashed in at
@@ -349,8 +358,8 @@ impl World {
         self.params.check_retune(params, self.hash.cell_size())
     }
 
-    /// Every joule the world currently holds, in plants, agents, and the transfer
-    /// rounding reserve.
+    /// Every joule the world currently holds, in plants, agents, corpses, and the
+    /// transfer rounding reserve.
     ///
     /// This fixed-order `f64` aggregation is shared by ledger opening, drift checks,
     /// and shell telemetry. Using a separate `f32` sum for any one of them manufactures
@@ -364,17 +373,20 @@ impl World {
                 self.agents.energy[i] as f64 + self.agents.energy_reserve[i]
             })
             .sum();
-        self.plants.total_energy() + agents
+        self.plants.total_energy() + agents + self.corpses.total_energy()
     }
 
-    /// Energy below the visible `f32` resolution, still owned by plants or agents.
+    /// Energy below the visible `f32` resolution, still owned by plants, agents, or
+    /// corpses.
     pub fn energy_reserve(&self) -> f64 {
         let agents: f64 = self
             .pool
             .iter_live()
             .map(|id| self.agents.energy_reserve[id.index()])
             .sum();
-        agents + self.plants.energy_reserve().iter().sum::<f64>()
+        agents
+            + self.plants.energy_reserve().iter().sum::<f64>()
+            + self.corpses.energy_reserve().iter().sum::<f64>()
     }
 
     /// Mean energy held by living agents, for on-demand instrumentation.
@@ -753,23 +765,40 @@ mod tests {
     }
 
     #[test]
-    fn removing_a_living_agent_dissipates_what_it_held() {
-        // `despawn` is public and starvation is not its only caller: Phase 3 corpses
-        // despawn agents that still hold energy, and a cull would too. Deleting those
-        // joules instead of dissipating them breaks §5.1 in the one way no functional
-        // test notices.
+    fn removing_a_living_agent_leaves_a_corpse_and_dissipates_the_rest() {
+        // `despawn` is public and starvation is not its only caller: kills and culls
+        // remove agents that still hold energy. A share lies where the agent fell and
+        // the rest leaves the world; deleting either instead breaks §5.1 in the one way
+        // no functional test notices.
         let mut w = small_world();
         let id = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
-        let held = w.agents().energy[id.index()];
+        let held = w.agents().energy[id.index()] as f64;
         assert!(held > 0.0);
         assert_eq!(w.energy_drift(), 0.0);
+        let fraction = w.params().corpses.energy_fraction as f64;
 
         w.despawn(id);
         assert!(
             w.energy_drift().abs() < 1e-3,
-            "despawn destroyed {held} joules without dissipating them"
+            "despawn destroyed energy without dissipating it"
         );
-        assert!((w.ledger().dissipated() - held as f64).abs() < 1e-3);
+        assert_eq!(w.corpses().count(), 1);
+        assert!((w.corpses().total_energy() - held * fraction).abs() < 1e-3);
+        assert!((w.ledger().dissipated() - held * (1.0 - fraction)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn with_no_corpse_share_a_removed_agent_dissipates_everything() {
+        let mut params = SimParams::default();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 0;
+        params.corpses.energy_fraction = 0.0;
+        let mut w = World::new(1, params).unwrap();
+        let id = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        let held = w.agents().energy[id.index()] as f64;
+        w.despawn(id);
+        assert_eq!(w.corpses().count(), 0);
+        assert!((w.ledger().dissipated() - held).abs() < 1e-3);
     }
 
     #[test]

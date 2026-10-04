@@ -14,10 +14,10 @@ use sim_core::params::SimParams;
 use sim_core::world::World;
 
 /// The shipped defaults, 200 founders, 300 ticks.
-pub const SHIPPED_GOLDEN: u64 = 0x70f3_6f82_fd69_0592;
+pub const SHIPPED_GOLDEN: u64 = 0x91a5_32b4_0249_4622;
 
 /// A configuration that reproduces, 200 founders, 500 ticks.
-pub const BREEDING_GOLDEN: u64 = 0xd583_a8e6_15b6_6665;
+pub const BREEDING_GOLDEN: u64 = 0x7af3_7b26_7b58_e935;
 
 pub const FOUNDERS: u32 = 200;
 pub const SHIPPED_TICKS: u64 = 300;

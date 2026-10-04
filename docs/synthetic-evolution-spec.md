@@ -152,6 +152,7 @@ A narrow projection of (a), containing only what's needed to draw a frame:
 ```
 agents: positions, orientation, size, signature, alive, speciesId, partOffset, partCount, incarnation
 plants: positions, energy
+corpses: positions, energy            (Phase 3)
 ```
 
 Plant energy is the current stock, used to show whether a plant is full or depleted (§5.1); it is not a history. Plant positions change when a plant dies and reseeds, so they travel with every frame too. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
@@ -211,10 +212,10 @@ Order of operations within one `step()`. This is normative — changing it chang
  4. Effectors     → intent buffer           (no world mutation yet)
  5. Movement      → integrate velocity, position
  6. Collision     → sphere overlap resolution
- 7. Interaction   → bite damage, ingest, grab
+ 7. Interaction   → bite damage, ingest (plants and corpses), grab
  8. Plants/fields → grow, plant deaths and reseeds, deposit, diffuse, decay
- 9. Metabolism    → charge costs, update energy
-10. Births/deaths → resolve deferred, in agent-index order
+ 9. Metabolism    → charge costs, update energy, regenerate living health, decay corpses
+10. Births/deaths → resolve deferred, in agent-index order; deaths leave corpses
 11. tick += 1
 ```
 
@@ -782,6 +783,8 @@ Two of these are disproportionately valuable and cheap:
 
 **Brain-gated reproduction.** Letting the network decide *when* to reproduce, rather than triggering it at an energy threshold, turns life-history strategy into an evolvable trait. You will get r-strategists and K-strategists in the same world, and reproductive timing tied to seasons or population density.
 
+**DECIDED (Phase 3): the bite.** A `bite` effector is a fifth action. Its gene carries `[azimuth, elevation, reach, _]`; Phase 3 founds it facing forward (azimuth and elevation 0) with `combat.reach`, and nothing mutates those params yet, the treatment sensor elevation gets. An agent whose bite drive exceeds `combat.gate`, whose cooldown has elapsed, and who holds at least `combat.attack_cost` energy, swings: it pays `attack_cost` (dissipated, whether or not it hits), restarts its cooldown of `combat.cooldown_seconds`, and damages the nearest other living agent whose centre lies within `reach` plus both radii and within `combat.arc` radians of its bite direction, by `combat.attack_damage`. Health is a fraction in `[0, 1]`, full at birth, regenerating at `combat.health_regen` per second only while above 0, so lethal damage cannot heal before step 10; an agent whose health reaches 0 dies in step 10, as a starved one does. Swings resolve in agent-index order; damage accumulates, so the order cannot decide who dies. Founders carry a bite effector only when `founder.bite` is set, so predation is a capability lineages start with and selection then prices — no mutation adds or removes effectors yet.
+
 ---
 
 ## 5. The world and its economy
@@ -794,7 +797,7 @@ sunlight → autotrophs → herbivores → carnivores
               └──── decomposition ◀──── corpses
 ```
 
-Energy enters at a fixed global rate and leaves only through metabolic dissipation. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
+Energy enters at a fixed global rate and leaves only through dissipation: metabolism, and from Phase 3 the cost of a bite, the share of a dying agent's energy it does not leave as a corpse, a corpse share refused by a full pool, and decomposition. Every one is recorded in the ledger. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
 
 Autotrophs (plants) should be simple non-brained entities that grow where nutrients are, get eaten, and reseed. They are the substrate, not agents.
 
@@ -805,6 +808,8 @@ Autotrophs (plants) should be simple non-brained entities that grow where nutrie
 - **Fertility is patchy** (§5.3), so plants cluster where the soil allows.
 
 Deaths are found after growth in step 8 (§2.4) and resolved in plant-index order. Reseeding draws from the world RNG only when a plant dies. Plant positions, starvation timers, and the count of reseeded plants are world state: hashed and checkpointed (§7.10); positions are also sent in the render snapshot every frame.
+
+**DECIDED (Phase 3): corpses and decomposition.** An agent that dies leaves a corpse holding `corpse_energy_fraction` of the energy it died with; the rest is dissipated, so the economy leaks at every kill. A starved agent dies empty and leaves nothing; corpses matter once bites kill agents that still hold energy. Corpses lie where the agent died, are discs of one configured radius `corpses.radius` (as plants share `plants.radius`), are eaten by `ingest` exactly as plants are (the nearest food within reach, plant or corpse), are visible to `vision_ray` in their own signature, and decompose: each loses `corpse_decay` of its energy per second to dissipation and is removed below `corpse_min_energy`. They live in a fixed pool of `max_corpses`; a death that finds the pool full dissipates its corpse share instead, and is counted. Corpses are unscented in Phase 3: a carrion channel would need a chemo sensor that can tune to it, and no operator retunes one yet. Decomposition returns nothing to the plants either — the diagram's loop back to autotrophs needs a nutrient model, which is later work — so every joule still enters through the plants. Corpses are world state: hashed, checkpointed, and sent in the snapshot.
 
 ### 5.2 Metabolic costs
 
@@ -856,8 +861,11 @@ the absolutes are the **relationships**, which are stated alongside.
 | `reproduce_threshold` | 200 | With a 50/50 split, a marginal birth leaves both lives at start energy |
 | `feeding_reach` | 4 | Local tolerance beyond body + plant radii; still far below sensor range |
 | `attack_cost` | 8 | **20–40% of typical prey energy** — the single most sensitive ratio in the sim |
-| `attack_damage` | 25 | Several bites to kill, so prey can escape |
+| `attack_damage` | 0.25 of full health | Several bites to kill, so prey can escape |
+| `combat_cooldown_seconds` | 0.5 | A biter cannot drain its own tank in a burst; a held drive costs `attack_cost` per swing |
+| `combat_health_regen` | 0.02 /second | A wounded agent recovers within about an idle lifetime, so an escape is real |
 | `corpse_energy_fraction` | 0.6 | The rest is lost; the economy must leak |
+| `corpse_decay` | 0.02 /second | Carrion lasts long enough to be found, not long enough to be a second plant layer |
 | `plant_energy_input_rate` | 24000 /sim-second | A ceiling, not an income: with grazing lag the world captures about a quarter of it, and the 2,000-founder web profile settles near 800–1,000 agents |
 | `plant_grazing_lag` | 0.8 | A stripped plant must regrow clearly slower than a lightly grazed one, or stripping a site costs nothing |
 | `plant_death_stock`, `plant_death_seconds` | 0.1, 30 s | Only sustained overgrazing kills: longer than one grazer's meal, within a few agent lifetimes |
@@ -1368,9 +1376,9 @@ identity), and a postcard-encoded record. It stores the construction seed, curre
 params, heredity mode, RNG, tick, innovation/birth counters, ledger, pool free order
 and incarnations, every live agent's physical and identity fields, genome and exact
 arena placements, recurrent neuron values, the parts arena, plant stocks, plant
-positions, starvation timers and reseed count, chemo concentrations, active species with their
-representatives and blocks, queued commands, the spatial grid's cell count, and the
-saved `state_hash`. It does not store derived data: compiled neurons, synapses,
+positions, starvation timers and reseed count, corpse slots and their free order,
+chemo concentrations, active species with their representatives and blocks, queued
+commands, the spatial grid's cell count, and the saved `state_hash`. It does not store derived data: compiled neurons, synapses,
 sensors, and effectors are recompiled from validated genomes, and the seed-derived
 fertility map and founder topology are regenerated by constructing the world from its
 seed; the hash confirms them.
@@ -1389,9 +1397,9 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 5 since M9
-plant turnover added its params and saved plant sites, starvation timers, and reseed
-count; earlier formats are refused), the originating run's
+manifest records the container and checkpoint formats (checkpoint format 6 since
+Phase 3 added corpses — their params and their slots, energies, and free order; earlier
+formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a
@@ -1441,7 +1449,7 @@ also deferred, not requirements of the Phase 2 save/load milestone.
 
 **Phase 2 — genetic architecture.** Variable-length genome, innovation IDs, add/remove neuron and connection, connection enable/disable, add/remove sensor, genetic distance, species clustering, phylogenetic tree, and basic manual portable checkpoints (§7.10). Plant ecology also lands here, ahead of the seasons and terrain in Phase 6: stock-dependent regrowth and plant turnover with local dispersal (§5.1), and patchy fertility (§5.3). The success criterion cannot be judged in a world where blind grazing does as well as perceiving. **Revisit founder composition here (§3.3)** once the structural operators exist; the minimal viable founder remains a multi-seed measurement, not an assumed starting configuration. Build order and implementation decisions under review live in [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md). *Success: brains grow in complexity, distinct species appear.*
 
-**Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.*
+**Phase 3 — predation.** Bite effector, damage, energy transfer, corpses, decomposition. Tune attack cost. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.* Measured as a species whose members take most of their energy from corpses, persisting for at least half a run on several seeds while plant-eaters persist beside it, against both controls (§7.8). Build order and decisions under review live in [`phase-3-implementation-plan.md`](phase-3-implementation-plan.md).
 
 **Phase 4 — signaling and sociality.** Pheromone emit/sense, sound, `set_signature`, kin sense. Verify spatial viscosity is tight enough. *Success: signal emission correlates with something — predator presence, food location. Look for warning coloration.*
 

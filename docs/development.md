@@ -271,7 +271,9 @@ on every gene the two share, and then mutates like an evolving child. The header
 `control` field becomes `structural_null_v2`, the JSON keys stay `random_control`, and
 `diagnose` labels the cohort "structural null". It writes metrics only; `--history` and `--save-run` are refused because archives and
 saved runs carry the scalar control. Run it as a separate invocation with the same
-seed, params, and founders as the scalar-control run it is compared with.
+seed, params, and founders as the scalar-control run it is compared with. In the
+browser, choose "structural null" under heredity to watch the same comparison; like
+the native shell it records no history and saves no runs.
 
 ### Mid-run interventions
 

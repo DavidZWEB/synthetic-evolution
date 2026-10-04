@@ -36,6 +36,7 @@ pub struct SimParams {
     pub species: SpeciesParams,
     pub feeding: FeedingParams,
     pub plants: PlantParams,
+    pub corpses: CorpseParams,
     pub chemo: ChemoParams,
 }
 
@@ -565,6 +566,9 @@ pub const MAX_PATCHINESS: f32 = 16.0;
 /// Largest fertility lattice per axis: a million values, drawn once per world.
 const MAX_PATCH_CELLS: u32 = 1_024;
 
+/// Largest accepted `corpses.max_corpses`: a bound on the pool's memory, not a tuning.
+const MAX_CORPSES: u32 = 1 << 20;
+
 /// The autotroph base. Non-brained entities that hold the energy entering the world.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -694,6 +698,33 @@ pub struct PlantParams {
     /// An emptied plant stays visible — the site persists and regrows, so blinking it
     /// out would be stranger than leaving it. Telling a fat plant from a bare one needs
     /// the nose, which is a selective pressure worth having rather than a defect.
+    pub signature: [f32; 3],
+}
+
+/// What a dead agent leaves behind (spec §5.1).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CorpseParams {
+    /// Fraction of a dying agent's energy left as a corpse, in `[0, 1]`; the rest is
+    /// dissipated, so the economy leaks at every kill. Zero leaves no corpses.
+    ///
+    /// **0.6, spec §5.5's starting value.** A starved agent dies empty, so until bites
+    /// kill agents that still hold energy this leaves nothing behind.
+    pub energy_fraction: f32,
+    /// Fraction of its energy a corpse loses to decomposition per second, in `[0, 1]`.
+    ///
+    /// **0.02**: carrion lasts long enough to be found, not long enough to become a
+    /// second plant layer (spec §5.5).
+    pub decay: f32,
+    /// Energy below which a corpse is not left, or is removed once it decays there.
+    /// Positive, so decomposition always ends.
+    pub min_energy: f32,
+    /// Corpse pool capacity. A death that finds every slot taken dissipates its whole
+    /// share, and is counted. Fixed for the life of a world.
+    pub max_corpses: u32,
+    /// Collision and ingest radius, as a plant's.
+    pub radius: f32,
+    /// The colour a `vision_ray` reports when it hits a corpse.
     pub signature: [f32; 3],
 }
 
@@ -846,6 +877,10 @@ impl SimParams {
                 next.plants.patchiness != self.plants.patchiness
                     || next.plants.patch_scale != self.plants.patch_scale,
                 "plant fertility is drawn once, when the world is built",
+            ),
+            (
+                next.corpses.max_corpses != self.corpses.max_corpses,
+                "corpses.max_corpses is fixed for the life of a world",
             ),
         ] {
             if changed {
@@ -1151,6 +1186,29 @@ impl SimParams {
                 ));
             }
         }
+        let corpses = &self.corpses;
+        if !(0.0..=1.0).contains(&corpses.energy_fraction) {
+            return Err(ParamError("corpses.energy_fraction must be in [0, 1]"));
+        }
+        if !(0.0..=1.0).contains(&corpses.decay) {
+            return Err(ParamError("corpses.decay must be in [0, 1] per second"));
+        }
+        if !(corpses.min_energy > 0.0) || !corpses.min_energy.is_finite() {
+            return Err(ParamError(
+                "corpses.min_energy must be positive and finite, so decomposition ends",
+            ));
+        }
+        if corpses.max_corpses > MAX_CORPSES {
+            return Err(ParamError("corpses.max_corpses must be at most 1048576"));
+        }
+        if !(corpses.radius >= 0.0) || !corpses.radius.is_finite() {
+            return Err(ParamError("corpses.radius must be finite and non-negative"));
+        }
+        if corpses.signature.iter().any(|c| !(0.0..=1.0).contains(c)) {
+            return Err(ParamError(
+                "corpses.signature must be in [0, 1] per channel",
+            ));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -1331,6 +1389,19 @@ impl Default for PlantParams {
             scent_rate: 0.02,
             initial_fill: 1.0,
             signature: [0.2, 0.8, 0.25],
+        }
+    }
+}
+
+impl Default for CorpseParams {
+    fn default() -> Self {
+        Self {
+            energy_fraction: 0.6,
+            decay: 0.02,
+            min_energy: 1.0,
+            max_corpses: 2_000,
+            radius: 2.0,
+            signature: [0.55, 0.22, 0.18],
         }
     }
 }

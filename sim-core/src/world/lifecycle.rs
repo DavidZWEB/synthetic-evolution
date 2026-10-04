@@ -336,6 +336,14 @@ impl World {
             );
             departure == Ok(Departure::Extinct)
         };
+        // A share of what the agent held lies where it fell; the rest leaves the world
+        // (spec §5.1). A starved agent holds nothing, so it leaves nothing.
+        self.corpses.leave(
+            self.agents.position[i],
+            &mut self.agents.energy[i],
+            &mut self.agents.energy_reserve[i],
+            &self.params.corpses,
+        );
         let remaining = crate::energy::take_amount(
             &mut self.agents.energy[i],
             &mut self.agents.energy_reserve[i],

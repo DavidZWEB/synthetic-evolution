@@ -273,6 +273,40 @@ for (const mode of ['development', 'transferable']) {
     }
   });
 
+  test(`structural null can be watched and is shared by URL (${mode})`, async () => {
+    await withClient(mode, async (page) => {
+      const heredity = page.getByRole('combobox', { name: 'heredity', exact: true });
+      assert.match(await heredity.getAttribute('title'), /random survivor's topology with its parent's scalars/);
+      assert.equal(
+        await heredity.locator('option[value="structural_null"]').innerText(),
+        'structural null',
+      );
+      await heredity.selectOption({ label: 'structural null' });
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await page.waitForFunction(() =>
+        new URLSearchParams(location.hash.slice(1)).get('inheritance') === 'structural_null');
+      await waitForTransport(page, mode);
+      await page.reload();
+      await waitForTransport(page, mode);
+      assert.equal(await heredity.inputValue(), 'structural_null');
+      await page.getByRole('button', { name: 'step', exact: true }).click();
+      await page.waitForFunction(() =>
+        [...document.querySelectorAll('header dt')].find((el) => el.textContent === 'tick')
+          ?.nextElementSibling?.textContent === '1');
+
+      // Watch-only: asking to record does not start a capture, and Save run explains.
+      await page.getByRole('button', { name: 'history', exact: true }).click();
+      const panel = page.getByRole('region', { name: 'Species history' });
+      await panel.getByRole('checkbox', { name: 'record the next new / reseeded run' }).check();
+      await page.getByRole('button', { name: 'reseed', exact: true }).click();
+      await waitForTransport(page, mode);
+      await panel.getByText('Capture: off').waitFor();
+      await panel.getByRole('button', { name: 'save run', exact: true }).click();
+      await panel.getByRole('status').filter({ hasText: 'watch-only' }).waitFor();
+      assert.match(await panel.innerText(), /Capture: off/);
+    });
+  });
+
   test(`scalar control explains heredity and preserves the shared mode ID (${mode})`, async () => {
     await withClient(mode, async (page) => {
       const heredity = page.getByRole('combobox', { name: 'heredity', exact: true });

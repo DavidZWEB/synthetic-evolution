@@ -118,6 +118,9 @@
     "patchiness": 0.0,
     "death_stock": 0.0
   },
+  "corpses": {
+    "energy_fraction": 0.0
+  },
   "chemo": {
     "cells": [
       128,
