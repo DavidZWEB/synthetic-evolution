@@ -217,7 +217,10 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
                 &["mutation", "organs"][..],
                 &["remove_sensor_rate", "add_sensor_rate"][..],
             ),
-            (&["plants"][..], &["grazing_lag"][..]),
+            (
+                &["plants"][..],
+                &["grazing_lag", "patchiness", "patch_scale"][..],
+            ),
         ] {
             let mut object = Some(&mut *params);
             for key in path {
@@ -878,6 +881,12 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("grazing_lag");
+        for field in ["patchiness", "patch_scale"] {
+            records[0]["data"]["params"]["plants"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+        }
         for cohort in ["evolving", "random_control"] {
             let mut counts =
                 serde_json::to_value(sim_core::mutate::StructuralMutationCounts::default())
@@ -890,6 +899,8 @@ mod tests {
         assert_eq!(mutation.structural.add_oscillator_rate, 0.0);
         assert_eq!(mutation.organs.add_sensor_rate, 0.0);
         assert_eq!(data.header.params.plants.grazing_lag, 0.0);
+        assert_eq!(data.header.params.plants.patchiness, 0.0);
+        assert_eq!(data.header.params.plants.patch_scale, 0.0);
         assert_eq!(
             data.samples[0]
                 .evolving

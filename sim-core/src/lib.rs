@@ -20,6 +20,7 @@ pub mod distance;
 pub mod effectors;
 mod energy;
 pub mod feeding;
+mod fertility;
 pub mod founder;
 pub mod genome;
 pub mod history;

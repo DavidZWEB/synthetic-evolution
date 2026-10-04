@@ -170,7 +170,11 @@ impl StorageLayout {
             .checked_mul(per_axis)
             .ok_or(ParamError("spatial grid exceeds representable cell counts"))?;
         requests.spatial_hash(grid_cells, u64::from(agents))?;
-        requests.plants(grid_cells, u64::from(params.plants.max_plants))?;
+        requests.plants(
+            grid_cells,
+            u64::from(params.plants.max_plants),
+            u64::from(crate::fertility::Fertility::cells_per_axis(params)),
+        )?;
 
         let field_cells = params
             .chemo
@@ -289,7 +293,13 @@ impl AllocationRequests {
         self.buffer::<u32>(entries)
     }
 
-    fn plants(&mut self, cells: u64, plants: u64) -> Result<(), ParamError> {
+    fn plants(&mut self, cells: u64, plants: u64, fertility_cells: u64) -> Result<(), ParamError> {
+        // The fertility lattice lives only while the sites are drawn.
+        self.buffer::<f32>(
+            fertility_cells
+                .checked_mul(fertility_cells)
+                .ok_or(ParamError("fertility lattice size overflows"))?,
+        )?;
         self.buffer::<Vec3>(plants)?;
         self.buffer::<f32>(plants)?;
         self.buffer::<f64>(plants)?;
@@ -594,6 +604,19 @@ mod tests {
                 .validate()
                 .expect("allowances are pooled, not per-genome maxima");
         }
+    }
+
+    #[test]
+    fn a_patchy_world_charges_its_fertility_lattice() {
+        let uniform = SimParams::default();
+        let mut patchy = uniform.clone();
+        patchy.plants.patchiness = 2.0;
+        patchy.plants.patch_scale = 100.0;
+        let lattice = 10 * 10 * size_of::<f32>() as u64;
+        assert_eq!(
+            StorageLayout::new(&patchy).unwrap().construction_bytes,
+            StorageLayout::new(&uniform).unwrap().construction_bytes + lattice
+        );
     }
 
     #[test]

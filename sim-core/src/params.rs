@@ -558,6 +558,13 @@ impl Default for FeedingParams {
     }
 }
 
+/// Largest accepted `plants.patchiness`. Beyond it nearly every candidate site is
+/// refused and placement degenerates into the retry cap rather than the map.
+pub const MAX_PATCHINESS: f32 = 16.0;
+
+/// Largest fertility lattice per axis: a million values, drawn once per world.
+const MAX_PATCH_CELLS: u32 = 1_024;
+
 /// The autotroph base. Non-brained entities that hold the energy entering the world.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -588,6 +595,24 @@ pub struct PlantParams {
     /// **0 until M9 calibration**, which reproduces Phase 1's plants: every plant takes
     /// its full share until it is full, however hard it was grazed.
     pub grazing_lag: f32,
+    /// How strongly plants cluster on fertile ground, in `[0, MAX_PATCHINESS]`
+    /// (spec §5.3).
+    ///
+    /// A candidate plant site is accepted with probability
+    /// `(fertility / peak fertility)^patchiness` on a static value-noise map. Zero is
+    /// uniform scatter and draws nothing for the map; larger values empty the poor
+    /// ground and pack plants onto the best of it. Fixed for the life of a world, since
+    /// the map and the sites are drawn when it is built.
+    ///
+    /// **0 until M9 calibration**, which reproduces Phase 1's uniform scatter exactly.
+    pub patchiness: f32,
+    /// Feature size of the fertility map, in world units: the lattice spacing of the
+    /// value noise, rounded so a whole number of cells spans the torus. Ignored while
+    /// `patchiness` is zero; fixed for the life of a world.
+    ///
+    /// **150 until M9 calibration**: several times `chemo_radius`, so one nose cannot
+    /// see from patch to patch, and well under the world's 1,000, so there are dozens.
+    pub patch_scale: f32,
     /// Collision and ingest radius.
     pub radius: f32,
     /// Concentration deposited into chemo channel 0 per unit of stored energy, per
@@ -773,6 +798,11 @@ impl SimParams {
             (
                 next.plants.initial_fill != self.plants.initial_fill,
                 "plants.initial_fill is read once, when the larder is stocked",
+            ),
+            (
+                next.plants.patchiness != self.plants.patchiness
+                    || next.plants.patch_scale != self.plants.patch_scale,
+                "plant fertility is drawn once, when the world is built",
             ),
         ] {
             if changed {
@@ -1040,6 +1070,26 @@ impl SimParams {
                 "plants.grazing_lag must be in [0, 1); at 1 an emptied plant never regrows",
             ));
         }
+        if !(0.0..=MAX_PATCHINESS).contains(&self.plants.patchiness) {
+            return Err(ParamError("plants.patchiness must be in [0, 16]"));
+        }
+        if !(self.plants.patch_scale >= 0.0) || !self.plants.patch_scale.is_finite() {
+            return Err(ParamError(
+                "plants.patch_scale must be finite and non-negative",
+            ));
+        }
+        if self.plants.patchiness > 0.0 {
+            if !(self.plants.patch_scale > 0.0) {
+                return Err(ParamError(
+                    "plants.patch_scale must be positive when plants are patchy",
+                ));
+            }
+            if crate::fertility::Fertility::cells_per_axis(self) > MAX_PATCH_CELLS {
+                return Err(ParamError(
+                    "plants.patch_scale is too fine: at most 1024 fertility cells per axis",
+                ));
+            }
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -1210,6 +1260,8 @@ impl Default for PlantParams {
             max_plants: 4_000,
             max_energy: 60.0,
             grazing_lag: 0.0,
+            patchiness: 0.0,
+            patch_scale: 150.0,
             radius: 2.0,
             scent_rate: 0.02,
             initial_fill: 1.0,
@@ -1396,12 +1448,14 @@ mod tests {
 
         #[test]
         fn anything_that_sized_an_allocation_is_frozen() {
-            let cases: [Case; 5] = [
+            let cases: [Case; 7] = [
                 ("world.max_agents", |p| p.world.max_agents += 1),
                 ("world.size", |p| p.world.size += 1.0),
                 ("plants.max_plants", |p| p.plants.max_plants += 1),
                 ("chemo.cells", |p| p.chemo.cells[0] += 1),
                 ("chemo channels", |p| p.chemo.decay.push(0.5)),
+                ("plants.patchiness", |p| p.plants.patchiness = 2.0),
+                ("plants.patch_scale", |p| p.plants.patch_scale += 10.0),
             ];
             for (name, mutate) in cases {
                 let (current, mut next) = pair();
@@ -1600,6 +1654,22 @@ mod tests {
             ("negative grazing lag", |p| p.plants.grazing_lag = -0.1),
             ("unrepresentable grazing lag", |p| {
                 p.plants.grazing_lag = f32::NAN
+            }),
+            ("negative patchiness", |p| p.plants.patchiness = -1.0),
+            ("patchiness past the retry cap", |p| {
+                p.plants.patchiness = 17.0
+            }),
+            ("unrepresentable patchiness", |p| {
+                p.plants.patchiness = f32::NAN
+            }),
+            ("negative patch scale", |p| p.plants.patch_scale = -5.0),
+            ("patchy with no patch scale", |p| {
+                p.plants.patchiness = 2.0;
+                p.plants.patch_scale = 0.0;
+            }),
+            ("patches finer than the lattice cap", |p| {
+                p.plants.patchiness = 2.0;
+                p.plants.patch_scale = 0.5;
             }),
             ("absurd chemo grid", |p| p.chemo.cells = [65_535, 65_535, 1]),
             ("sense radius too small for the world", |p| {

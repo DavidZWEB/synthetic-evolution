@@ -22,7 +22,8 @@
 //!
 //! Regrowth depends on what a plant still holds (`grazing_lag`, spec §5.1): grass
 //! regrows from the leaf area and reserves left to it, so stripping a site has a cost
-//! that outlasts the meal.
+//! that outlasts the meal. Sites follow a fertility map (`crate::fertility`, spec §5.3),
+//! so plants can cluster on good ground instead of scattering uniformly.
 //!
 //! Deliberately not here: being eaten. The plant-to-agent transfer is part of the energy
 //! ledger and lands with metabolism and death.
@@ -31,6 +32,7 @@ use glam::Vec3;
 
 use crate::chemo::ChemoField;
 use crate::energy;
+use crate::fertility::Fertility;
 use crate::params::{PlantParams, SimParams};
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
@@ -53,17 +55,16 @@ pub struct Plants {
 }
 
 impl Plants {
-    /// Scatters `max_plants` plants across the world, each starting empty.
+    /// Scatters `max_plants` plants across the world, each stocked to `initial_fill`.
     ///
     /// Positions are drawn once and never change, so the neighbour grid is built here
-    /// and not rebuilt again. Spatially uniform for now; spec §5.3's nutrient
-    /// heterogeneity — the thing that actually creates niches — is a later phase.
+    /// and not rebuilt again. Sites follow the fertility map (spec §5.3): uniform when
+    /// `patchiness` is zero, clustered on fertile ground otherwise.
     pub fn new(params: &SimParams, rng: &mut Rng) -> Self {
         let count = params.plants.max_plants as usize;
         let size = params.world.size;
-        let position: Vec<Vec3> = (0..count)
-            .map(|_| Vec3::new(rng.range(0.0, size), rng.range(0.0, size), 0.0))
-            .collect();
+        let fertility = Fertility::new(params, rng);
+        let position: Vec<Vec3> = (0..count).map(|_| fertility.site(rng)).collect();
 
         let mut hash = SpatialHash::new(size, params.sensing.max_sense_radius(), count as u32);
         let alive = vec![1u8; count];
@@ -279,6 +280,35 @@ mod tests {
             assert!((0.0..params.world.size).contains(&p.y), "{p:?}");
             assert_eq!(p.z, 0.0, "V1 simulates on a plane");
         }
+    }
+
+    #[test]
+    fn patchy_plants_crowd_together() {
+        // Spec §5.3: the same number of plants, packed onto fertile ground, sit closer
+        // to their nearest neighbour than a uniform scatter does.
+        let nearest = |plants: &Plants, size: f32| -> f32 {
+            let positions = plants.position();
+            positions
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| {
+                    positions
+                        .iter()
+                        .enumerate()
+                        .filter(|&(j, _)| j != i)
+                        .map(|(_, &q)| crate::spatial::min_image(q - p, size).length())
+                        .fold(f32::INFINITY, f32::min)
+                })
+                .sum::<f32>()
+                / positions.len() as f32
+        };
+        let (uniform, params) = world();
+        let mut patchy_params = params.clone();
+        patchy_params.plants.patchiness = 4.0;
+        let patchy = Plants::new(&patchy_params, &mut Rng::from_seed(4));
+        let size = params.world.size;
+        let (spread, packed) = (nearest(&uniform, size), nearest(&patchy, size));
+        assert!(packed < spread * 0.8, "patchy {packed} vs uniform {spread}");
     }
 
     #[test]

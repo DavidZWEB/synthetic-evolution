@@ -87,8 +87,8 @@ const PARAMS = {
   species: { capacity: u, threshold: f },
   feeding: { rate: f, gate: f, reach: f },
   plants: {
-    energy_input_rate: f, max_plants: u, max_energy: f, grazing_lag: f, radius: f,
-    scent_rate: f, initial_fill: f, signature: ['finite', 3],
+    energy_input_rate: f, max_plants: u, max_energy: f, grazing_lag: f, patchiness: f,
+    patch_scale: f, radius: f, scent_rate: f, initial_fill: f, signature: ['finite', 3],
   },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
@@ -97,7 +97,7 @@ const PARAMS = {
  * Params fields added after archives were first written. An older archive omits them
  * because it ran without them, which their zero default describes exactly.
  */
-const LATER_PARAMS = new Set(['add_oscillator_rate', 'grazing_lag']);
+const LATER_PARAMS = new Set(['add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale']);
 
 export function integerParam(path) {
   let shape = PARAMS;
