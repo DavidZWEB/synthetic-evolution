@@ -3,9 +3,12 @@
 #
 #   scripts/experiment.sh OUT_DIR TICKS FOUNDERS SAMPLE_EVERY "SEED..." PARAMS.json...
 #
-# Runs every params file x seed under both controls (scalar and structural null v2), JOBS
+# Runs every params file x seed under both controls (scalar and structural null), JOBS
 # at a time (default 4), recording each run's wall-clock seconds beside its metrics.
-# Then writes one unranked summary per params file, as text and JSON.
+# With HISTORY=1, scalar-control runs also write a species-history archive with
+# representative genomes (`<run>.history.ndjson`, for experiments/phase-2-m8/wiring.py);
+# the structural null writes metrics only. Then writes one unranked summary per params
+# file, as text and JSON.
 set -euo pipefail
 
 if [[ $# -lt 6 ]]; then
@@ -32,10 +35,14 @@ done | xargs -0 -n 3 -P "${JOBS:-4}" bash -c '
   native=$1 out=$2 ticks=$3 founders=$4 every=$5 params=$6 seed=$7 control=$8
   name=$(basename "$params" .json)
   run="$out/$name-$seed-$control"
+  history=()
+  if [[ -n "${HISTORY:-}" && "$control" == scalar ]]; then
+    history=(--history "$run.history.ndjson" --representatives --history-capacity 65536)
+  fi
   start=$SECONDS
   "$native" --seed "$seed" --ticks "$ticks" --founders "$founders" \
     --sample-every "$every" --params "$params" --control "$control" \
-    --metrics "$run.jsonl" > "$run.log"
+    --metrics "$run.jsonl" "${history[@]}" > "$run.log"
   echo $((SECONDS - start)) > "$run.seconds"
   echo "done $name seed=$seed control=$control in $((SECONDS - start))s"
 ' experiment "$native" "$out" "$ticks" "$founders" "$every"

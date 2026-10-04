@@ -1,0 +1,9 @@
+cohort / origin ticks <bin> : n | genes neurons hidden hidden_functional clocks clocks_functional connections enabled functional_connections sensors sensors_functional outputs_driven
+evolving              0-1      :    8 | 25.00 9.00 0.00 0.00 2.00 2.00 4.00 4.00 4.00 1.00 1.00 4.00
+evolving              1-75000  :   54 | 29.89 10.61 1.17 0.93 2.35 2.02 7.26 5.87 5.39 1.02 0.94 3.28
+evolving          75000-150000 :   60 | 31.37 10.90 1.42 1.18 2.45 1.98 8.47 6.78 6.08 1.00 0.88 3.20
+evolving         150000-225000 :   54 | 33.30 11.69 1.70 1.44 2.69 1.89 9.54 7.41 6.46 1.07 0.96 3.06
+evolving         225000-300001 :   38 | 32.92 11.53 1.82 1.16 2.84 2.11 9.45 7.45 5.95 0.95 0.71 2.63
+random_control        0-1      :    8 | 25.00 9.00 0.00 0.00 2.00 2.00 4.00 4.00 4.00 1.00 1.00 4.00
+random_control        1-75000  :    2 | 27.00 9.50 0.50 0.50 2.00 2.00 5.50 5.00 4.50 1.00 1.00 4.00
+random_control    75000-150000 :    1 | 28.00 10.00 1.00 1.00 2.00 2.00 6.00 5.00 5.00 1.00 1.00 4.00

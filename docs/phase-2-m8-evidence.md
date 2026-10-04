@@ -12,10 +12,12 @@ configuration that growth is still **not distinguished from the structural null*
 given a random survivor's. The clearest consistent signal points elsewhere:
 **evolving lineages shed perception**. They keep fewer sensors than the null on
 every seed, and late species increasingly have no sensor wired to any effector,
-running clock-driven, open-loop behavior instead. The likely reason is that the
-environment barely rewards perception; that, not the genetic machinery, is the next
-thing to investigate. Species counts are set mostly by the threshold; deletion's
-marker churn is a minor effect.
+running clock-driven, open-loop behavior instead. A follow-up sweep of food
+patchiness and scarcity found **no plant setting where perception pays**: evolving
+worlds wired fewer sensors than the null in 10 of 12 seed pairs. Selection is
+visible, but in movement rather than structure: evolving worlds converge across
+seeds on how fast they move and how much of the food supply they capture. Species
+counts are set mostly by the threshold; deletion's marker churn is a minor effect.
 
 ## Provenance
 
@@ -156,21 +158,106 @@ Summaries: [`experiments/phase-2-m8/calibration/`](../experiments/phase-2-m8/cal
 - Species claims should report persistent species at more than one threshold rather
   than a single count.
 
+## Perception sweep
+
+Does a different food environment make perception pay? Plant parameters only
+(tuning, no mechanism change), everything else at shipped defaults. Seeds
+42/117/314, 2,000 founders, 300,000 ticks, both controls. Runs used revision
+`ac36fea`; summaries were produced by `48c79a7`'s `native summarize`.
+Summaries, configs, and wall-clock times:
+[`experiments/perception-sweep/`](../experiments/perception-sweep/).
+
+- **baseline**: shipped plants, 4,000 sites × 60 energy, input 12,000/s.
+- **sites-1000**: the same total capacity on 1,000 sites of 240, so food is 4×
+  patchier.
+- **sites-250**: 250 sites of 960, 16× patchier.
+- **scarce**: baseline sites with input 8,000/s, two-thirds of the supply.
+
+`supply_captured` is the share of the plants' nominal input that the population
+eats over the run's second half. A full plant refuses its share, so a population
+that keeps more sites grazed captures more. The wired counts are per agent at the
+final sample. For reference, the founder has 1 wired sensor, 4 driven effectors, 0
+hidden neurons, and a sensor load of 3.
+
+| Per seed (42, 117, 314) | baseline | sites-1000 | sites-250 | scarce |
+|---|---|---|---|---|
+| population, evolving | 1439, 1716, 1612 | 995, 1239, 1116 | 172, 446, 296 | 816, 863, 826 |
+| population, null | 1462, 1432, 1934 | 1245, 1370, 1092 | 307, 109, 414 | 559, 697, 1009 |
+| population, scalar control | 19–32 | 22–196 | 9–148 | 10–13 |
+| supply captured, evolving | 0.69, 0.69, 0.69 | 0.59, 0.58, 0.58 | 0.07, 0.23, 0.27 | 0.63, 0.62, 0.64 |
+| supply captured, null | 0.63, 0.64, 0.70 | 0.65, 0.77, 0.48 | 0.09, 0.08, 0.28 | 0.46, 0.56, 0.61 |
+| supply captured, scalar control | 0.02–0.03 | 0.02–0.18 | 0.02–0.24 | 0.01–0.02 |
+| sensor load, evolving | 2.05, 0.20, 1.05 | 2.87, 2.82, 2.90 | 2.13, 3.04, 2.99 | 2.51, 1.72, 2.79 |
+| sensor load, null | 2.54, 1.55, 3.03 | 3.00, 2.77, 2.91 | 2.98, 3.88, 2.56 | 2.99, 3.01, 2.59 |
+| **wired sensors, evolving** | **0.68, 0.06, 0.35** | **0.89, 0.79, 0.36** | **0.71, 0.89, 1.00** | **0.80, 0.37, 0.85** |
+| **wired sensors, null** | **0.83, 0.50, 1.00** | **0.97, 0.78, 0.89** | **0.99, 0.99, 0.84** | **1.00, 1.00, 0.87** |
+| driven effectors, evolving | 2.92, 3.24, 2.60 | 3.47, 2.83, 2.83 | 2.70, 2.40, 3.77 | 2.14, 3.52, 2.91 |
+| driven effectors, null | 3.41, 3.39, 3.84 | 3.57, 2.54, 3.20 | 2.02, 2.05, 3.10 | 3.83, 3.86, 3.45 |
+| wired hidden neurons, evolving | 2.33, 0.56, 0.19 | 0.35, 0.77, 1.11 | 0.81, 1.17, 0.24 | 0.25, 0.80, 0.63 |
+| wired hidden neurons, null | 1.10, 0.99, 1.96 | 0.34, 1.04, 1.92 | 1.94, 0.36, 3.06 | 0.83, 0.68, 0.18 |
+| mean speed, evolving | 2.09, 1.43, 1.68 | 0.66, 0.63, 0.63 | 0.52, 0.49, 0.54 | 2.34, 2.27, 2.38 |
+| mean speed, null | 1.43, 1.74, 0.71 | 0.43, 0.35, 0.18 | 0.29, 0.40, 0.34 | 1.88, 2.23, 1.37 |
+
+- **No plant setting made perception pay.** Evolving worlds wired fewer sensors than
+  the null in 10 of 12 seed pairs, at least two in every configuration. The other two
+  are a tie (sites-1000 seed 117) and one exception (sites-250 seed 314). Patchier
+  food kept sensor *genes* (sensor load about 2.85 at sites-1000 against 0.20–2.05 at
+  baseline) but did not keep them wired. The null kept as many sensors and wired more
+  of them.
+- **Perception does not earn its upkeep.** A chemo sensor adds 0.0019 per tick to an
+  idle founder's 0.064 (about 3%), and lineages that drop or disconnect it do not
+  lose. Movement is far dearer (`k_move` × thrust², up to 0.5 per tick), yet evolving
+  agents moved faster than the null in 11 of 12 pairs.
+- **Selection is visible, in movement rather than structure.** Evolving worlds
+  converge across seeds. Supply captured spans at most 0.02 between seeds in
+  baseline, sites-1000, and scarce, against 0.08–0.28 for the null, and speed spans
+  at most 0.11 outside baseline. Under scarcity, evolving worlds captured more of the
+  supply than the null on every seed (0.62–0.64 vs 0.46–0.61) while wiring fewer
+  sensors: the advantage comes from how they move, not from what they sense.
+- **Added structure is still not distinguished from the null.** Wired hidden
+  neurons go each way across seeds in every configuration.
+- **sites-250 is too sparse to read.** Populations shrank to 109–446 and one
+  scalar-control world held 148 agents, so seed-to-seed variation swamps the
+  comparison.
+- Species-founding genomes agree. Running [`wiring.py`](../experiments/phase-2-m8/wiring.py)
+  on history archives of the same worlds (revision `e515d3f`, whose 24 final state
+  hashes match `ac36fea`'s) found last-quarter founders had 0.07–0.59 wired sensors
+  at baseline and 0.47–0.93 at sites-1000. Output is in
+  [`experiments/perception-sweep/wiring/`](../experiments/perception-sweep/wiring/).
+
+Untested: how informative the chemo signal is (`chemo_radius`, `scent_rate`), and
+sensor cost (`k_sensor`). The mechanism that makes clock-driven grazing competitive is
+that plants are fixed sites regrowing in place (spec §5.1 as read in
+`sim-core/src/plants.rs`), dense enough that covering ground at a tuned speed finds
+food. Changing that, for example by relocating depleted sites or adding spec §5.3's
+nutrient heterogeneity, is a design change for discussion, not tuning.
+
 ## Unranked shortlist for watching
 
-With today's shipped defaults, in the browser against the scalar control:
+In the browser against the scalar control, at shipped defaults unless a params
+override is given:
 
 - **seed 42** — the largest genomes in the shipped rerun (max 51 genes). Are the added
   neurons and clocks visible in behavior?
 - **seed 117** — nearly sensorless (mean sensor load 0.17) yet the largest population.
   Do agents forage, or graze on a timer?
 - **seed 314** — the most species. Are they behaviorally distinct or threshold labels?
+- **scarce, any seed** (`{"plants":{"energy_input_rate":8000.0}}`): evolving worlds
+  out-captured the null on every seed with fewer wired sensors. Is the difference
+  visible as movement, such as speed, turning, and dispersal?
+- **sites-1000 seed 42** (`{"plants":{"max_plants":1000,"max_energy":240.0}}`):
+  sensors kept and mostly wired (0.89 per agent). Does anything look like
+  chemotaxis, or do agents pass plants they could have turned to?
 
 ## Limitations
 
 - Three seeds per configuration; final samples only. Trajectories are reproducible
   from the command above but are not committed (`*.jsonl` is ignored).
-- The functional-wiring analysis covers one seed and species-founding genomes, not
-  whole populations.
+- The M8 functional-wiring table covers one seed and species-founding genomes; the
+  perception sweep's population-wide `wired_*` metrics cover three seeds, at the final
+  sample only.
+- `supply_captured` is a population measure: it rises with per-agent foraging and with
+  population size, which is itself an outcome of foraging. Compare cohorts at similar
+  populations.
 - Species persistence uses 5k-tick sampling, so species living between samples are
   counted only in created/extinct totals.
