@@ -377,7 +377,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         }
     }
 
-    let diets = species_diets(world);
+    let diets = species_diets(world)?;
     let ledger = world.ledger();
     let plant_energy = finite(world.plants().total_energy(), "plant energy")?;
     let total_energy = finite(world.total_energy(), "total energy")?;
@@ -432,14 +432,18 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
 }
 
 /// The share of `(plants, animals)` eaten from other agents, absent when nothing was.
+/// Both are scaled by the larger first, so no two finite totals overflow their sum.
 pub(crate) fn meat_share((plants, animals): (f64, f64)) -> Option<f64> {
-    let eaten = plants + animals;
-    (eaten > 0.0).then(|| animals / eaten)
+    let larger = plants.max(animals);
+    (larger > 0.0).then(|| {
+        let animals = animals / larger;
+        animals / (plants / larger + animals)
+    })
 }
 
 /// Each classified species' living members' lifetime intake, from plants and from
 /// other agents.
-fn species_diets(world: &World) -> BTreeMap<u32, (f64, f64)> {
+fn species_diets(world: &World) -> Result<BTreeMap<u32, (f64, f64)>> {
     let agents = world.agents();
     let mut diets = BTreeMap::new();
     for id in world.pool().iter_live() {
@@ -448,7 +452,11 @@ fn species_diets(world: &World) -> BTreeMap<u32, (f64, f64)> {
         diet.0 += agents.eaten_plants[i];
         diet.1 += agents.eaten_animals[i];
     }
-    diets
+    for &(plants, animals) in diets.values() {
+        finite(plants, "a species' plant intake")?;
+        finite(animals, "a species' meat intake")?;
+    }
+    Ok(diets)
 }
 
 fn predation_metrics(world: &World) -> Result<PredationMetrics> {
@@ -478,6 +486,10 @@ fn predation_metrics(world: &World) -> Result<PredationMetrics> {
             metrics.herbivore_biomass += held;
         }
     }
+    // Finite totals can still overflow their sum, and the reader refuses what JSON
+    // would write for it. Biomass cannot: it is part of the total energy already checked.
+    finite(metrics.eaten_plants, "plant intake")?;
+    finite(metrics.eaten_animals, "meat intake")?;
     Ok(metrics)
 }
 
@@ -565,6 +577,57 @@ mod tests {
     use super::*;
 
     use super::complexity_case;
+
+    #[test]
+    fn meat_shares_hold_at_the_extremes_of_the_range() {
+        assert_eq!(meat_share((0.0, 0.0)), None);
+        assert_eq!(meat_share((1.0, 3.0)), Some(0.75));
+        assert_eq!(
+            meat_share((f64::MAX, f64::MAX)),
+            Some(0.5),
+            "the sum overflowed"
+        );
+        assert_eq!(meat_share((0.0, f64::MAX)), Some(1.0));
+        let least = f64::from_bits(1);
+        assert_eq!(meat_share((least, least)), Some(0.5), "halving underflowed");
+    }
+
+    /// Two founders that have each eaten `amount` over their lives, of meat or of
+    /// plants, each its own species or both one.
+    fn gluttons(amount: f64, meat: bool, one_species: bool) -> World {
+        let mut params = SimParams::default();
+        params.species.threshold = if one_species { 1e6 } else { 1e-6 };
+        let mut world = World::new(5, params).unwrap();
+        assert_eq!(world.seed_founders(2), 2);
+        let live: Vec<usize> = world.pool().iter_live().map(|id| id.index()).collect();
+        let agents = world.agents_mut();
+        for i in live {
+            if meat {
+                agents.eaten_animals[i] = amount;
+            } else {
+                agents.eaten_plants[i] = amount;
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn totals_that_overflow_their_sums_are_refused_rather_than_written() {
+        let refusal = |world: &World| sample_world(world).err().map(|error| error.to_string());
+        for (meat, food) in [(false, "plant intake"), (true, "meat intake")] {
+            assert_eq!(refusal(&gluttons(f64::MAX / 4.0, meat, true)), None);
+            // Separate species: only the world's total overflows.
+            let spread =
+                refusal(&gluttons(f64::MAX * 0.6, meat, false)).expect("an infinite total");
+            assert!(
+                spread.ends_with(food) && !spread.contains("species"),
+                "{spread}"
+            );
+            // One species: its own total overflows first.
+            let shared = refusal(&gluttons(f64::MAX * 0.6, meat, true)).expect("an infinite total");
+            assert!(shared.ends_with(&format!("a species' {food}")), "{shared}");
+        }
+    }
 
     #[test]
     fn plant_clustering_reads_one_for_scatter_and_less_for_patches() {
