@@ -865,9 +865,10 @@ fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
             "--retune: invalid SimParams: plants.max_plants is fixed",
         ),
         // Checked before seeding, when no cooldown runs, yet a swing before tick 10
-        // could start a half second that 1e-10 s ticks cannot count.
+        // could start a half second that 1e-10 s ticks cannot count. Regeneration is
+        // off, since no timestep this fine can count it either.
         (
-            r#"{"world":{"dt":1e-10},"combat":{"cooldown_seconds":0.4}}"#,
+            r#"{"world":{"dt":1e-10},"combat":{"cooldown_seconds":0.4,"health_regen":0.0}}"#,
             "10",
             &[],
             "--retune: invalid SimParams: a timestep this short cannot count a bite cooldown in whole ticks",

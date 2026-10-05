@@ -180,7 +180,8 @@ Spec §4.2 and §2.4.
 `effectors_per_slot` stays 4: 5,000 slots hold 4,000 biting founders. The gate is
 non-negative, since an agent without a bite drives it at 0. A cooldown counts whole
 ticks, never shorter than `cooldown_seconds`, and a `world.dt` retune keeps each running
-one's remaining time. Two bites on one agent sum their drives,
+one's remaining time. Positive regeneration must heal a representable step each tick, so
+a timestep too fine for it is refused, as one too fine to count a cooldown is. Two bites on one agent sum their drives,
 and the stronger aims. An imported bite must aim on the plane and reach no further than
 half the world. The random control redraws the bite's bias with every other neural
 scalar, so once calibration turns the bite on, its children bite at random from birth;

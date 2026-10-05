@@ -819,6 +819,11 @@ pub struct CombatParams {
     /// Health regained per second, only while health is above 0, so a lethal hit
     /// cannot heal before the deaths it causes are resolved (spec §2.4).
     ///
+    /// Health is an `f32` healed by a step a tick, so a positive rate must make that
+    /// step at least `f32::EPSILON / 2`, one representable step of a health just short
+    /// of full. Anything smaller rounds away and never heals, so the timestep and rate
+    /// are checked together, as a cooldown is.
+    ///
     /// **0.02 (spec §5.5)**: a wounded agent recovers within about an idle lifetime,
     /// so an escape is real.
     pub health_regen: f32,
@@ -1407,6 +1412,13 @@ impl SimParams {
         {
             return Err(ParamError(
                 "combat.cooldown_seconds must be non-negative and countable in ticks",
+            ));
+        }
+        // The step `combat::recover` adds, in the f32 it adds it in.
+        if combat.health_regen > 0.0 && !(combat.health_regen * self.world.dt >= f32::EPSILON / 2.0)
+        {
+            return Err(ParamError(
+                "combat.health_regen must be zero or heal a representable step each tick",
             ));
         }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
@@ -2391,6 +2403,7 @@ mod tests {
         let cooldown = "combat.cooldown_seconds must be non-negative and countable in ticks";
         let reach = "a founder's bite must reach no further than half the world";
         let overflow = "body ranges let a body's acceleration, upkeep, intake, or bite overflow";
+        let healing = "combat.health_regen must be zero or heal a representable step each tick";
         let cases: Vec<(&str, BreakIt)> = vec![
             (gate, |p| p.combat.gate = f32::NAN),
             (gate, |p| p.combat.gate = -0.1),
@@ -2410,6 +2423,9 @@ mod tests {
                 p.world.dt = 1.0;
                 p.combat.cooldown_seconds = 4_294_967_296.0;
             }),
+            // 2e-8 a tick rounds away against a health near full, so it never heals.
+            (healing, |p| p.world.dt = 1e-6),
+            (healing, |p| p.combat.health_regen = 1e-9),
             (reach, |p| {
                 p.founder.bite = true;
                 p.combat.reach = 500.5;

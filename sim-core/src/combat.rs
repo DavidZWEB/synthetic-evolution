@@ -181,6 +181,34 @@ mod tests {
     }
 
     #[test]
+    fn the_slowest_regeneration_validation_accepts_still_heals_a_nearly_full_agent() {
+        // One representable step of a health just short of full is the smallest a tick
+        // may heal. Half of it rounds away and never heals, which is why validation
+        // refuses it, and why a timestep retune that would shrink a step below it is
+        // refused too.
+        let step = f32::EPSILON / 2.0;
+        let mut params = SimParams::default();
+        params.world.dt = 0.25;
+        params.combat.health_regen = 4.0 * step;
+        assert_eq!(params.validate(), Ok(()));
+        for start in [1.0 - step, 0.75] {
+            let mut health = start;
+            recover(&mut health, &mut 0, &params.combat, params.world.dt);
+            assert_eq!(health, start + step, "{start}");
+        }
+        let mut slower = params.clone();
+        slower.combat.health_regen = 2.0 * step;
+        assert!(slower.validate().is_err());
+        let mut health = 0.75;
+        recover(&mut health, &mut 0, &slower.combat, slower.world.dt);
+        assert_eq!(health, 0.75, "half a step rounds away");
+        let mut finer = SimParams::default();
+        finer.world.dt = 1e-6;
+        let cell = SimParams::default().sensing.max_sense_radius();
+        assert!(SimParams::default().check_retune(&finer, cell).is_err());
+    }
+
+    #[test]
     fn a_swing_needs_the_drive_the_cooldown_and_the_cost() {
         let c = combat();
         assert!(swings(0.51, 0, 8.0, 0.0, &c), "the cost exactly in hand");

@@ -1203,6 +1203,8 @@ mod tests {
         world.recover_from_bites();
         let mut quick = world.params().clone();
         quick.combat.cooldown_seconds = 0.1;
+        // No timestep this fine can count regeneration either, so none.
+        quick.combat.health_regen = 0.0;
         world.set_params(quick).unwrap();
         assert_eq!(
             world.agents().cooldown[0],
@@ -1233,6 +1235,8 @@ mod tests {
         let mut tiny = world.params().clone();
         tiny.world.dt = 1e-10;
         tiny.combat.cooldown_seconds = 0.4;
+        // No timestep this fine can count regeneration either, so none.
+        tiny.combat.health_regen = 0.0;
         let mut fine = tiny.clone();
         fine.world.dt = 1e-9;
         assert_eq!((tiny.validate(), fine.validate()), (Ok(()), Ok(())));
