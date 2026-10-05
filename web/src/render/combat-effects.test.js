@@ -243,6 +243,30 @@ test('a corpse slot refilled between frames is a new kill, by place or by energy
   assert.equal(rings(2_000), 1, 'a corpse that gained');
 });
 
+test('a mass death starts a bounded number of kills, each body matched once', () => {
+  const n = 100;
+  const fx = createCombatEffects({ capacity: n, corpseCapacity: n, worldSize: 1_000 });
+  const views = frame(n, n);
+  for (let i = 0; i < n; i++) place(views, i, 5 + 9 * i, 5);
+  const shown = colors(n);
+  shown[0] = 0.9;
+  fx.observe(views, 10n, 0, shown, 2);
+  // Everyone dies at once, each leaving a corpse where it stood.
+  views.alive.fill(0);
+  for (let i = 0; i < n; i++) {
+    views.corpsePosition.set([5 + 9 * i, 5, 0], i * 3);
+    views.corpseEnergy[i] = 10;
+  }
+  // A second corpse beside slot 0's, as two deaths at one spot would leave.
+  views.corpsePosition.set([6, 5, 0], 3);
+  fx.observe(views, 11n, 100, shown, 2);
+  const drawn = shapes(fx, views, 100);
+  assert.equal(drawn.filter((s) => s.kind === SHAPE.RING).length, 64, 'kills started this frame');
+  const bodies = drawn.filter((s) => s.kind === SHAPE.DISC);
+  assert.equal(bodies.filter((s) => near(s.color[0], 0.9)).length, 1,
+    'slot 0\'s body shrinks into its own corpse only');
+});
+
 test('a world that starts over forgets the old one\'s animations', () => {
   const fx = effects(1);
   const views = frame(1);

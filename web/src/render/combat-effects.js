@@ -21,6 +21,11 @@ export const OVERLAY_STRIDE = 11;
 export const SHAPE = { DISC: 0, RING: 1, WEDGE: 2, SEGMENT: 3 };
 
 const SPECKS = 5;
+/**
+ * New kill animations one frame may start. A mass death draws its first kills rather
+ * than matching every corpse against every vanished body on the UI thread.
+ */
+const KILLS_PER_FRAME = 64;
 /** Where a swing or hit age saturates: "at least this long ago". */
 const LONG_AGO = 255;
 const [RED_R, RED_G, RED_B] = [0.95, 0.18, 0.15];
@@ -105,23 +110,32 @@ export function createCombatEffects({
   }
   forget();
 
-  /** The vanished slot whose last position lies nearest `(x, y)`, or -1. */
-  function vanishedNear(views, x, y, reach) {
+  // Slots whose agent vanished since the previous frame, gathered once per frame so
+  // matching a corpse to its body scans only them.
+  const vanished = new Int32Array(capacity);
+  let vanishedCount = 0;
+
+  /**
+   * The vanished slot whose last position lies nearest `(x, y)`, or -1, taken from the
+   * candidates so no body is matched to two corpses.
+   */
+  function takeVanishedNear(x, y, reach) {
     let best = -1;
     let bestDistance = Infinity;
-    for (let i = 0; i < capacity; i++) {
-      const gone = wasAlive[i] === 1 &&
-        (views.alive[i] === 0 || views.incarnation[i] !== incarnation[i]);
-      if (!gone) continue;
+    for (let k = 0; k < vanishedCount; k++) {
+      const i = vanished[k];
       const dx = wrapped(lastPosition[i * 2] - x, worldSize);
       const dy = wrapped(lastPosition[i * 2 + 1] - y, worldSize);
       const distance = Math.hypot(dx, dy);
       if (distance <= lastSize[i] + reach && distance < bestDistance) {
-        best = i;
+        best = k;
         bestDistance = distance;
       }
     }
-    return best;
+    if (best < 0) return -1;
+    const slot = vanished[best];
+    vanished[best] = vanished[--vanishedCount];
+    return slot;
   }
 
   return {
@@ -157,6 +171,15 @@ export function createCombatEffects({
         }
         if (views.hurtAge[i] < horizon) hurtAt[i] = now;
       }
+      vanishedCount = 0;
+      if (elapsed > 0) {
+        for (let i = 0; i < capacity; i++) {
+          if (wasAlive[i] === 1 && (views.alive[i] === 0 || views.incarnation[i] !== incarnation[i])) {
+            vanished[vanishedCount++] = i;
+          }
+        }
+      }
+      let started = 0;
       for (let c = 0; c < corpseCapacity; c++) {
         const energy = views.corpseEnergy[c];
         const x = views.corpsePosition[c * 3];
@@ -166,8 +189,9 @@ export function createCombatEffects({
         // new death in a slot freed and refilled between frames (spec §5.1).
         const replaced = corpseHeld[c] === 1 &&
           (x !== corpseAt[c * 2] || y !== corpseAt[c * 2 + 1] || energy > corpseEnergy[c]);
-        if (elapsed > 0 && held && (!corpseHeld[c] || replaced)) {
-          const body = vanishedNear(views, x, y, corpseRadius);
+        if (elapsed > 0 && held && (!corpseHeld[c] || replaced) && started < KILLS_PER_FRAME) {
+          started++;
+          const body = takeVanishedNear(x, y, corpseRadius);
           const at = killCursor * 7;
           kills[at] = x;
           kills[at + 1] = y;
