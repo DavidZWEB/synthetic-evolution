@@ -535,9 +535,12 @@ can optionally record species origins and extinctions separately.
 metadata. The approved 256-slot / 1,024-gene policy requests **10,492,936 bytes**
 with the current layouts. World charges this to its existing core budget before
 allocation rather than silently increasing that budget. The current default world's
-total construction request is **88,613,076 bytes**, including this classifier component
-and the M5 birth-identity arrays,
-within the unchanged **100,663,296-byte (96 MiB)** per-world limit. These are requested
+total construction request is **89,011,412 bytes**. That includes this classifier
+component, the Phase 2 M5 birth-identity arrays, and Phase 3's per-agent state: body
+traits, bite intents and cooldown, swings, diet totals, and combat presentation. It also
+includes the corpse pool and the plants' starvation counts and fertility lattice. All of
+it fits within the unchanged **100,663,296-byte (96 MiB)** per-world limit.
+`sim-core/tests/footprint.rs` pins the figure, so update both together. These are requested
 construction bytes, not process RSS or browser resident memory. Zero capacity requests
 no classifier buffers and reports unclassified capacity outcomes. The constructor
 validates portable buffer limits and propagates host reservation failures.
