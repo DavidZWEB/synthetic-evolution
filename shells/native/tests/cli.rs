@@ -101,6 +101,10 @@ fn biting_founders_record_swings_hits_kills_and_meat() {
             "{cohort}: {predation}"
         );
         assert!(
+            predation["kills"].as_u64().unwrap() > 0,
+            "{cohort}: {predation}"
+        );
+        assert!(
             predation["eaten_animals"].as_f64().unwrap() > 0.0,
             "{cohort}"
         );
