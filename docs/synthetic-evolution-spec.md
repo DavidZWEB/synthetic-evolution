@@ -168,6 +168,8 @@ Inspector data (full genome, live brain activations, lineage) is **pulled on dem
 
 **DECIDED (Phase 3): the inspector shows combat.** Health, the three body traits, the lifetime diet split, and kills. An agent is credited with a kill for each victim it bit on the tick that victim fell to health 0. Wounds sum per victim (§4.2), so there is no single killer to name: biters that bring one victim down together are each credited, and agents' kills can sum to more than the world's count of deaths by bite (§7.9).
 
+**DECIDED (Phase 3): a diet colour mode.** Agents can be coloured by their lifetime diet, from green (all plants) to red (all meat), with the unfed grey. A diet is not in the frame: it changes over many meals, so while the mode is on the client pulls one byte per slot a few times a second. Each sample carries the slots' incarnations, so a newborn in a reused slot never wears its predecessor's diet.
+
 Everything crossing into the sim — including UI actions like placing food or spawning an agent — goes through a single serde-serializable `Command` enum stamped with an `apply_at_tick`. Replay, batch scripting, and the multi-client path in §9.5 all fall out of that one choice.
 
 #### (c) Perception buffer — inputs to the neural networks

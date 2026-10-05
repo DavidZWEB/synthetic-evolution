@@ -28,6 +28,7 @@
     <select value={colorMode} onchange={(event) => oncolor(event.currentTarget.value)}>
       <option value="signature">genetic signature</option>
       <option value="species">species</option>
+      <option value="diet">diet: plants to meat</option>
     </select>
   </label>
   <p class="help">Display colors do not change genetic signatures. IDs identify species only within this world.</p>

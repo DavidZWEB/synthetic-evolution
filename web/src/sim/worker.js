@@ -8,8 +8,8 @@
  *
  * **Views over WASM memory are rebuilt whenever the buffer changes identity.** Growing
  * WASM memory detaches every existing `TypedArray` silently, and while stepping never
- * grows it, `push_command`, `inspect_agent`, `species_diagnostics`, and
- * `complexity_diagnostics` allocate and might. Comparing the buffer is a pointer check
+ * grows it, `push_command`, `inspect_agent`, `species_diagnostics`,
+ * `complexity_diagnostics`, and `diet_shares` allocate and might. Comparing the buffer is a pointer check
  * per frame and removes the whole class (spec §7.3).
  *
  * Deliberately not here: anything that decides what the simulation does. The worker
@@ -393,6 +393,24 @@ const handlers = {
       });
     } catch (error) {
       postMessage({ kind: 'species', requestId, diagnostics: null, message: String(error) });
+    }
+  },
+
+  /** One diet byte per slot for the diet colour mode, with the slots' incarnations. */
+  diets({ requestId }) {
+    try {
+      if (!Number.isSafeInteger(requestId) || requestId < 1) {
+        throw new RangeError('invalid diet request identity');
+      }
+      const shares = sim.diet_shares();
+      // Read after the call, which can grow memory and detach the views.
+      const incarnation = sourceViews().incarnation.slice();
+      postMessage(
+        { kind: 'diets', requestId, tick: sim.tick().toString(), shares, incarnation },
+        [shares.buffer, incarnation.buffer],
+      );
+    } catch (error) {
+      postMessage({ kind: 'diets', requestId, shares: null, message: String(error) });
     }
   },
 

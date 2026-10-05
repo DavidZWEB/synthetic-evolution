@@ -21,6 +21,7 @@ export function createSim({
     ready: [],
     inspection: [],
     species: [],
+    diets: [],
     checkpoint: [],
     metrics: [],
     error: [],
@@ -104,6 +105,7 @@ export function createSim({
       send('inspect', { index, incarnation, requestId }),
     requestHash: () => send('hash'),
     requestSpecies: (requestId) => send('species', { requestId }),
+    requestDiets: (requestId) => send('diets', { requestId }),
     acknowledgeHistory: (batchId, error) => send('historyAck', { batchId, error }),
     historyBoundary: (captureEnd, requestId, checkpoint = false) =>
       send('historyBoundary', { captureEnd, requestId, checkpoint }),

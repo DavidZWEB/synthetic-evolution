@@ -7,6 +7,7 @@
   import SpeciesPanel from './ui/SpeciesPanel.svelte';
   import LineagePanel from './ui/LineagePanel.svelte';
   import { createSpeciesController } from './species/controller.js';
+  import { createDietController } from './diet/controller.js';
   import { createHistorySession } from './history/controller.js';
   import { parseArchive } from './history/archive.js';
   import { openHistoryStore } from './history/store.js';
@@ -334,7 +335,13 @@
   function setColorMode(value) {
     renderer?.setSpeciesView({ colorMode: value, selectedSpecies });
     colorMode = value;
+    diets.setActive(value === 'diet', performance.now());
   }
+
+  const diets = createDietController({
+    getSim: () => sim,
+    onChange: (sample) => renderer?.setDiets(sample),
+  });
 
   const gestures = createPointerGestures({
     getRenderer: () => renderer,
@@ -407,6 +414,7 @@
     metricSamples = [];
     inspector.select(null);
     species.reset();
+    diets.reset();
     start(next.load ?? null);
     transitioning = false;
     return true;
@@ -516,6 +524,7 @@
         failure = String(error);
         historySession?.abort(`renderer initialization failed: ${String(error)}`);
         species.reset();
+        diets.reset();
         nextSim.destroy();
         sim = null;
         return;
@@ -568,6 +577,9 @@
     nextSim.on('species', (message) => {
       if (sim === nextSim) species.accept(message);
     });
+    nextSim.on('diets', (message) => {
+      if (sim === nextSim) diets.accept(message);
+    });
     nextSim.on('validatedRun', (message) => {
       if (sim === nextSim) runValidation.accept(message);
     });
@@ -586,6 +598,7 @@
         latestFrame = null;
         inspector.select(null);
         species.reset();
+        diets.reset();
         if (message.context === 'create' && startingSource === 'url' && previousShareUrl) {
           shareUrl = previousShareUrl;
           globalThis.history.replaceState(null, '', previousShareUrl);
@@ -664,6 +677,7 @@
       const now = performance.now();
       inspector.poll(frame, now);
       species.poll(frame, now);
+      diets.poll(frame, now);
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;

@@ -761,4 +761,50 @@ impl Sim {
         };
         serde_json::to_string(&inspection).map_err(|e| js_error("inspect", e))
     }
+
+    /// One byte per slot for the diet colour mode: the share of each living agent's
+    /// lifetime intake taken from other agents, as 0 (all plants) to 254 (all meat), and
+    /// 255 for one that has eaten nothing or an empty slot.
+    ///
+    /// Pulled a few times a second while the mode is on rather than carried in every
+    /// frame (spec §2.2b). It allocates, so it can detach snapshot views (§7.3).
+    pub fn diet_shares(&self) -> Vec<u8> {
+        let agents = self.world.agents();
+        let mut shares = vec![UNFED; self.world.pool().capacity() as usize];
+        for id in self.world.pool().iter_live() {
+            let i = id.index();
+            shares[i] = diet_byte(agents.eaten_plants[i], agents.eaten_animals[i]);
+        }
+        shares
+    }
+}
+
+/// The diet byte of an agent that has eaten nothing, or of an empty slot.
+const UNFED: u8 = 255;
+
+/// The share of `plants + animals` eaten from other agents, scaled onto 0..=254. Both
+/// are scaled by the larger first, so no two finite totals overflow their sum.
+fn diet_byte(plants: f64, animals: f64) -> u8 {
+    let larger = plants.max(animals);
+    if larger.is_nan() || larger <= 0.0 {
+        return UNFED;
+    }
+    let meat = animals / larger;
+    (meat / (plants / larger + meat) * 254.0).round() as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_diet_byte_runs_from_plants_to_meat_and_marks_the_unfed() {
+        assert_eq!(diet_byte(0.0, 0.0), UNFED);
+        assert_eq!(diet_byte(5.0, 0.0), 0);
+        assert_eq!(diet_byte(0.0, 5.0), 254);
+        assert_eq!(diet_byte(1.0, 4.0), 203, "four fifths meat");
+        assert_eq!(diet_byte(f64::MAX, f64::MAX), 127, "the sum overflowed");
+        let least = f64::from_bits(1);
+        assert_eq!(diet_byte(least, least), 127);
+    }
 }

@@ -105,6 +105,7 @@ export function createRenderer(canvas, options) {
   let savedView = null;
   let selected = null;
   let speciesView = { colorMode: 'signature', selectedSpecies: null };
+  let diets = null;
   let destroyed = false;
   let contextUnavailable = false;
 
@@ -132,6 +133,7 @@ export function createRenderer(canvas, options) {
       if (savedView) pass.setView(savedView);
       if (selected) pass.select(selected);
       pass.setSpeciesView(speciesView);
+      pass.setDiets(diets);
       contextUnavailable = false;
       onContextRestored();
     } catch (error) {
@@ -200,6 +202,12 @@ export function createRenderer(canvas, options) {
       validateSpeciesView(view);
       speciesView = { ...view };
       pass?.setSpeciesView(speciesView);
+    },
+
+    /** The latest diet sample for the diet colour mode, or `null` before the first. */
+    setDiets(sample) {
+      diets = sample;
+      pass?.setDiets(sample);
     },
 
     setRenderHints(hints) {
@@ -401,6 +409,7 @@ function buildRenderer(
   let hasUploadedFrame = false;
   let selected = null;
   let speciesView = { colorMode: 'signature', selectedSpecies: null };
+  let diets = null;
   let colorsDirty = false;
   const colorScratch = new Float32Array(capacity * 3);
 
@@ -433,6 +442,11 @@ function buildRenderer(
       colorsDirty ||= view.colorMode !== speciesView.colorMode ||
         view.selectedSpecies !== speciesView.selectedSpecies;
       speciesView = { ...view };
+    },
+
+    setDiets(sample) {
+      diets = sample;
+      colorsDirty ||= speciesView.colorMode === 'diet';
     },
 
     setRenderHints(hints) {
@@ -524,7 +538,7 @@ function buildRenderer(
         hasUploadedFrame = true;
       }
       if (views && (shouldUpload || colorsDirty)) {
-        const colors = displayColors(views, count, speciesView, colorScratch);
+        const colors = displayColors(views, count, speciesView, colorScratch, diets);
         upload(attributes.signature, colors);
         colorsDirty = false;
         // After the colours, so a kill's vanishing body keeps the colour it was drawn in.
