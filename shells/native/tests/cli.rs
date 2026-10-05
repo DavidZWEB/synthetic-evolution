@@ -857,12 +857,20 @@ fn a_scheduled_retune_matches_the_plain_run_until_its_tick_then_diverges() {
 
 #[test]
 fn an_illegal_or_misplaced_retune_is_refused_before_the_run() {
-    let cases: [(&str, &str, &[&str], &str); 4] = [
+    let cases: [(&str, &str, &[&str], &str); 5] = [
         (
             r#"{"plants":{"max_plants":7}}"#,
             "10",
             &[],
             "--retune: invalid SimParams: plants.max_plants is fixed",
+        ),
+        // Checked before seeding, when no cooldown runs, yet a swing before tick 10
+        // could start a half second that 1e-10 s ticks cannot count.
+        (
+            r#"{"world":{"dt":1e-10},"combat":{"cooldown_seconds":0.4}}"#,
+            "10",
+            &[],
+            "--retune: invalid SimParams: a timestep this short cannot count a bite cooldown in whole ticks",
         ),
         (
             r#"{"plants":{"scent_rate":0.0}}"#,

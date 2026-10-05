@@ -370,19 +370,28 @@ impl World {
     /// Whether [`Self::set_params`] would accept `params`, without applying them, so a
     /// shell can refuse a scheduled retune before a long run rather than at its tick.
     ///
-    /// Beyond the params' own policy, a new timestep must still count every running
-    /// cooldown's remaining time in ticks.
+    /// Beyond the params' own policy, a new timestep must still count every cooldown in
+    /// whole ticks: each one running now, and the longest a swing can start under the
+    /// current params, since a scheduled retune is checked before the swings that
+    /// precede its tick.
     pub fn check_retune(&self, params: &SimParams) -> Result<(), ParamError> {
         self.params.check_retune(params, self.hash.cell_size())?;
         let (from, to) = (self.params.world.dt, params.world.dt);
-        if from != to
-            && self.pool.iter_live().any(|id| {
-                crate::combat::rescale_cooldown(self.agents.cooldown[id.index()], from, to)
-                    .is_none()
-            })
-        {
+        if from == to {
+            return Ok(());
+        }
+        // Rescaling never shortens a longer cooldown, so the longest decides for all.
+        let longest = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.cooldown[id.index()])
+            .fold(
+                crate::combat::cooldown_ticks(&self.params.combat, from),
+                u32::max,
+            );
+        if crate::combat::rescale_cooldown(longest, from, to).is_none() {
             return Err(ParamError(
-                "a timestep this short cannot count the bite cooldowns already running",
+                "a timestep this short cannot count a bite cooldown in whole ticks",
             ));
         }
         Ok(())

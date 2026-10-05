@@ -1190,9 +1190,10 @@ mod tests {
 
     #[test]
     fn a_timestep_too_short_to_count_a_running_cooldown_is_refused_whole() {
-        // 29 sixtieths of a second would need about 4.8 billion ticks at 1e-10 s. The
-        // params pass alone (0.4 s fits), so only the running cooldown refuses them, and
-        // the preflight and the retune agree.
+        // A half-second swing leaves 29 ticks running after the cooldown is retuned to a
+        // tenth of a second. At 1e-10 s those 29 sixtieths need about 4.8 billion ticks
+        // and a new tenth only a billion, so only the running cooldown refuses the
+        // timestep, and the preflight and the retune agree.
         let mut world = duel(
             duel_params(1),
             &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
@@ -1200,17 +1201,61 @@ mod tests {
         ask_to_bite(&mut world, 4.0);
         world.resolve_bites();
         world.recover_from_bites();
+        let mut quick = world.params().clone();
+        quick.combat.cooldown_seconds = 0.1;
+        world.set_params(quick).unwrap();
+        assert_eq!(
+            world.agents().cooldown[0],
+            29,
+            "a running cooldown keeps its ticks"
+        );
         let mut tiny = world.params().clone();
         tiny.world.dt = 1e-10;
-        tiny.combat.cooldown_seconds = 0.4;
         assert_eq!(tiny.validate(), Ok(()));
         let refusal = Err(crate::params::ParamError(
-            "a timestep this short cannot count the bite cooldowns already running",
+            "a timestep this short cannot count a bite cooldown in whole ticks",
         ));
         assert_eq!(world.check_retune(&tiny), refusal);
         assert_eq!(world.set_params(tiny), refusal);
         assert_eq!(world.params().world.dt, 1.0 / 60.0, "the params moved");
         assert_eq!(world.agents().cooldown[0], 29, "the cooldown moved");
+    }
+
+    #[test]
+    fn a_scheduled_retune_is_refused_before_a_swing_could_make_it_fail() {
+        // A shell checks a scheduled retune before its run, when no cooldown is running.
+        // Any swing before the retune's tick starts a full half second, which needs 5
+        // billion ticks at 1e-10 s, so the check must refuse what the retune would.
+        let mut world = duel(
+            duel_params(1),
+            &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
+        );
+        let mut tiny = world.params().clone();
+        tiny.world.dt = 1e-10;
+        tiny.combat.cooldown_seconds = 0.4;
+        let mut fine = tiny.clone();
+        fine.world.dt = 1e-9;
+        assert_eq!((tiny.validate(), fine.validate()), (Ok(()), Ok(())));
+        assert_eq!(world.agents().cooldown[0], 0, "nothing is running yet");
+        let refusal = Err(crate::params::ParamError(
+            "a timestep this short cannot count a bite cooldown in whole ticks",
+        ));
+        assert_eq!(world.check_retune(&tiny), refusal);
+        assert_eq!(world.check_retune(&fine), Ok(()));
+        ask_to_bite(&mut world, 4.0);
+        world.resolve_bites();
+        world.recover_from_bites();
+        assert_eq!(world.agents().cooldown[0], 29);
+        assert_eq!(
+            world.set_params(tiny),
+            refusal,
+            "the check and the retune agree"
+        );
+        assert_eq!(
+            world.set_params(fine),
+            Ok(()),
+            "a timestep that counts the longest cooldown still applies"
+        );
     }
 
     #[test]
