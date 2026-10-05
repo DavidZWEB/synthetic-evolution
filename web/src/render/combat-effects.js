@@ -139,7 +139,14 @@ export function createCombatEffects({
       const horizon = Math.min(elapsed, LONG_AGO);
       for (let i = 0; i < capacity; i++) {
         if (views.alive[i] !== 1) continue;
-        // A newborn or a reused slot carries its own agent's ages, so the same rule holds.
+        // A newborn in a reused slot must not inherit its predecessor's animation; its
+        // own ages then decide, by the same rule.
+        if (wasAlive[i] !== 1 || views.incarnation[i] !== incarnation[i]) {
+          swungAt[i] = -Infinity;
+          hurtAt[i] = -Infinity;
+          aim[i * 2] = NaN;
+          aim[i * 2 + 1] = NaN;
+        }
         if (views.swingAge[i] < horizon) {
           swungAt[i] = now;
           aim[i * 2] = views.biteAt[i * 2];
@@ -223,16 +230,19 @@ export function createCombatEffects({
       shapes.count = 0;
       for (let i = 0; i < capacity; i++) {
         if (views.alive[i] !== 1) continue;
+        // The arc fades with the swing; a landed bite's line and specks last a hit's
+        // longer time.
         const swing = (now - swungAt[i]) / SWING_MS;
-        if (!(swing >= 0 && swing < 1)) continue;
+        const hit = (now - swungAt[i]) / HIT_MS;
+        if (!(hit >= 0 && hit < 1)) continue;
         const x = views.position[i * 3];
         const y = views.position[i * 3 + 1];
         const size = views.size[i];
         const angle = aimAngle(views, i);
-        push(x, y, size + reach, angle, 1, 0.82, 0.55, 0.28 * (1 - swing), SHAPE.WEDGE, arc);
+        if (swing < 1) {
+          push(x, y, size + reach, angle, 1, 0.82, 0.55, 0.28 * (1 - swing), SHAPE.WEDGE, arc);
+        }
         if (!Number.isFinite(aim[i * 2])) continue;
-        const hit = (now - swungAt[i]) / HIT_MS;
-        if (!(hit >= 0 && hit < 1)) continue;
         const fade = 1 - hit;
         const dx = wrapped(aim[i * 2] - x, worldSize);
         const dy = wrapped(aim[i * 2 + 1] - y, worldSize);

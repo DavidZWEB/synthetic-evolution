@@ -148,6 +148,42 @@ test('a landed swing draws a line to its victim and specks at the mouth', () => 
   assert.equal(shapes(fx, views, 100 + HIT_MS).length, 0);
 });
 
+test('a landed bite outlasts its arc: the line and specks run for a hit\'s time', () => {
+  const fx = effects(1);
+  const views = frame(1);
+  place(views, 0, 10, 10);
+  fx.observe(views, 10n, 0, colors(1), 2);
+  views.swingAge[0] = 0;
+  views.biteAt[0] = 10;
+  views.biteAt[1] = 16;
+  fx.observe(views, 11n, 100, colors(1), 2);
+  const late = shapes(fx, views, 100 + (SWING_MS + HIT_MS) / 2).map((s) => s.kind);
+  assert.ok(!late.includes(SHAPE.WEDGE), 'the arc has gone');
+  assert.ok(late.includes(SHAPE.SEGMENT), 'the line is still there');
+});
+
+test('a newborn in a reused slot does not inherit its predecessor\'s animation', () => {
+  const fx = effects(1);
+  const views = frame(1);
+  place(views, 0, 10, 10);
+  views.incarnation[0] = 1;
+  fx.observe(views, 10n, 0, colors(1), 2);
+  views.swingAge[0] = 0;
+  views.hurtAge[0] = 0;
+  views.biteAt[0] = 10;
+  views.biteAt[1] = 16;
+  fx.observe(views, 11n, 100, colors(1), 2);
+  // The next tick the slot holds a newborn that has done nothing yet.
+  views.incarnation[0] = 2;
+  views.swingAge[0] = 255;
+  views.hurtAge[0] = 255;
+  views.biteAt.fill(NaN);
+  fx.observe(views, 12n, 120, colors(1), 2);
+  const { offsets, flashes } = fx.agents(views, 150);
+  assert.deepEqual([offsets[0], offsets[1], flashes[0]], [0, 0, 0]);
+  assert.equal(shapes(fx, views, 150).length, 0);
+});
+
 test('a hit across the seam is drawn the short way', () => {
   const fx = effects(1, 100);
   const views = frame(1);
