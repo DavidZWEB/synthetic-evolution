@@ -397,6 +397,7 @@ impl World {
             self.swings.push(Swing {
                 biter: id,
                 target: AgentId::NULL,
+                damage: 0.0,
             });
         }
         if self.swings.is_empty() {
@@ -433,24 +434,26 @@ impl World {
 
         let reference = self.params.body.size;
         let agents = &mut self.agents;
-        for swing in &self.swings {
+        // Mouthfuls in agent-index order: a victim holding less than every biter asks
+        // serves earlier slots first, as food does (spec §4.2).
+        for swing in &mut self.swings {
             if swing.target.is_null() {
                 continue;
             }
             let (i, j) = (swing.biter.index(), swing.target.index());
+            let gape = agents.mouth[i] * (agents.size[i] / reference);
+            swing.damage = combat::damage(gape, agents.size[j] / reference, combat);
             let (mut biter_energy, mut biter_reserve) =
                 (agents.energy[i], agents.energy_reserve[i]);
             let (mut victim_energy, mut victim_reserve) =
                 (agents.energy[j], agents.energy_reserve[j]);
-            let dissipated = combat::hit(
+            let dissipated = combat::take_mouthful(
                 combat::Hit {
                     biter_energy: &mut biter_energy,
                     biter_reserve: &mut biter_reserve,
                     victim_energy: &mut victim_energy,
                     victim_reserve: &mut victim_reserve,
-                    victim_health: &mut agents.health[j],
-                    gape: agents.mouth[i] * (agents.size[i] / reference),
-                    victim_scale: agents.size[j] / reference,
+                    gape,
                 },
                 combat,
             );
@@ -460,6 +463,8 @@ impl World {
             agents.energy_reserve[j] = victim_reserve;
             self.ledger.record_dissipated_amount(dissipated);
         }
+        // Wounds once per victim, in an order no slot chooses.
+        combat::wound(&mut self.swings, &mut agents.health);
     }
 
     /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
@@ -1206,5 +1211,42 @@ mod tests {
         assert_eq!(world.set_params(tiny), refusal);
         assert_eq!(world.params().world.dt, 1.0 / 60.0, "the params moved");
         assert_eq!(world.agents().cooldown[0], 29, "the cooldown moved");
+    }
+
+    #[test]
+    fn the_attackers_slots_cannot_decide_whether_their_victim_dies() {
+        // Three biters close on one victim from east, west, and north. Their mouths deal
+        // 0.1, 0.2, and 0.7 of full health, which subtracted hit by hit in some slot
+        // orders would leave the victim a sliver of health (spec §4.2).
+        use core::f32::consts::{FRAC_PI_2, PI};
+        let around = [
+            (Vec3::new(104.0, 100.0, 0.0), PI),
+            (Vec3::new(96.0, 100.0, 0.0), 0.0),
+            (Vec3::new(100.0, 104.0, 0.0), -FRAC_PI_2),
+        ];
+        let orders = [
+            [0.4, 0.8, 2.8],
+            [0.4, 2.8, 0.8],
+            [0.8, 0.4, 2.8],
+            [0.8, 2.8, 0.4],
+            [2.8, 0.4, 0.8],
+            [2.8, 0.8, 0.4],
+        ];
+        for mouths in orders {
+            let mut agents = vec![(Vec3::new(100.0, 100.0, 0.0), 0.0, 1_000.0)];
+            agents.extend(around.map(|(at, yaw)| (at, yaw, 100.0)));
+            let mut world = duel(duel_params(4), &agents);
+            for (slot, mouth) in (1..).zip(mouths) {
+                world.agents_mut().mouth[slot] = mouth;
+            }
+            ask_to_bite(&mut world, 4.0);
+            world.intents_mut().bite[0] = 0.0;
+            world.resolve_bites();
+            assert_eq!(
+                world.agents().health[0].to_bits(),
+                0.0f32.to_bits(),
+                "{mouths:?}"
+            );
+        }
     }
 }

@@ -3,8 +3,9 @@
 //!
 //! Swings resolve in two passes, so that index order cannot decide who swings or who
 //! dies: the tick fixes every swing and its target from the state at the start of step
-//! 7, paying every cost, and only then applies hits in agent-index order. Deliberately
-//! not here: dying. A victim at health 0 joins the starved in step 10.
+//! 7, paying every cost, and only then lands the hits, mouthfuls in agent-index order
+//! and wounds summed per victim in an order no slot chooses. Deliberately not here:
+//! dying. A victim at health 0 joins the starved in step 10.
 
 use glam::Vec3;
 
@@ -14,12 +15,13 @@ use crate::math;
 use crate::params::CombatParams;
 use crate::spatial::SpatialHash;
 
-/// One swing fixed by the first pass: who swung, and whom it hits, or `AgentId::NULL`
-/// for a miss.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// One swing fixed by the first pass: who swung, whom it hits (`AgentId::NULL` for a
+/// miss), and, once it lands, the damage it deals.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Swing {
     pub biter: AgentId,
     pub target: AgentId,
+    pub damage: f32,
 }
 
 /// Whether an agent swings this tick: its drive is above the gate, its cooldown has
@@ -105,27 +107,48 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
     nearest.map(|(_, index)| index as usize)
 }
 
+/// The health a hit removes: `attack_damage · g / s_victim`, clamped to `[0, 1]`,
+/// where `g` is the biter's gape (mouth times its relative size) and `s_victim` the
+/// victim's relative size (spec §3.5, §4.2).
+pub(crate) fn damage(gape: f32, victim_scale: f32, combat: &CombatParams) -> f32 {
+    (combat.attack_damage * gape / victim_scale).clamp(0.0, 1.0)
+}
+
+/// Lands every hit's damage, summed per victim in ascending order and subtracted
+/// once. Subtracting hit by hit rounds differently in different orders, enough to
+/// leave a victim alive at a sliver of health or dead at 0, and the order would be
+/// the attackers' slots (spec §4.2). Reorders `swings`.
+pub(crate) fn wound(swings: &mut [Swing], health: &mut [f32]) {
+    // Damage is never negative, so its bits order as its value does; misses, aimed at
+    // `AgentId::NULL`, sort last.
+    swings.sort_unstable_by_key(|swing| (swing.target, swing.damage.to_bits()));
+    let mut rest = &*swings;
+    while let Some(first) = rest.first().filter(|swing| !swing.target.is_null()) {
+        let count = rest
+            .iter()
+            .take_while(|swing| swing.target == first.target)
+            .count();
+        let total: f32 = rest[..count].iter().map(|swing| swing.damage).sum();
+        let victim = &mut health[first.target.index()];
+        *victim = (*victim - total).max(0.0);
+        rest = &rest[count..];
+    }
+}
+
 /// The two bodies in a hit, and the energy each holds.
 pub(crate) struct Hit<'a> {
     pub biter_energy: &'a mut f32,
     pub biter_reserve: &'a mut f64,
     pub victim_energy: &'a mut f32,
     pub victim_reserve: &'a mut f64,
-    pub victim_health: &'a mut f32,
     /// Gape: mouth times the biter's relative size (spec §3.5).
     pub gape: f32,
-    /// The victim's size relative to the reference body.
-    pub victim_scale: f32,
 }
 
-/// Applies one hit and returns what it dissipated (spec §4.2). Damage is
-/// `attack_damage · g / s_victim`, clamped to `[0, 1]`, and accumulates. The mouthful
-/// asks `mouthful · g²` and takes what the victim holds, of which the biter keeps
+/// Takes one hit's mouthful and returns what it dissipated (spec §4.2). It asks
+/// `mouthful · g²` and takes what the victim holds, of which the biter keeps
 /// `assimilation`; the rest leaves the world.
-pub(crate) fn hit(hit: Hit<'_>, combat: &CombatParams) -> Amount {
-    let damage = (combat.attack_damage * hit.gape / hit.victim_scale).clamp(0.0, 1.0);
-    *hit.victim_health = (*hit.victim_health - damage).max(0.0);
-
+pub(crate) fn take_mouthful(hit: Hit<'_>, combat: &CombatParams) -> Amount {
     let ask = (combat.mouthful * hit.gape * hit.gape) as f64;
     let taken = ask.min(energy::total(*hit.victim_energy, *hit.victim_reserve));
     let kept = energy::transfer(
@@ -297,45 +320,89 @@ mod tests {
             assimilation: 0.75,
             ..combat()
         };
+        assert_eq!(damage(2.0, 4.0, &c), 0.125, "0.25 · 2 / 4");
+        assert_eq!(damage(2.0, 0.25, &c), 1.0, "clamped to full health");
         let (mut biter, mut biter_reserve) = (10.0f32, 0.0f64);
         let (mut victim, mut victim_reserve) = (100.0f32, 0.0f64);
-        let mut health = 1.0f32;
-        let dissipated = hit(
+        let dissipated = take_mouthful(
             Hit {
                 biter_energy: &mut biter,
                 biter_reserve: &mut biter_reserve,
                 victim_energy: &mut victim,
                 victim_reserve: &mut victim_reserve,
-                victim_health: &mut health,
                 gape: 2.0,
-                victim_scale: 4.0,
             },
             &c,
         );
-        // Damage 0.25 · 2 / 4; a mouthful of 20 · 2², of which 0.75 is kept.
-        assert_eq!(health, 0.875);
+        // A mouthful of 20 · 2², of which 0.75 is kept.
         assert_eq!((victim, victim_reserve), (20.0, 0.0));
         assert_eq!((biter, biter_reserve), (70.0, 0.0));
         assert_eq!(dissipated.approximate(), 20.0);
 
-        // A victim holding less than the ask gives what it has, and health floors at 0.
+        // A victim holding less than the ask gives what it has.
         let mut biter = 0.0f32;
         let mut victim = 30.0f32;
-        let mut health = 0.25f32;
-        let dissipated = hit(
+        let dissipated = take_mouthful(
             Hit {
                 biter_energy: &mut biter,
                 biter_reserve: &mut 0.0,
                 victim_energy: &mut victim,
                 victim_reserve: &mut 0.0,
-                victim_health: &mut health,
                 gape: 2.0,
-                victim_scale: 0.5,
             },
             &c,
         );
-        assert_eq!((health, victim, biter), (0.0, 0.0, 22.5));
+        assert_eq!((victim, biter), (0.0, 22.5));
         assert_eq!(dissipated.approximate(), 7.5);
+    }
+
+    #[test]
+    fn wounds_land_the_same_whatever_order_the_hits_came_in() {
+        // Mouths 0.4, 0.8, and 2.8 deal 0.1, 0.2, and 0.7. Subtracted hit by hit, some
+        // orders leave health exactly 0 and others a few billionths, which would let the
+        // attackers' slots decide whether the victim dies (spec §4.2).
+        let c = combat();
+        let hits = [0.4, 0.8, 2.8].map(|mouth| damage(mouth, 1.0, &c));
+        let orders = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for order in orders {
+            let mut swings = order.map(|k| Swing {
+                biter: AgentId::new(k as u32 + 1),
+                target: AgentId::new(0),
+                damage: hits[k],
+            });
+            let mut health = [1.0f32, 1.0];
+            wound(&mut swings, &mut health);
+            assert_eq!(health[0].to_bits(), 0.0f32.to_bits(), "{order:?}");
+            assert_eq!(health[1], 1.0, "{order:?}: an unhit agent was wounded");
+        }
+        // Misses land nothing, and each victim takes only its own hits.
+        let mut swings = [
+            Swing {
+                biter: AgentId::new(0),
+                target: AgentId::NULL,
+                damage: 0.0,
+            },
+            Swing {
+                biter: AgentId::new(2),
+                target: AgentId::new(1),
+                damage: 0.25,
+            },
+            Swing {
+                biter: AgentId::new(3),
+                target: AgentId::new(0),
+                damage: 0.5,
+            },
+        ];
+        let mut health = [1.0f32, 1.0];
+        wound(&mut swings, &mut health);
+        assert_eq!(health, [0.5, 0.75]);
     }
 
     #[test]
