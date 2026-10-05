@@ -626,13 +626,20 @@ fn diagnose_predation(metrics: &[(u64, &WorldMetrics)], findings: &mut Vec<Findi
             likely_causes: vec!["attack_cost too high relative to the mouthful and prey energy"],
         });
     }
-    // The plant-eaters were gone while carnivores lived, and then so was everyone.
-    if let Some(&(gone, ..)) = tiers.iter().find(|(_, p, population)| {
-        *population > 0 && p.herbivore_biomass == 0.0 && p.carnivore_biomass > 0.0
-    }) && let Some(&(tick, ..)) = tiers
-        .iter()
-        .find(|(tick, _, population)| *tick > gone && *population == 0)
+    // Plant-eaters that had lived were gone while carnivores lived, stayed gone, and then
+    // so was everyone. Prey that recovered, or was never seen, is not this collapse.
+    let extinct = tiers.iter().position(|(_, _, population)| *population == 0);
+    let fed = extinct.and_then(|end| {
+        tiers[..end]
+            .iter()
+            .rposition(|(_, p, _)| p.herbivore_biomass > 0.0)
+    });
+    if let (Some(end), Some(fed)) = (extinct, fed)
+        && let Some(&(gone, ..)) = tiers[fed + 1..end]
+            .iter()
+            .find(|(_, p, population)| *population > 0 && p.carnivore_biomass > 0.0)
     {
+        let tick = tiers[end].0;
         findings.push(Finding {
             code: "prey_collapse",
             signal: format!(
@@ -1042,6 +1049,17 @@ mod tests {
             tiers(2_000, 0, 0.0, 0.0),
         ];
         assert!(codes(&overeaten).contains(&"prey_collapse"));
+        // Plant-eaters that recover before the end are not that collapse, and nor is a
+        // world whose prey was never seen.
+        let recovered = [
+            tiers(0, 10, 0.0, 100.0),
+            tiers(1_000, 10, 80.0, 0.0),
+            tiers(2_000, 10, 40.0, 50.0),
+            tiers(3_000, 0, 0.0, 0.0),
+        ];
+        assert!(!codes(&recovered).contains(&"prey_collapse"));
+        let unseen = [tiers(0, 10, 80.0, 0.0), tiers(1_000, 0, 0.0, 0.0)];
+        assert!(!codes(&unseen).contains(&"prey_collapse"));
         assert!(
             !codes(&overeaten).contains(&"carnivore_collapse"),
             "a total collapse is not carnivores dying beside living prey"
