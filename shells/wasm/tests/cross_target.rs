@@ -56,6 +56,14 @@ mod bodies_case;
 #[path = "../../../sim-core/tests/common/combat_case.rs"]
 mod combat_case;
 
+#[path = "../../../sim-core/tests/common/wiring_case.rs"]
+mod wiring_case;
+
+#[wasm_bindgen_test]
+fn wired_sensors_and_knockouts_agree_with_native_in_every_mode() {
+    wiring_case::check_wiring_runs();
+}
+
 #[wasm_bindgen_test]
 fn bites_agree_with_native_in_every_mode() {
     combat_case::check_combat_runs();
