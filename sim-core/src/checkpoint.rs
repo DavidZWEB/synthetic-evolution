@@ -635,6 +635,10 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
     {
         return Err(invalid("energy ledger must be finite"));
     }
+    // Every kill followed a hit and every hit a swing, as the shells' telemetry assumes.
+    if c.bites.kills > c.bites.hits || c.bites.hits > c.bites.swings {
+        return Err(invalid("bite counts require kills <= hits <= swings"));
+    }
 
     world.rng = c.rng;
     world.tick = c.tick;
@@ -702,7 +706,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 20] = [
+        let cases: [(&str, Corrupt); 22] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -737,6 +741,10 @@ mod tests {
             ("health at zero", |c| c.agents[0].health = 0.0),
             ("health above full", |c| c.agents[0].health = 1.5),
             ("a negative diet", |c| c.agents[0].eaten_animals = -1.0),
+            ("a kill without a hit", |c| c.bites.kills = c.bites.hits + 1),
+            ("a hit without a swing", |c| {
+                c.bites.hits = c.bites.swings + 1
+            }),
             ("bite aimed off the plane", |c| {
                 for gene in &mut c.agents[0].genome.values {
                     if let Gene::Effector(effector) = gene {
