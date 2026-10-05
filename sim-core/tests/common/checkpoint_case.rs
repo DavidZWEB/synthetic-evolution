@@ -28,9 +28,9 @@ pub const CONTINUE_TICKS: u32 = 350;
 
 /// FNV-1a of the checkpoint bytes, per mode: both targets must encode identically.
 pub const CHECKPOINT_FINGERPRINT: [u64; 3] = [
-    0x0de0_7bc4_0854_dfcd,
-    0xa991_c6e6_3db4_a4b7,
-    0xf6f8_2815_9b48_87da,
+    0x7382_4b66_70c9_d806,
+    0x3666_a142_b21d_8dda,
+    0x0ffd_b74e_758f_d673,
 ];
 /// `state_hash` after restoring and continuing `CONTINUE_TICKS`, per mode.
 pub const CONTINUED_HASH: [u64; 3] = [

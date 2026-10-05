@@ -136,8 +136,9 @@ fn birth_identity_arrays_are_charged_and_fit_the_shipped_budget() {
     // starvation count per plant (M9 turnover), the 7 x 7 fertility lattice that
     // shipped patchiness draws, the 2,000-slot corpse pool with its grid, and each
     // agent slot's muscle and mouth, three bite intents, a bite cooldown, a swing with
-    // its damage, and two diet totals (Phase 3).
-    assert_eq!(current, 88_941_412);
+    // its damage, two diet totals, and the presentation state a frame draws attacks
+    // from: two event ages, a bite's landing point, and a kill count (Phase 3).
+    assert_eq!(current, 89_011_412);
     assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
     // One birth ID and two parent references per slot are part of the estimate.
     params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);

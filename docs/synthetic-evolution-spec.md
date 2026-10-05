@@ -166,6 +166,8 @@ Three frames are required because the renderer must lease one while it issues up
 
 Inspector data (full genome, live brain activations, lineage) is **pulled on demand** for the one selected agent via a request on the command queue, not streamed for everybody.
 
+**DECIDED (Phase 3): the inspector shows combat.** Health, the three body traits, the lifetime diet split, and kills. An agent is credited with a kill for each victim it bit on the tick that victim fell to health 0. Wounds sum per victim (§4.2), so there is no single killer to name: biters that bring one victim down together are each credited, and agents' kills can sum to more than the world's count of deaths by bite (§7.9).
+
 Everything crossing into the sim — including UI actions like placing food or spawning an agent — goes through a single serde-serializable `Command` enum stamped with an `apply_at_tick`. Replay, batch scripting, and the multi-client path in §9.5 all fall out of that one choice.
 
 #### (c) Perception buffer — inputs to the neural networks
@@ -1461,9 +1463,10 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 10 since
-Phase 3's wired sensors and knockout switches added `mutation.organs.wired_weight_scale`
-and the sensing gains; format 9 had added each agent's lifetime intake from plants and
+manifest records the container and checkpoint formats (checkpoint format 11 since
+Phase 3's drawn attacks added each agent's swing and hurt ages, where its latest bite
+landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
+sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's
 combat and founder params and each agent's cooldown; format 7 had added evolvable bodies'
 trait ranges, trait upkeep, and trait mutation, and format 6 corpses' params, slots,
