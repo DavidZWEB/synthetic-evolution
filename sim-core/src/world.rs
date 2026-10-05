@@ -353,12 +353,14 @@ impl World {
     pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
         self.check_retune(&params)?;
         // Cooldowns count ticks, so a new timestep would change the time left on each
-        // running one; keep that time instead (spec §4.2).
+        // running one; keep that time instead (spec §4.2). `check_retune` has proved
+        // every one countable, so nothing here can fail part-way.
         let (from, to) = (self.params.world.dt, params.world.dt);
         if from != to {
             for id in self.pool.iter_live() {
                 let cooldown = &mut self.agents.cooldown[id.index()];
-                *cooldown = crate::combat::rescale_cooldown(*cooldown, from, to);
+                *cooldown =
+                    crate::combat::rescale_cooldown(*cooldown, from, to).unwrap_or(u32::MAX);
             }
         }
         self.params = params;
@@ -367,8 +369,23 @@ impl World {
 
     /// Whether [`Self::set_params`] would accept `params`, without applying them, so a
     /// shell can refuse a scheduled retune before a long run rather than at its tick.
+    ///
+    /// Beyond the params' own policy, a new timestep must still count every running
+    /// cooldown's remaining time in ticks.
     pub fn check_retune(&self, params: &SimParams) -> Result<(), ParamError> {
-        self.params.check_retune(params, self.hash.cell_size())
+        self.params.check_retune(params, self.hash.cell_size())?;
+        let (from, to) = (self.params.world.dt, params.world.dt);
+        if from != to
+            && self.pool.iter_live().any(|id| {
+                crate::combat::rescale_cooldown(self.agents.cooldown[id.index()], from, to)
+                    .is_none()
+            })
+        {
+            return Err(ParamError(
+                "a timestep this short cannot count the bite cooldowns already running",
+            ));
+        }
+        Ok(())
     }
 
     /// Every joule the world currently holds, in plants, agents, corpses, and the

@@ -1182,4 +1182,29 @@ mod tests {
             "the next swing came after the time that was left"
         );
     }
+
+    #[test]
+    fn a_timestep_too_short_to_count_a_running_cooldown_is_refused_whole() {
+        // 29 sixtieths of a second would need about 4.8 billion ticks at 1e-10 s. The
+        // params pass alone (0.4 s fits), so only the running cooldown refuses them, and
+        // the preflight and the retune agree.
+        let mut world = duel(
+            duel_params(1),
+            &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.resolve_bites();
+        world.recover_from_bites();
+        let mut tiny = world.params().clone();
+        tiny.world.dt = 1e-10;
+        tiny.combat.cooldown_seconds = 0.4;
+        assert_eq!(tiny.validate(), Ok(()));
+        let refusal = Err(crate::params::ParamError(
+            "a timestep this short cannot count the bite cooldowns already running",
+        ));
+        assert_eq!(world.check_retune(&tiny), refusal);
+        assert_eq!(world.set_params(tiny), refusal);
+        assert_eq!(world.params().world.dt, 1.0 / 60.0, "the params moved");
+        assert_eq!(world.agents().cooldown[0], 29, "the cooldown moved");
+    }
 }

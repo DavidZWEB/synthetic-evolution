@@ -42,9 +42,11 @@ pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
 
 /// A cooldown's remaining ticks after the timestep changes from `from_dt` to `to_dt`:
 /// the same remaining time, rounded up so a retune never shortens it (spec §4.2).
-pub(crate) fn rescale_cooldown(ticks: u32, from_dt: f32, to_dt: f32) -> u32 {
-    // `as` saturates, and validation keeps both timesteps positive and finite.
-    libm::ceil(f64::from(ticks) * f64::from(from_dt) / f64::from(to_dt)) as u32
+///
+/// `None` when that many ticks cannot be counted, which a retune must refuse.
+pub(crate) fn rescale_cooldown(ticks: u32, from_dt: f32, to_dt: f32) -> Option<u32> {
+    let scaled = libm::ceil(f64::from(ticks) * f64::from(from_dt) / f64::from(to_dt));
+    (scaled <= f64::from(u32::MAX)).then_some(scaled as u32)
 }
 
 /// Where a swing comes from and points.
@@ -166,14 +168,19 @@ mod tests {
     #[test]
     fn a_new_timestep_keeps_each_cooldown_s_remaining_time() {
         let sixtieth = 1.0 / 60.0;
-        assert_eq!(rescale_cooldown(29, sixtieth, 1.0 / 120.0), 58);
+        assert_eq!(rescale_cooldown(29, sixtieth, 1.0 / 120.0), Some(58));
         assert_eq!(
             rescale_cooldown(29, sixtieth, 1.0 / 30.0),
-            15,
+            Some(15),
             "14.5 rounds up"
         );
-        assert_eq!(rescale_cooldown(0, sixtieth, 1.0 / 120.0), 0);
-        assert_eq!(rescale_cooldown(u32::MAX, 1.0, 0.5), u32::MAX, "saturates");
+        assert_eq!(rescale_cooldown(0, sixtieth, 1.0 / 120.0), Some(0));
+        assert_eq!(rescale_cooldown(u32::MAX, 1.0, 1.0), Some(u32::MAX));
+        assert_eq!(
+            rescale_cooldown(29, sixtieth, 1e-10),
+            None,
+            "too many to count"
+        );
     }
 
     #[test]
