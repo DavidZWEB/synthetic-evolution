@@ -35,9 +35,11 @@ pub(crate) fn swings(
 }
 
 /// Whole ticks before a swinging agent can swing again: never fewer than
-/// `cooldown_seconds`, which validation keeps countable.
+/// `cooldown_seconds`, which validation keeps countable. In f64, because an f32
+/// quotient can round down onto an integer first: 0.15 s over 0.05 s needs 4 ticks,
+/// since 3 of them fall just short of the stored duration.
 pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
-    libm::ceilf(combat.cooldown_seconds / dt) as u32
+    libm::ceil(f64::from(combat.cooldown_seconds) / f64::from(dt)) as u32
 }
 
 /// A cooldown's remaining ticks after the timestep changes from `from_dt` to `to_dt`:
@@ -188,6 +190,12 @@ mod tests {
         let c = combat();
         assert_eq!(cooldown_ticks(&c, 1.0 / 60.0), 30);
         assert_eq!(cooldown_ticks(&c, 0.2), 3, "2.5 ticks round up");
+        let tight = CombatParams {
+            cooldown_seconds: 0.15,
+            ..c.clone()
+        };
+        // In f32, 0.15 / 0.05 rounds to exactly 3, and 3 ticks are just short of it.
+        assert_eq!(cooldown_ticks(&tight, 0.05), 4);
         let none = CombatParams {
             cooldown_seconds: 0.0,
             ..c

@@ -1399,9 +1399,11 @@ impl SimParams {
                 "combat.attack_damage and combat.assimilation must be in [0, 1]",
             ));
         }
-        // A cooldown is counted in whole ticks, so the count must fit one.
+        // A cooldown is counted in whole ticks, so the count must fit one: in f64, as
+        // `combat::cooldown_ticks` counts it, since `u32::MAX as f32` rounds up past it.
         if !(combat.cooldown_seconds >= 0.0)
-            || !(combat.cooldown_seconds / self.world.dt <= u32::MAX as f32)
+            || !(libm::ceil(f64::from(combat.cooldown_seconds) / f64::from(self.world.dt))
+                <= f64::from(u32::MAX))
         {
             return Err(ParamError(
                 "combat.cooldown_seconds must be non-negative and countable in ticks",
@@ -2403,6 +2405,11 @@ mod tests {
             (fractions, |p| p.combat.assimilation = -0.1),
             (cooldown, |p| p.combat.cooldown_seconds = -1.0),
             (cooldown, |p| p.combat.cooldown_seconds = 1e30),
+            // 2³² ticks: past the count, though `u32::MAX as f32` would let it through.
+            (cooldown, |p| {
+                p.world.dt = 1.0;
+                p.combat.cooldown_seconds = 4_294_967_296.0;
+            }),
             (reach, |p| {
                 p.founder.bite = true;
                 p.combat.reach = 500.5;
