@@ -350,7 +350,7 @@ impl World {
         let mut removed = 0;
         for &id in &dying {
             if self.agents.health[id.index()] <= 0.0 {
-                self.bites.kills += 1;
+                self.bites.kills = self.bites.kills.saturating_add(1);
             }
             debug_assert!(
                 self.agents.energy[id.index()] <= 0.0 || self.agents.health[id.index()] <= 0.0,
@@ -397,7 +397,7 @@ impl World {
             );
             self.ledger.record_dissipated_amount(paid);
             self.agents.cooldown[i] = cooldown;
-            self.bites.swings += 1;
+            self.bites.swings = self.bites.swings.saturating_add(1);
             self.swings.push(Swing {
                 biter: id,
                 target: AgentId::NULL,
@@ -468,7 +468,7 @@ impl World {
             agents.energy_reserve[j] = victim_reserve;
             agents.eaten_animals[i] += mouthful.kept;
             self.ledger.record_dissipated_amount(mouthful.dissipated);
-            self.bites.hits += 1;
+            self.bites.hits = self.bites.hits.saturating_add(1);
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
@@ -1398,5 +1398,31 @@ mod tests {
         );
         assert_eq!(world.agents().eaten_animals[grazer], 0.0);
         assert_eq!(world.bite_counts(), crate::combat::BiteCounts::default());
+    }
+
+    #[test]
+    fn bite_counts_saturate_rather_than_wrap() {
+        // A restored checkpoint may carry any count, and one that wrapped to zero would
+        // read as a world that never bit.
+        let mut world = duel(
+            duel_params(2),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        let full = crate::combat::BiteCounts {
+            swings: u64::MAX,
+            hits: u64::MAX,
+            kills: u64::MAX,
+        };
+        world.bites = full;
+        world.agents_mut().health[1] = 0.25;
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        world.charge_metabolism();
+        assert_eq!(world.resolve_deaths(), 1, "the bite killed");
+        assert_eq!(world.bite_counts(), full);
     }
 }
