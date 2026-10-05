@@ -30,6 +30,7 @@
  */
 
 import { createCamera } from './camera.js';
+import { OVERLAY_STRIDE, createCombatEffects } from './combat-effects.js';
 import { createProgram } from './gl-program.js';
 import { pickAgent } from './picking.js';
 import { createReseedGlow } from './reseed-glow.js';
@@ -37,6 +38,8 @@ import { displayColors, validateSpeciesView } from './species-colors.js';
 import {
   AGENT_FRAGMENT_SHADER,
   AGENT_VERTEX_SHADER,
+  EFFECT_FRAGMENT_SHADER,
+  EFFECT_VERTEX_SHADER,
   PLANT_FRAGMENT_SHADER,
   PLANT_VERTEX_SHADER,
 } from './shaders.js';
@@ -206,11 +209,14 @@ export function createRenderer(canvas, options) {
       config.corpseRadius = hints.corpseRadius;
       config.corpseColor = [...hints.corpseColor];
       config.corpseFullEnergy = hints.corpseFullEnergy;
+      config.combatArc = hints.combatArc;
+      config.combatReach = hints.combatReach;
       pass?.setRenderHints(hints);
     },
 
-    draw(views, count, fresh = true) {
-      pass?.draw(views, count, fresh);
+    /** Draws one frame's views; `tick` is the frame's, so combat can tell new events. */
+    draw(views, count, fresh = true, tick = null) {
+      pass?.draw(views, count, fresh, tick);
     },
 
     destroy() {
@@ -241,7 +247,7 @@ function buildRenderer(
   resources,
   {
     worldSize, capacity, plantCapacity, plantRadius, plantColor, plantMaxEnergy,
-    corpseCapacity, corpseRadius, corpseColor, corpseFullEnergy,
+    corpseCapacity, corpseRadius, corpseColor, corpseFullEnergy, combatArc, combatReach,
   },
 ) {
   const program = resources.program(AGENT_VERTEX_SHADER, AGENT_FRAGMENT_SHADER);
@@ -309,6 +315,9 @@ function buildRenderer(
     // divide it to 1/255 and shrink every agent to four thousandths of its radius —
     // which renders as an empty world rather than as an error.
     alive: instanced('a_alive', 1, gl.UNSIGNED_BYTE, 1, false),
+    offset: instanced('a_offset', 2, gl.FLOAT, 4),
+    flash: instanced('a_flash', 1, gl.FLOAT, 4),
+    wound: instanced('a_wound', 1, gl.FLOAT, 4),
   };
 
   gl.bindVertexArray(null);
@@ -344,6 +353,37 @@ function buildRenderer(
   };
   gl.bindVertexArray(null);
 
+  // The combat overlay: one interleaved record per shape, drawn over everything with
+  // alpha blending.
+  const combat = createCombatEffects({ capacity, corpseCapacity, worldSize });
+  const effectProgram = resources.program(EFFECT_VERTEX_SHADER, EFFECT_FRAGMENT_SHADER);
+  const effectUniforms = {
+    center: gl.getUniformLocation(effectProgram, 'u_center'),
+    ppu: gl.getUniformLocation(effectProgram, 'u_ppu'),
+    viewport: gl.getUniformLocation(effectProgram, 'u_viewport'),
+    world: gl.getUniformLocation(effectProgram, 'u_world'),
+  };
+  const effectVao = resources.vertexArray();
+  gl.bindVertexArray(effectVao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, corners);
+  const effectCornerAttr = gl.getAttribLocation(effectProgram, 'a_corner');
+  gl.enableVertexAttribArray(effectCornerAttr);
+  gl.vertexAttribPointer(effectCornerAttr, 2, gl.FLOAT, false, 0, 0);
+  const effectBuffer = resources.buffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, effectBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, combat.maxInstances * OVERLAY_STRIDE * 4, gl.DYNAMIC_DRAW);
+  const stride = OVERLAY_STRIDE * 4;
+  for (const [name, components, at] of [
+    ['a_center', 2, 0], ['a_radius', 1, 2], ['a_angle', 1, 3], ['a_color', 4, 4],
+    ['a_kind', 1, 8], ['a_params', 2, 9],
+  ]) {
+    const location = gl.getAttribLocation(effectProgram, name);
+    gl.enableVertexAttribArray(location);
+    gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, at * 4);
+    gl.vertexAttribDivisor(location, 1);
+  }
+  gl.bindVertexArray(null);
+
   gl.clearColor(0.055, 0.063, 0.078, 1);
 
   const camera = createCamera(canvas, worldSize, (width, height) =>
@@ -356,6 +396,8 @@ function buildRenderer(
   let currentCorpseRadius = corpseRadius;
   let currentCorpseColor = [...corpseColor];
   let currentCorpseFullEnergy = corpseFullEnergy;
+  let currentCombatArc = combatArc;
+  let currentCombatReach = combatReach;
   let hasUploadedFrame = false;
   let selected = null;
   let speciesView = { colorMode: 'signature', selectedSpecies: null };
@@ -400,10 +442,15 @@ function buildRenderer(
       currentCorpseRadius = hints.corpseRadius;
       currentCorpseColor = [...hints.corpseColor];
       currentCorpseFullEnergy = hints.corpseFullEnergy;
+      currentCombatArc = hints.combatArc;
+      currentCombatReach = hints.combatReach;
     },
 
-    /** Draws one frame's views. `count` is the slot count, not the population. */
-    draw(views, count, fresh = true) {
+    /**
+     * Draws one frame's views. `count` is the slot count, not the population, and
+     * `tick` the frame's, so combat can tell which events are new.
+     */
+    draw(views, count, fresh = true, tick = null) {
       camera.resize();
       gl.clear(gl.COLOR_BUFFER_BIT);
       if (!views && !hasUploadedFrame) return;
@@ -413,12 +460,12 @@ function buildRenderer(
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
       };
       const shouldUpload = views && (fresh || !hasUploadedFrame);
+      const now = performance.now();
 
       // Plants first, so agents draw over the food rather than under it.
       if (plantCapacity > 0) {
         gl.useProgram(plantProgram);
         gl.bindVertexArray(plantVao);
-        const now = performance.now();
         if (shouldUpload) {
           upload(plantAttributes.position, views.plantPosition);
           upload(plantAttributes.energy, views.plantEnergy);
@@ -477,8 +524,20 @@ function buildRenderer(
         hasUploadedFrame = true;
       }
       if (views && (shouldUpload || colorsDirty)) {
-        upload(attributes.signature, displayColors(views, count, speciesView, colorScratch));
+        const colors = displayColors(views, count, speciesView, colorScratch);
+        upload(attributes.signature, colors);
         colorsDirty = false;
+        // After the colours, so a kill's vanishing body keeps the colour it was drawn in.
+        if (shouldUpload && tick !== null) {
+          combat.observe(views, tick, now, colors, currentCorpseRadius);
+        }
+      }
+      // Every frame, not only fresh ones: the animations run in wall-clock time.
+      if (views) {
+        const animation = combat.agents(views, now);
+        upload(attributes.offset, animation.offsets);
+        upload(attributes.flash, animation.flashes);
+        upload(attributes.wound, animation.wounds);
       }
       gl.uniform2f(uniforms.center, camera.state.x, camera.state.y);
       gl.uniform1f(uniforms.ppu, camera.state.ppu);
@@ -493,6 +552,31 @@ function buildRenderer(
           : -1;
       gl.uniform1i(uniforms.selected, selectedIndex);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, count);
+
+      // Attacks over everything, so a bite is never hidden under its own biter.
+      if (views) {
+        const overlay = combat.overlay(views, now, {
+          arc: currentCombatArc,
+          reach: currentCombatReach,
+          corpseRadius: currentCorpseRadius,
+        });
+        if (overlay.count > 0) {
+          gl.useProgram(effectProgram);
+          gl.bindVertexArray(effectVao);
+          gl.bindBuffer(gl.ARRAY_BUFFER, effectBuffer);
+          gl.bufferSubData(
+            gl.ARRAY_BUFFER, 0, overlay.data.subarray(0, overlay.count * OVERLAY_STRIDE),
+          );
+          gl.uniform2f(effectUniforms.center, camera.state.x, camera.state.y);
+          gl.uniform1f(effectUniforms.ppu, camera.state.ppu);
+          gl.uniform2f(effectUniforms.viewport, camera.width, camera.height);
+          gl.uniform1f(effectUniforms.world, worldSize);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, overlay.count);
+          gl.disable(gl.BLEND);
+        }
+      }
 
       gl.bindVertexArray(null);
     },

@@ -1,6 +1,6 @@
 /**
- * GLSL programs for instanced agents, and for food: plants and corpses share one
- * disc program with different uniforms.
+ * GLSL programs for instanced agents, for food (plants and corpses share one disc
+ * program with different uniforms), and for the combat overlay drawn over both.
  *
  * Rendering orchestration owns buffers and uniforms; this module owns only the visual
  * projection of one instance into a shaded disc.
@@ -14,6 +14,11 @@ in vec3 a_position;
 in float a_size;
 in vec3 a_signature;
 in float a_alive;
+// Combat animation: a lunge or shake in world units, a hit's flash, and the share of
+// health a wound has not yet healed.
+in vec2 a_offset;
+in float a_flash;
+in float a_wound;
 
 uniform vec2 u_center;
 uniform float u_ppu;
@@ -24,6 +29,8 @@ uniform int u_selected;
 
 out vec2 v_corner;
 out vec3 v_color;
+out float v_flash;
+out float v_wound;
 flat out float v_selected;
 
 vec2 toward(vec2 point, vec2 from, float extent) {
@@ -35,11 +42,14 @@ vec2 toward(vec2 point, vec2 from, float extent) {
 void main() {
   v_corner = a_corner;
   v_color = a_signature;
+  v_flash = a_flash;
+  v_wound = a_wound;
   v_selected = gl_InstanceID == u_selected ? 1.0 : 0.0;
 
   // Dead snapshot slots collapse without a branch or CPU compaction.
   float radius = max(a_size * u_ppu, u_min_radius) * a_alive;
-  vec2 pixels = toward(a_position.xy, u_center, u_world) * u_ppu + a_corner * radius;
+  vec2 pixels = (toward(a_position.xy, u_center, u_world) + a_offset) * u_ppu
+    + a_corner * radius;
   gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
 }`;
 
@@ -48,6 +58,8 @@ precision highp float;
 
 in vec2 v_corner;
 in vec3 v_color;
+in float v_flash;
+in float v_wound;
 flat in float v_selected;
 out vec4 fragment;
 
@@ -59,7 +71,13 @@ void main() {
     return;
   }
   float shade = 0.65 + 0.35 * (1.0 - r2);
-  fragment = vec4(v_color * shade, 1.0);
+  vec3 color = v_color * shade;
+  // A wound rims the body in red, wider the more health is missing, so it narrows and
+  // goes as health regenerates.
+  if (v_wound > 0.02 && r2 > 1.0 - 0.5 * v_wound) color = mix(color, vec3(0.9, 0.12, 0.1), 0.85);
+  // A hit flashes the whole body red, fading.
+  color = mix(color, vec3(1.0, 0.3, 0.25), 0.75 * v_flash);
+  fragment = vec4(color, 1.0);
 }`;
 
 export const PLANT_VERTEX_SHADER = `#version 300 es
@@ -116,4 +134,81 @@ void main() {
   vec3 base = u_color * (0.18 + 0.82 * v_fullness);
   // A reseed flashes warm white and fades back to the plant's own colour.
   fragment = vec4(mix(base, vec3(1.0, 0.95, 0.7), 0.85 * v_glow), 1.0);
+}`;
+
+/**
+ * Combat overlay: translucent shapes drawn over the agents, one instance each, from
+ * `combat-effects.js`'s overlay records. A disc, a ring, a wedge (the bite's arc), or a
+ * segment (biter to victim), all from the same quad.
+ */
+export const EFFECT_VERTEX_SHADER = `#version 300 es
+precision highp float;
+
+in vec2 a_corner;
+in vec2 a_center;
+in float a_radius;
+in float a_angle;
+in vec4 a_color;
+in float a_kind;
+in vec2 a_params;
+
+uniform vec2 u_center;
+uniform float u_ppu;
+uniform vec2 u_viewport;
+uniform float u_world;
+
+out vec2 v_local;
+out vec4 v_color;
+flat out float v_kind;
+flat out vec2 v_params;
+
+void main() {
+  v_color = a_color;
+  v_kind = a_kind;
+  v_params = a_params;
+  vec2 d = a_center - u_center;
+  d -= u_world * floor(d / u_world + 0.5);
+  vec2 axis = vec2(cos(a_angle), sin(a_angle));
+  vec2 across = vec2(-axis.y, axis.x);
+  vec2 offset;
+  if (a_kind > 2.5) {
+    // A segment runs from the centre along its angle for its radius, p1 thick.
+    v_local = a_corner;
+    offset = axis * (a_corner.x + 1.0) * 0.5 * a_radius + across * a_corner.y * a_params.x;
+  } else {
+    // Everything else fills a square of its radius, turned to its angle.
+    v_local = a_corner;
+    offset = (axis * a_corner.x + across * a_corner.y) * a_radius;
+  }
+  vec2 pixels = (d + offset) * u_ppu;
+  gl_Position = vec4(pixels / (u_viewport * 0.5), 0.0, 1.0);
+}`;
+
+export const EFFECT_FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+in vec2 v_local;
+in vec4 v_color;
+flat in float v_kind;
+flat in vec2 v_params;
+out vec4 fragment;
+
+void main() {
+  float r = length(v_local);
+  float alpha = v_color.a;
+  if (v_kind < 0.5) {
+    // Disc.
+    if (r > 1.0) discard;
+  } else if (v_kind < 1.5) {
+    // Ring, p1 of the radius thick.
+    if (r > 1.0 || r < 1.0 - v_params.x) discard;
+  } else if (v_kind < 2.5) {
+    // Wedge: within the radius and p1 radians of the angle, fading toward the rim.
+    if (r > 1.0 || abs(atan(v_local.y, v_local.x)) > v_params.x) discard;
+    alpha *= 1.0 - 0.6 * r;
+  } else {
+    // Segment: fades toward both ends.
+    alpha *= 1.0 - abs(v_local.x);
+  }
+  fragment = vec4(v_color.rgb, alpha);
 }`;

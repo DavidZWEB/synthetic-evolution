@@ -333,6 +333,10 @@ struct RenderHints {
     corpse_signature: [f32; 3],
     /// A newborn's tank, against which a renderer shades how much a corpse holds.
     corpse_full_energy: f32,
+    /// The bite's half-angle, and the founders' reach past both bodies, so a renderer
+    /// can draw a swing's arc. An evolved bite may reach further or less far.
+    combat_arc: f32,
+    combat_reach: f32,
 }
 
 fn span<T>(slice: &[T]) -> Span {
@@ -587,6 +591,8 @@ impl Sim {
             corpse_radius: params.corpses.radius,
             corpse_signature: params.corpses.signature,
             corpse_full_energy: params.reproduction.start_energy,
+            combat_arc: params.combat.arc,
+            combat_reach: params.combat.reach,
         };
         serde_json::to_string(&hints).map_err(|e| js_error("render hints", e))
     }

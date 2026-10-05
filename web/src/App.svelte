@@ -138,6 +138,10 @@
     };
   }
 
+  function combatHints(hints) {
+    return { combatArc: hints.combat_arc, combatReach: hints.combat_reach };
+  }
+
   function download(bytes, name) {
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
     const link = document.createElement('a');
@@ -497,6 +501,7 @@
           plantMaxEnergy: hints.plant_max_energy,
           corpseCapacity: hints.corpse_capacity,
           ...corpseHints(hints),
+          ...combatHints(hints),
           onContextLost: () => {
             rendererFailure = 'renderer: WebGL context lost; restoring…';
           },
@@ -541,6 +546,7 @@
         plantColor: hints.plant_signature,
         plantMaxEnergy: hints.plant_max_energy,
         ...corpseHints(hints),
+        ...combatHints(hints),
       });
     });
     nextSim.on('metrics', (message) => {
@@ -644,7 +650,7 @@
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
       latestFrame = frame;
-      renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false);
+      renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false, frame?.tick ?? null);
       // Read back rather than tracked alongside: the renderer owns the camera, and a
       // second copy here would go stale the moment anything but an input moved it — a
       // resize, a reseed, the zoom floor refusing a scroll.

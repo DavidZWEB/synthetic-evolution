@@ -1,0 +1,269 @@
+/**
+ * Bites, wounds, and kills as wall-clock animations, for the renderer to draw.
+ *
+ * Each frame carries, per slot, the ticks since the agent last swung and since it was
+ * last hit, where its latest swing landed, and its health (spec §2.2b). A swing or hit
+ * younger than the ticks since the previous frame is new, and starts an animation timed
+ * in wall-clock milliseconds, so it stays visible at any sim speed, as a plant's reseed
+ * glow does. A kill is seen where a corpse appears beside an agent that vanished.
+ * Display only: nothing here reaches the simulation.
+ */
+
+/** How long each animation lasts, in milliseconds. */
+export const SWING_MS = 260;
+export const HIT_MS = 420;
+export const KILL_MS = 650;
+
+/** Floats per overlay instance: centre x, y, radius, angle, r, g, b, a, kind, p1, p2. */
+export const OVERLAY_STRIDE = 11;
+
+/** Overlay shapes, as the effects shader draws them. */
+export const SHAPE = { DISC: 0, RING: 1, WEDGE: 2, SEGMENT: 3 };
+
+const SPECKS = 5;
+const WOUND_RED = [0.95, 0.18, 0.15];
+
+/**
+ * The shortest offset from `from` to `to` on a torus `world` across, so an effect that
+ * spans the seam is drawn across it rather than around the world.
+ */
+function wrapped(delta, world) {
+  return delta - world * Math.floor(delta / world + 0.5);
+}
+
+/** Heading of a yaw-only quaternion `(x, y, z, w)` stored four floats per slot. */
+function heading(orientation, slot) {
+  return 2 * Math.atan2(orientation[slot * 4 + 2], orientation[slot * 4 + 3]);
+}
+
+/** A small deterministic hash in [0, 1), so specks scatter the same way every frame. */
+function scatter(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/**
+ * Tracks combat events across frames for `capacity` agent slots and `corpseCapacity`
+ * corpse slots in a world `worldSize` across, with room for `maxInstances` overlay
+ * shapes and `maxKills` kills animating at once.
+ */
+export function createCombatEffects({
+  capacity, corpseCapacity, worldSize, maxInstances = 4096, maxKills = 256,
+}) {
+  const swungAt = new Float64Array(capacity).fill(-Infinity);
+  const hurtAt = new Float64Array(capacity).fill(-Infinity);
+  // Where each agent's latest swing aimed: the victim's centre on a hit, NaN on a miss.
+  const aim = new Float32Array(capacity * 2).fill(NaN);
+  const wasAlive = new Uint8Array(capacity);
+  const incarnation = new Uint32Array(capacity);
+  const lastPosition = new Float32Array(capacity * 2);
+  const lastSize = new Float32Array(capacity);
+  const lastColor = new Float32Array(capacity * 3);
+  const corpseHeld = new Uint8Array(corpseCapacity);
+  // Kills animating: x, y, the vanished body's radius and colour, and when.
+  const kills = new Float64Array(maxKills * 7);
+  let killCursor = 0;
+  let lastTick = null;
+
+  const offsets = new Float32Array(capacity * 2);
+  const flashes = new Float32Array(capacity);
+  const wounds = new Float32Array(capacity);
+  const overlay = new Float32Array(maxInstances * OVERLAY_STRIDE);
+
+  function forget() {
+    swungAt.fill(-Infinity);
+    hurtAt.fill(-Infinity);
+    aim.fill(NaN);
+    kills.fill(-Infinity);
+    killCursor = 0;
+  }
+  forget();
+
+  /** The vanished slot whose last position lies nearest `(x, y)`, or -1. */
+  function vanishedNear(views, x, y, reach) {
+    let best = -1;
+    let bestDistance = Infinity;
+    for (let i = 0; i < capacity; i++) {
+      const gone = wasAlive[i] === 1 &&
+        (views.alive[i] === 0 || views.incarnation[i] !== incarnation[i]);
+      if (!gone) continue;
+      const dx = wrapped(lastPosition[i * 2] - x, worldSize);
+      const dy = wrapped(lastPosition[i * 2 + 1] - y, worldSize);
+      const distance = Math.hypot(dx, dy);
+      if (distance <= lastSize[i] + reach && distance < bestDistance) {
+        best = i;
+        bestDistance = distance;
+      }
+    }
+    return best;
+  }
+
+  return {
+    /** How many overlay shapes one frame can hold. */
+    maxInstances,
+
+    /**
+     * Notes what happened since the previous frame, at wall-clock `now`. The first
+     * frame, and any frame whose tick does not advance, only sets the baseline: a world
+     * that was just created or replaced has no events to replay. `colors` are the
+     * agents' displayed colours, three floats per slot, for a kill's vanishing body.
+     */
+    observe(views, tick, now, colors, corpseRadius) {
+      const elapsed = lastTick !== null && tick > lastTick ? Number(tick - lastTick) : 0;
+      if (lastTick !== null && tick < lastTick) forget();
+      for (let i = 0; i < capacity; i++) {
+        if (views.alive[i] !== 1) continue;
+        // A newborn or a reused slot carries its own agent's ages, so the same rule holds.
+        if (views.swingAge[i] < elapsed) {
+          swungAt[i] = now;
+          aim[i * 2] = views.biteAt[i * 2];
+          aim[i * 2 + 1] = views.biteAt[i * 2 + 1];
+        }
+        if (views.hurtAge[i] < elapsed) hurtAt[i] = now;
+      }
+      if (elapsed > 0) {
+        for (let c = 0; c < corpseCapacity; c++) {
+          const held = views.corpseEnergy[c] > 0 ? 1 : 0;
+          if (held && !corpseHeld[c]) {
+            const x = views.corpsePosition[c * 3];
+            const y = views.corpsePosition[c * 3 + 1];
+            const body = vanishedNear(views, x, y, corpseRadius);
+            const at = killCursor * 7;
+            kills[at] = x;
+            kills[at + 1] = y;
+            kills[at + 2] = body >= 0 ? lastSize[body] : corpseRadius;
+            kills[at + 3] = body >= 0 ? lastColor[body * 3] : WOUND_RED[0];
+            kills[at + 4] = body >= 0 ? lastColor[body * 3 + 1] : WOUND_RED[1];
+            kills[at + 5] = body >= 0 ? lastColor[body * 3 + 2] : WOUND_RED[2];
+            kills[at + 6] = now;
+            killCursor = (killCursor + 1) % maxKills;
+          }
+          corpseHeld[c] = held;
+        }
+      } else {
+        for (let c = 0; c < corpseCapacity; c++) corpseHeld[c] = views.corpseEnergy[c] > 0 ? 1 : 0;
+      }
+      for (let i = 0; i < capacity; i++) {
+        wasAlive[i] = views.alive[i];
+        incarnation[i] = views.incarnation[i];
+        if (views.alive[i] !== 1) continue;
+        lastPosition[i * 2] = views.position[i * 3];
+        lastPosition[i * 2 + 1] = views.position[i * 3 + 1];
+        lastSize[i] = views.size[i];
+        lastColor.set(colors.subarray(i * 3, i * 3 + 3), i * 3);
+      }
+      lastTick = tick;
+    },
+
+    /**
+     * Per-slot animation state at `now`: a world-unit offset (a swing's lunge toward its
+     * aim, a hit's shake), a hit's red flash, and the wound health has not yet healed.
+     */
+    agents(views, now) {
+      for (let i = 0; i < capacity; i++) {
+        offsets[i * 2] = 0;
+        offsets[i * 2 + 1] = 0;
+        flashes[i] = 0;
+        wounds[i] = views.alive[i] === 1 ? 1 - views.health[i] / 255 : 0;
+        if (views.alive[i] !== 1) continue;
+        const size = views.size[i];
+        const swing = (now - swungAt[i]) / SWING_MS;
+        if (swing >= 0 && swing < 1) {
+          const angle = aimAngle(views, i);
+          const lunge = 0.45 * size * Math.sin(Math.PI * swing);
+          offsets[i * 2] += lunge * Math.cos(angle);
+          offsets[i * 2 + 1] += lunge * Math.sin(angle);
+        }
+        const hurt = (now - hurtAt[i]) / HIT_MS;
+        if (hurt >= 0 && hurt < 1) {
+          const fade = 1 - hurt;
+          const shake = 0.25 * size * fade;
+          offsets[i * 2] += shake * Math.sin(hurt * 41 + i);
+          offsets[i * 2 + 1] += shake * Math.cos(hurt * 47 + i);
+          flashes[i] = fade;
+        }
+      }
+      return { offsets, flashes, wounds };
+    },
+
+    /**
+     * Overlay shapes at `now`, `OVERLAY_STRIDE` floats each: a swing's arc, a hit's
+     * line and specks, and a kill's shrinking body and ring. `arc` and `reach` are the
+     * bite's, from the params.
+     */
+    overlay(views, now, { arc, reach, corpseRadius }) {
+      let count = 0;
+      // Written field by field: an array per shape would be garbage every frame.
+      const push = (x, y, radius, angle, r, g, b, a, kind, p1 = 0, p2 = 0) => {
+        if (count >= maxInstances) return;
+        const o = count * OVERLAY_STRIDE;
+        overlay[o] = x;
+        overlay[o + 1] = y;
+        overlay[o + 2] = radius;
+        overlay[o + 3] = angle;
+        overlay[o + 4] = r;
+        overlay[o + 5] = g;
+        overlay[o + 6] = b;
+        overlay[o + 7] = a;
+        overlay[o + 8] = kind;
+        overlay[o + 9] = p1;
+        overlay[o + 10] = p2;
+        count++;
+      };
+      for (let i = 0; i < capacity; i++) {
+        if (views.alive[i] !== 1) continue;
+        const swing = (now - swungAt[i]) / SWING_MS;
+        if (!(swing >= 0 && swing < 1)) continue;
+        const x = views.position[i * 3];
+        const y = views.position[i * 3 + 1];
+        const size = views.size[i];
+        const angle = aimAngle(views, i);
+        push(x, y, size + reach, angle, 1, 0.82, 0.55, 0.28 * (1 - swing), SHAPE.WEDGE, arc);
+        if (!Number.isFinite(aim[i * 2])) continue;
+        const hit = (now - swungAt[i]) / HIT_MS;
+        if (!(hit >= 0 && hit < 1)) continue;
+        const fade = 1 - hit;
+        const dx = wrapped(aim[i * 2] - x, worldSize);
+        const dy = wrapped(aim[i * 2 + 1] - y, worldSize);
+        push(x, y, Math.hypot(dx, dy), Math.atan2(dy, dx), ...WOUND_RED, 0.75 * fade,
+          SHAPE.SEGMENT, 0.18 * size);
+        // Specks fly from the biter's mouth, where it met its victim.
+        const mouthX = x + size * Math.cos(angle);
+        const mouthY = y + size * Math.sin(angle);
+        for (let s = 0; s < SPECKS; s++) {
+          const spread = angle + (scatter(i * 31 + s + swungAt[i]) - 0.5) * 2.4;
+          const travel = size * (0.4 + 1.6 * hit) * (0.6 + 0.8 * scatter(i * 17 + s));
+          push(mouthX + travel * Math.cos(spread), mouthY + travel * Math.sin(spread),
+            0.16 * size, 0, ...WOUND_RED, fade, SHAPE.DISC);
+        }
+      }
+      for (let k = 0; k < kills.length / 7; k++) {
+        const at = k * 7;
+        const t = (now - kills[at + 6]) / KILL_MS;
+        if (!(t >= 0 && t < 1)) continue;
+        const x = kills[at];
+        const y = kills[at + 1];
+        const body = kills[at + 2];
+        // The body shrinks into its corpse in the first half; the ring spreads throughout.
+        const shrink = Math.min(1, t * 2);
+        if (shrink < 1) {
+          push(x, y, body + (corpseRadius - body) * shrink, 0,
+            kills[at + 3], kills[at + 4], kills[at + 5], 1 - shrink, SHAPE.DISC);
+        }
+        push(x, y, corpseRadius * (1 + 3 * t), 0, ...WOUND_RED, 0.8 * (1 - t), SHAPE.RING, 0.18);
+      }
+      return { data: overlay, count };
+    },
+  };
+
+  /** Where slot `i` aimed its latest swing: at its victim on a hit, else straight ahead. */
+  function aimAngle(views, i) {
+    if (Number.isFinite(aim[i * 2])) {
+      return Math.atan2(
+        wrapped(aim[i * 2 + 1] - views.position[i * 3 + 1], worldSize),
+        wrapped(aim[i * 2] - views.position[i * 3], worldSize),
+      );
+    }
+    return heading(views.orientation, i);
+  }
+}
