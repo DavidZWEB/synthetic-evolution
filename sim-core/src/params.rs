@@ -853,8 +853,9 @@ pub struct CombatParams {
 #[serde(default, deny_unknown_fields)]
 pub struct FounderParams {
     /// Whether founders carry a dormant bite (spec §4.2). Part of the founding
-    /// topology, so fixed for the life of a world. Nothing adds or removes effectors
-    /// yet, so a world without it has no predation at all.
+    /// topology, so fixed for the life of a world. It governs founders only: nothing
+    /// adds or removes effectors yet, so a world without it bites only through genomes
+    /// imported with a bite, which spawn and restore accept.
     ///
     /// **Off until calibration (Phase 3 M6)**, so every world runs as it did in Phase
     /// 2.
