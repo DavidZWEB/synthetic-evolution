@@ -45,6 +45,8 @@ const METRICS: &[&str] = &[
     "carnivore_biomass_share",
     "carnivore_species",
     "persistent_carnivores",
+    "first_carnivore_tick",
+    "coexistence_span",
     "brain_units_mean",
     "sensor_load_mean",
     "genome_genes_mean",
@@ -123,6 +125,8 @@ const NOTES: &[&str] = &[
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
     "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
     "sensor_innovation*: sensors added by mutation, founding ones excluded; spans run from the first sample that saw one carried to the last, in ticks, and wired_share is the final carriers whose organ reaches an effector",
+    "first_carnivore_tick: the first sample at which a species ate mostly meat with plant-eaters alive beside it; absent where none ever did",
+    "coexistence_span: the longest run of samples, in ticks, at which carnivores and plant-eaters both held biomass",
     "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
     "plant_stock: plant energy as a fraction of every plant full; plant_clustering: Clark-Evans ratio, near 1 random and below 1 clustered",
     "plants_reseeded: plants that died of starvation and reseeded over the run",
@@ -428,6 +432,7 @@ fn cohort_values(
     let captured = supply_captured(samples, ticks, &supply, &select);
     let [innovations, kept, span_median, span_max, wired_share] =
         sensor_innovation_persistence(samples, &select);
+    let [onset, coexistence] = predation_onset_and_coexistence(samples, &select);
     let values: Vec<Option<f64>> = vec![
         Some(f64::from(u8::from(last.population == 0))),
         Some(f64::from(last.population)),
@@ -459,6 +464,8 @@ fn cohort_values(
                 .count() as f64
         }),
         persistent_carnivores(samples, ticks, &select),
+        onset,
+        coexistence,
         Some(last.brain_units.mean),
         Some(last.sensor_load.mean),
         Some(last.genome_genes.mean),
@@ -627,6 +634,42 @@ fn sensor_innovation_persistence(
         lengths.last().map(|&length| length as f64),
         (carriers > 0).then(|| wired as f64 / carriers as f64),
     ]
+}
+
+/// When predation took hold, and how long it lasted beside its prey (spec §7.9): the
+/// first sampled tick at which a species ate mostly meat with plant-eaters alive beside
+/// it, absent if none ever did, and the longest run of consecutive samples, in ticks, at
+/// which carnivores and plant-eaters both held biomass. Unavailable unless every sample
+/// recorded diets.
+fn predation_onset_and_coexistence(
+    samples: &[RunSample],
+    select: &impl Fn(&RunSample) -> &WorldMetrics,
+) -> [Option<f64>; 2] {
+    let mut onset = None;
+    let (mut since, mut longest) = (None, 0);
+    for sample in samples {
+        let metrics = select(sample);
+        let (Some(predation), Some(species)) = (metrics.predation, metrics.species.as_ref()) else {
+            return [None; 2];
+        };
+        let prey = predation.herbivore_biomass > 0.0;
+        if onset.is_none()
+            && prey
+            && species
+                .populations
+                .iter()
+                .any(|entry| carnivorous(entry.meat_share))
+        {
+            onset = Some(sample.tick as f64);
+        }
+        if prey && predation.carnivore_biomass > 0.0 {
+            let from = *since.get_or_insert(sample.tick);
+            longest = longest.max(sample.tick - from);
+        } else {
+            since = None;
+        }
+    }
+    [onset, Some(longest as f64)]
 }
 
 /// Most of its intake from other agents: spec §8's Phase 3 carnivore.
@@ -937,6 +980,45 @@ mod tests {
         assert_eq!(
             persistent_carnivores(&eaten, 1_000, &|s| &s.evolving),
             Some(0.0)
+        );
+    }
+
+    #[test]
+    fn predation_onset_and_coexistence_follow_carnivores_beside_their_prey() {
+        // Species 2 turns to meat at tick 200 with no plant-eaters left, which is no
+        // onset; at 400 plant-eaters are back beside it. Carnivore biomass lives from 400
+        // to 800, breaks at 900, and returns at 1000.
+        let diet = |tick, share, herbivores: f64, carnivores: f64| {
+            let mut sample = diet_sample(tick, &[(1, Some(0.1)), (2, Some(share))]);
+            let predation = sample.evolving.predation.as_mut().unwrap();
+            predation.herbivore_biomass = herbivores;
+            predation.carnivore_biomass = carnivores;
+            sample
+        };
+        let samples = vec![
+            diet(0, 0.2, 1.0, 0.0),
+            diet(200, 0.9, 0.0, 1.0),
+            diet(400, 0.9, 1.0, 1.0),
+            diet(800, 0.9, 1.0, 1.0),
+            diet(900, 0.4, 1.0, 0.0),
+            diet(1_000, 0.9, 1.0, 1.0),
+        ];
+        assert_eq!(
+            predation_onset_and_coexistence(&samples, &|s| &s.evolving),
+            [Some(400.0), Some(400.0)]
+        );
+        let grazers = vec![diet(0, 0.2, 1.0, 0.0), diet(500, 0.3, 1.0, 0.0)];
+        assert_eq!(
+            predation_onset_and_coexistence(&grazers, &|s| &s.evolving),
+            [None, Some(0.0)],
+            "no carnivore ever"
+        );
+        let mut legacy = samples;
+        legacy[2].evolving.predation = None;
+        assert_eq!(
+            predation_onset_and_coexistence(&legacy, &|s| &s.evolving),
+            [None, None],
+            "diets not recorded throughout"
         );
     }
 
