@@ -9,6 +9,8 @@
 //! Phase 3 M2 refreshes both again: founders carry muscle and mouth genes, and the
 //! hash covers them. Phase 3 M3's coverage refreshes add each agent's bite cooldown, then each agent's
 //! diet and the world's bite counts.
+//! Phase 3 M5's adds each agent's swing and hurt ages, where its latest bite landed, and
+//! its kills.
 
 use sim_core::World;
 use sim_core::control::BrainInheritance;
@@ -16,8 +18,8 @@ use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-pub const EVOLVING_GOLDEN: u64 = 0x986f_5dc0_cd2b_7429;
-pub const CONTROL_GOLDEN: u64 = 0xe283_6189_7f77_a6d0;
+pub const EVOLVING_GOLDEN: u64 = 0x77a3_b585_f887_4d39;
+pub const CONTROL_GOLDEN: u64 = 0xd027_dc9f_8906_212c;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();
