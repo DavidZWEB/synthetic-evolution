@@ -1404,11 +1404,11 @@ impl SimParams {
                 "combat.attack_damage and combat.assimilation must be in [0, 1]",
             ));
         }
-        // A cooldown is counted in whole ticks, so the count must fit one: in f64, as
-        // `combat::cooldown_ticks` counts it, since `u32::MAX as f32` rounds up past it.
+        // A cooldown is counted in whole ticks, so the count must fit one, counted
+        // exactly as a swing counts it.
         if !(combat.cooldown_seconds >= 0.0)
-            || !(libm::ceil(f64::from(combat.cooldown_seconds) / f64::from(self.world.dt))
-                <= f64::from(u32::MAX))
+            || !combat.cooldown_seconds.is_finite()
+            || crate::combat::countable_cooldown(combat.cooldown_seconds, self.world.dt).is_none()
         {
             return Err(ParamError(
                 "combat.cooldown_seconds must be non-negative and countable in ticks",

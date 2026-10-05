@@ -37,11 +37,16 @@ pub(crate) fn swings(
 }
 
 /// Whole ticks before a swinging agent can swing again: never fewer than
-/// `cooldown_seconds`, which validation keeps countable. In f64, because an f32
-/// quotient can round down onto an integer first: 0.15 s over 0.05 s needs 4 ticks,
-/// since 3 of them fall just short of the stored duration.
+/// `cooldown_seconds`, which validation keeps countable.
 pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
-    libm::ceil(f64::from(combat.cooldown_seconds) / f64::from(dt)) as u32
+    countable_cooldown(combat.cooldown_seconds, dt).unwrap_or(u32::MAX)
+}
+
+/// The whole ticks that cover `seconds` at timestep `dt`, or `None` past `u32::MAX`:
+/// the count validation requires to fit, and the one a swing starts. `seconds` must be
+/// finite and non-negative and `dt` positive, as validation ensures first.
+pub(crate) fn countable_cooldown(seconds: f32, dt: f32) -> Option<u32> {
+    ceil_ticks(1, seconds, dt)
 }
 
 /// A cooldown's remaining ticks after the timestep changes from `from_dt` to `to_dt`:
@@ -49,8 +54,52 @@ pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
 ///
 /// `None` when that many ticks cannot be counted, which a retune must refuse.
 pub(crate) fn rescale_cooldown(ticks: u32, from_dt: f32, to_dt: f32) -> Option<u32> {
-    let scaled = libm::ceil(f64::from(ticks) * f64::from(from_dt) / f64::from(to_dt));
-    (scaled <= f64::from(u32::MAX)).then_some(scaled as u32)
+    ceil_ticks(ticks, from_dt, to_dt)
+}
+
+/// `⌈count · numerator / denominator⌉` exactly, over the `f32` values as stored, or
+/// `None` past `u32::MAX`.
+///
+/// Exact rather than in floating point because any float quotient can round down
+/// onto a whole number first, and its ceiling then counts a tick short of the duration
+/// (spec §4.2): 0.15 s over 0.05 s in `f32`, or a billion ticks in `f64`. Every stored
+/// `f32` is a whole mantissa times a power of two, so the quotient is a ratio of
+/// integers that `u128` divides exactly.
+fn ceil_ticks(count: u32, numerator: f32, denominator: f32) -> Option<u32> {
+    let (mantissa, exponent) = exact_parts(numerator);
+    let (divisor, divisor_exponent) = exact_parts(denominator);
+    debug_assert!(divisor > 0, "validated positive timestep");
+    // Below 2^56: a 24-bit mantissa times a 32-bit count.
+    let dividend = mantissa * u128::from(count);
+    if dividend == 0 {
+        return Some(0);
+    }
+    let shift = exponent - divisor_exponent;
+    let quotient = if shift >= 0 {
+        // With a divisor below 2^24, a shift of 57 already puts the quotient past 2^32,
+        // and anything less keeps the shifted dividend inside u128.
+        if shift >= 57 {
+            return None;
+        }
+        (dividend << shift).div_ceil(divisor)
+    } else if shift > -100 {
+        dividend.div_ceil(divisor << -shift)
+    } else {
+        // The divisor passes 2^100 and every dividend: a positive fraction of a tick.
+        1
+    };
+    u32::try_from(quotient).ok()
+}
+
+/// A finite, non-negative `f32` as the whole mantissa and power of two it stores.
+fn exact_parts(x: f32) -> (u128, i32) {
+    debug_assert!(x.is_finite() && x >= 0.0);
+    let bits = x.to_bits();
+    let fraction = u128::from(bits & 0x7f_ffff);
+    match (bits >> 23) & 0xff {
+        0 => (fraction, -149),
+        biased => (fraction | 0x80_0000, biased as i32 - 150),
+    }
 }
 
 /// Where a swing comes from and points.
@@ -81,6 +130,9 @@ pub(crate) struct Targets<'a> {
 pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<usize> {
     let direction = Vec3::new(math::cos(aim.heading), math::sin(aim.heading), 0.0);
     let cos_arc = math::cos(targets.arc);
+    // A full circle takes every direction. Its threshold, minus the distance, is one a
+    // dot product rounded the other way can fall short of, behind the biter.
+    let full_circle = targets.arc >= core::f32::consts::PI;
     // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
     // still finds every target in reach, whatever a retune did to the size ranges.
     let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size);
@@ -95,7 +147,7 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
             }
             let limit = aim.reach + aim.radius + targets.sizes[index as usize];
             if distance_squared > limit * limit
-                || offset.dot(direction) < math::sqrt(distance_squared) * cos_arc
+                || (!full_circle && offset.dot(direction) < math::sqrt(distance_squared) * cos_arc)
             {
                 return;
             }
@@ -252,6 +304,62 @@ mod tests {
             ..c
         };
         assert_eq!(cooldown_ticks(&none, 1.0 / 60.0), 0);
+    }
+
+    #[test]
+    fn tick_counts_are_exact_where_a_float_quotient_rounds_onto_a_whole_number() {
+        // f64 rounds each true quotient down onto a whole number, and its ceiling then
+        // counts a tick short of the stored duration (spec §4.2).
+        assert_eq!(
+            countable_cooldown(119_362_880.0, 0.031_249_994),
+            Some(3_819_612_844)
+        );
+        assert_eq!(
+            rescale_cooldown(3_800_000_000, 0.023_821_32, 0.022_351_718),
+            Some(4_049_846_155)
+        );
+        // The extremes: past any count, a sliver of one tick, and subnormals.
+        assert_eq!(countable_cooldown(f32::MAX, f32::MIN_POSITIVE), None);
+        assert_eq!(rescale_cooldown(u32::MAX, 2.0, 1.0), None);
+        assert_eq!(countable_cooldown(f32::from_bits(1), f32::MAX), Some(1));
+        assert_eq!(
+            countable_cooldown(f32::from_bits(3), f32::from_bits(2)),
+            Some(2)
+        );
+    }
+
+    /// A normal `f32` in [2^-20, 2^20), from its unbiased exponent and fraction bits.
+    fn normal(exponent: i32, fraction: u32) -> f32 {
+        f32::from_bits(((exponent + 127) as u32) << 23 | fraction)
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn tick_counts_are_the_exact_ceiling(
+            count in proptest::prelude::any::<u32>(),
+            numerator in (-20i32..20, 0u32..1 << 23),
+            denominator in (-20i32..20, 0u32..1 << 23),
+        ) {
+            let n = normal(numerator.0, numerator.1);
+            let d = normal(denominator.0, denominator.1);
+            // Every value in range is a whole multiple of 2^-43, so scaling by 2^43 in
+            // f64 gives the exact integers, by a route that never splits a float.
+            let whole = |x: f32| (f64::from(x) * (1u64 << 43) as f64) as u128;
+            let exact = (u128::from(count) * whole(n)).div_ceil(whole(d));
+            proptest::prop_assert_eq!(ceil_ticks(count, n, d), u32::try_from(exact).ok());
+        }
+    }
+
+    #[test]
+    fn a_full_circle_bites_what_lies_directly_behind() {
+        // Behind a biter heading 0.3 rad, the f32 dot product rounds to just below minus
+        // the distance, the full circle's threshold, so testing the angle would miss.
+        let at = |x: f32, y: f32| Vec3::new(x, y, 0.0);
+        let behind = [at(50.0, 50.0), at(49.044_662, 49.704_48)];
+        let pi = core::f32::consts::PI;
+        assert_eq!(hit_from(&behind, &[1.0; 2], 0.3, pi), Some(1));
+        // Short of a full circle, behind is out of the arc.
+        assert_eq!(hit_from(&behind, &[1.0; 2], 0.3, pi - 0.01), None);
     }
 
     /// Agents in a 100-unit world, searched from slot 0 with a reach of 2.
