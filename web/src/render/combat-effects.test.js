@@ -86,6 +86,21 @@ test('a swing newer than the last frame lunges ahead, then settles', () => {
   assert.ok(near(arcs[0].radius, 3 + 4), 'the arc reaches past the body');
 });
 
+test('after a long gap a saturated age is never new, but a younger one still is', () => {
+  // At high speed or in a throttled tab a frame can skip more ticks than an age holds.
+  const fx = effects(2);
+  const views = frame(2);
+  place(views, 0, 10, 10);
+  place(views, 1, 50, 50);
+  fx.observe(views, 10n, 0, colors(2), 2);
+  views.swingAge[1] = 200;
+  fx.observe(views, 1_010n, 100, colors(2), 2);
+  const { offsets, flashes } = fx.agents(views, 100 + SWING_MS / 2);
+  assert.deepEqual([offsets[0], offsets[1], flashes[0], flashes[1]], [0, 0, 0, 0],
+    'an agent that never swung or was hit stays still');
+  assert.ok(offsets[2] !== 0, 'one that swung 200 ticks ago, unseen, still lunges');
+});
+
 test('a hit flashes and shakes its victim, fading over its time', () => {
   const fx = effects(1);
   const views = frame(1);

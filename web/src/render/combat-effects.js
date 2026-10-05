@@ -21,6 +21,8 @@ export const OVERLAY_STRIDE = 11;
 export const SHAPE = { DISC: 0, RING: 1, WEDGE: 2, SEGMENT: 3 };
 
 const SPECKS = 5;
+/** Where a swing or hit age saturates: "at least this long ago". */
+const LONG_AGO = 255;
 const WOUND_RED = [0.95, 0.18, 0.15];
 
 /**
@@ -111,15 +113,18 @@ export function createCombatEffects({
     observe(views, tick, now, colors, corpseRadius) {
       const elapsed = lastTick !== null && tick > lastTick ? Number(tick - lastTick) : 0;
       if (lastTick !== null && tick < lastTick) forget();
+      // A saturated age says only "at least that long ago", so it is never new, however
+      // many ticks a slow frame skipped; otherwise everyone would seem to swing at once.
+      const horizon = Math.min(elapsed, LONG_AGO);
       for (let i = 0; i < capacity; i++) {
         if (views.alive[i] !== 1) continue;
         // A newborn or a reused slot carries its own agent's ages, so the same rule holds.
-        if (views.swingAge[i] < elapsed) {
+        if (views.swingAge[i] < horizon) {
           swungAt[i] = now;
           aim[i * 2] = views.biteAt[i * 2];
           aim[i * 2 + 1] = views.biteAt[i * 2 + 1];
         }
-        if (views.hurtAge[i] < elapsed) hurtAt[i] = now;
+        if (views.hurtAge[i] < horizon) hurtAt[i] = now;
       }
       if (elapsed > 0) {
         for (let c = 0; c < corpseCapacity; c++) {
