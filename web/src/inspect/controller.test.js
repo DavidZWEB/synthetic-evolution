@@ -22,6 +22,12 @@ const payload = (index, incarnation, tick = 4) =>
     parent_b: 4294967295,
     brain_units: 2,
     sensor_load: 1,
+    health: 1,
+    muscle: 1,
+    mouth: 1,
+    eaten_plants: 0,
+    eaten_animals: 0,
+    kills: 0,
     activations: [0.2],
     genome: [{ Body: { trait_: 'Size', value: 3 } }],
   });

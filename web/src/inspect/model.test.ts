@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  birthIdLabel, decodeInspection, parentBirthLabel, parentSlotLabel, speciesLabel, summarizeGenes,
+  birthIdLabel, decodeInspection, dietLabel, parentBirthLabel, parentSlotLabel, speciesLabel,
+  summarizeGenes,
 } from './model.ts';
 
 const inspection = {
@@ -23,6 +24,12 @@ const inspection = {
   parent_b: 4294967295,
   brain_units: 10,
   sensor_load: 4,
+  health: 0.75,
+  muscle: 1.5,
+  mouth: 0.5,
+  eaten_plants: 30,
+  eaten_animals: 10,
+  kills: 2,
   activations: [0.25, -0.5],
   genome: [
     { Neuron: { id: 1, bias: 0, tau: 1, activation: 'Tanh', period: 0 } },
@@ -45,6 +52,35 @@ test('malformed inspection JSON is rejected', () => {
     () => decodeInspection(JSON.stringify({ ...inspection, activations: ['not a number'] })),
     /invalid inspection payload/,
   );
+});
+
+test('combat fields are validated: health in (0, 1], diets non-negative, kills a count', () => {
+  const decoded = decodeInspection(JSON.stringify(inspection));
+  assert.deepEqual(
+    [decoded.health, decoded.muscle, decoded.mouth, decoded.kills],
+    [0.75, 1.5, 0.5, 2],
+  );
+  const cases: Array<[string, unknown]> = [
+    ['health', 0], ['health', 1.5], ['health', null], ['muscle', 'strong'], ['mouth', null],
+    ['eaten_plants', -1], ['eaten_animals', -0.5], ['eaten_animals', null],
+    ['kills', -1], ['kills', 1.5], ['kills', 4294967296],
+  ];
+  for (const [field, value] of cases) {
+    assert.throws(
+      () => decodeInspection(JSON.stringify({ ...inspection, [field]: value })),
+      /invalid inspection payload/,
+      `accepted ${field} = ${JSON.stringify(value)}`,
+    );
+  }
+  const missing: Record<string, unknown> = { ...inspection };
+  delete missing.kills;
+  assert.throws(() => decodeInspection(JSON.stringify(missing)), /invalid inspection payload/);
+});
+
+test('a diet reads as its meat and plant shares, or unfed', () => {
+  assert.equal(dietLabel(30, 10), '25% meat, 75% plants');
+  assert.equal(dietLabel(0, 4), '100% meat, 0% plants');
+  assert.equal(dietLabel(0, 0), 'unfed');
 });
 
 test('birth identities preserve exact decimal strings above the safe integer range', () => {
