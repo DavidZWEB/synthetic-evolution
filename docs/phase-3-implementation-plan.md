@@ -14,7 +14,7 @@ Design decisions live in the spec: §2.2b combat in the snapshot, §3.3 wired se
 §5.5 constants. This plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: M1, M2, and M3 done; M4 next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1 through M4 done; M5 next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**. It is measured as a species
 whose members take most of their energy from other agents (bites and corpses),
 persisting for at least half a run on several seeds while plant-eaters persist beside
@@ -27,7 +27,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 | M1 Corpses | Done: pool, decomposition, eating, sight, hashing, checkpoints, snapshot, and drawing |
 | M2 Evolvable bodies | Done: muscle and mouth genes, mass, gape, upkeep, the mutation operator at rate 0, and trait telemetry |
 | M3 The bite | Done: the dormant bite, the two-pass swing, health, kills, and diet and kill telemetry |
-| M4 Protecting innovation | Not started |
+| M4 Protecting innovation | Done: wired sensor addition, sensor-innovation telemetry, and the vision and chemo knockout switches |
 | M5 Seeing predation | Not started |
 | M6 Calibration | Not started |
 | M7 Acceptance | Not started |
@@ -212,6 +212,23 @@ Spec §3.3 and §4.1.
 - **Knockout switches** `sensing.vision_gain` and `sensing.chemo_gain`, so a retune can
   silence existing eyes or noses. The Phase 2 tooling could only stop new scent.
 - How often sensors are removed relative to added is tuned in M6, not changed here.
+
+**Landed** with `wired_weight_scale` at 0 and both gains at 1, so Phase 2's dynamics are
+unchanged.
+
+- A wire's sink is an effector source or a hidden neuron, never another organ's input
+  or an oscillator. The organ's own draws are unchanged, and a wire that cannot be
+  grown refuses the whole addition. The random control redraws the wire's weight with
+  every other neural scalar, so its wires keep their topology but not their scale.
+- The gains multiply what every eye and nose reports before it reaches the brain; each
+  organ still pays upkeep while silenced.
+- Native metrics record every sensor innovation the living carry, with its carriers and
+  how many have it wired. `summarize` reports per cohort the innovations ever carried
+  and kept, the median and longest sampled span, and the wired share, founding sensors
+  excluded.
+- The three fields are fractions in [0, 1]. Older files read them as unwired at full
+  strength, and the scenario params now pin them, with the bite and its combat, so M6's
+  defaults move only the shipped-defaults runs.
 
 ## M5 - Seeing predation
 

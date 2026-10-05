@@ -368,10 +368,12 @@ draws; the same refusal/consumption rules as neural edits apply.
 
 **DECIDED (Phase 3): a new sensor arrives wired.** The same edit also adds one
 enabled connection from a uniformly chosen channel's target neuron to a uniformly
-chosen effector source or hidden neuron, weighted as an added connection (above)
+chosen effector source or hidden neuron (one no sensor writes and no effector reads;
+never an oscillator, which ignores its inputs), weighted as an added connection (above)
 scaled by `mutation.organs.wired_weight_scale`, so the new input nudges behaviour rather
-than overriding it. The starting value is 0.25. Zero adds no connection and draws
-nothing, which is how Phase 2 ran. Phase 2's unwired organ paid upkeep from birth and
+than overriding it. The scale lies in [0, 1]; calibration starts from 0.25 and decides
+the shipped value, and until then it is 0. Zero adds no connection and draws nothing,
+which is how Phase 2 ran. Phase 2's unwired organ paid upkeep from birth and
 could act only once a later add-connection happened to wire it. That is the
 nonfunctional structure NEAT rejects: new structure usually lowers fitness at first
 and needs generations of tuning, and unconnected structure may never join the
@@ -379,7 +381,9 @@ working network (Stanley & Miikkulainen 2002). NEAT protects innovation with exp
 fitness sharing inside species, which needs a fitness score this simulation does not
 have (§1). Protection here comes from wiring new organs at once, as oscillator
 addition already does, and from ecological niches; Phase 3 also measures how long
-sensor innovations persist. The extra draws happen only on a successful addition.
+sensor innovations persist (§7.9). The extra draws happen only on a successful addition,
+after the organ's own: the channel, then the sink, then the weight. A wire that cannot
+be grown, for want of a sink, a connection slot, or an ID, refuses the whole addition.
 
 Runtime sensor admission checks allocated channel and sensing-envelope bounds.
 Inherited genes remain valid after live range reductions because the world's
@@ -791,7 +795,7 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 | `clock` | period | sine oscillator (also available as internal neuron) |
 | `light` | — | ambient light level (day/night, depth) |
 
-**DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1; a live retune to 0 silences that sense in every existing agent. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
+**DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1 and lie in [0, 1], so a switch can silence or dim a sense but never push an organ past the range it reports in; interoception has none. A live retune to 0 silences that sense in every existing agent, while each organ still pays its upkeep. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
 
 **Every directional param is stored as an `(azimuth, elevation)` pair, with `elevation` clamped to 0 and its mutation operator disabled in V1.** The field exists in the gene, occupies its slot in the serialized genome, and simply doesn't vary. Going 3D is then a matter of unclamping it. If you store a single scalar angle instead, every saved world and every evolved population you've accumulated becomes unloadable the day you switch — and by then you will have runs you care about.
 
