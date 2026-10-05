@@ -78,13 +78,17 @@ pub fn wrap_pi(angle: f32) -> f32 {
 /// imported gene may carry any finite azimuth, and at 2^26 an `f32` step is 8, so a
 /// quarter turn of yaw added to it rounds away. One already in `[-π, π]` is returned
 /// exactly, so every founder and drawn azimuth reads as it always did.
+///
+/// Out of range, through the azimuth's own sine and cosine, which libm reduces exactly,
+/// so the angle keeps the direction it encodes. Wrapping by an `f32` τ would not: at
+/// 2^26 adding π rounds away and τ's rounding loses phase, 1.27 rad in all.
 #[inline]
 pub fn reduce_angle(angle: f32) -> f32 {
     use core::f32::consts::PI;
     if (-PI..=PI).contains(&angle) {
         angle
     } else {
-        wrap_pi(angle)
+        atan2(sin(angle), cos(angle))
     }
 }
 
@@ -141,12 +145,14 @@ mod tests {
         for angle in [0.0, 0.3, -PI, PI, -0.0] {
             assert_eq!(reduce_angle(angle).to_bits(), angle.to_bits(), "{angle}");
         }
-        // At 2^26 a quarter turn added to the raw azimuth rounds away; reduced, it turns.
+        // At 2^26 a quarter turn added to the raw azimuth rounds away. Reduced, it keeps
+        // the direction 2^26 rad encodes, about 2.7073 rad, which wrapping by an f32 τ
+        // misplaces by 1.27 rad.
         let huge = 67_108_864.0f32;
         assert_eq!(FRAC_PI_2 + huge, huge);
         let reduced = reduce_angle(huge);
-        assert!((-PI..=PI).contains(&reduced), "{reduced}");
-        assert!(reduce_angle(-huge).abs() <= PI);
+        assert!((reduced - 2.707_31).abs() < 1e-5, "{reduced}");
+        assert!((reduce_angle(-huge) + 2.707_31).abs() < 1e-5);
     }
 
     #[test]

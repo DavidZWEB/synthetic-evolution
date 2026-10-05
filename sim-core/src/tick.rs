@@ -1049,14 +1049,16 @@ mod tests {
     fn an_imported_bite_turns_with_its_body_whatever_its_azimuth() {
         // An import may carry any finite azimuth. At 2^26 a quarter turn of yaw added to
         // it rounded away, so the bite kept aiming one way however its biter turned.
+        // Targets are placed from the azimuth's own sine and cosine, turned by the yaw,
+        // so the aim must keep the direction the gene encodes as well as turn.
         use core::f32::consts::FRAC_PI_2;
         let azimuth = 67_108_864.0f32;
-        let aim = crate::math::reduce_angle(azimuth);
+        let (sin, cos) = (crate::math::sin(azimuth), crate::math::cos(azimuth));
         let toward = |yaw: f32| {
-            let heading = yaw + aim;
+            let (sy, cy) = (crate::math::sin(yaw), crate::math::cos(yaw));
             Vec3::new(
-                100.0 + 5.0 * crate::math::cos(heading),
-                100.0 + 5.0 * crate::math::sin(heading),
+                100.0 + 5.0 * (cos * cy - sin * sy),
+                100.0 + 5.0 * (sin * cy + cos * sy),
                 0.0,
             )
         };

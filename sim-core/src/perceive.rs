@@ -811,18 +811,20 @@ mod tests {
     fn an_imported_eye_turns_with_its_body_whatever_its_azimuth() {
         // An import may carry any finite azimuth. At 2^26 a quarter turn of yaw added to
         // it rounded away, so the eye kept looking one way however its agent turned.
+        // Targets are placed from the azimuth's own sine and cosine, turned by the yaw,
+        // so the eye must keep the direction the gene encodes as well as turn.
         use core::f32::consts::FRAC_PI_2;
         let azimuth = 67_108_864.0f32;
-        let aim = math::reduce_angle(azimuth);
+        let (sin, cos) = (math::sin(azimuth), math::cos(azimuth));
         let genes = one_sensor(Modality::VisionRay, [azimuth, 0.0, 60.0, 0.5]);
         let sensors = compile_sensors(&genes);
         let sees = |yaw: f32, target: f32| {
-            let heading = target + aim;
+            let (sy, cy) = (math::sin(target), math::cos(target));
             let fixture = Fixture::new(vec![
                 Vec3::new(500.0, 500.0, 0.0),
                 Vec3::new(
-                    500.0 + 20.0 * math::cos(heading),
-                    500.0 + 20.0 * math::sin(heading),
+                    500.0 + 20.0 * (cos * cy - sin * sy),
+                    500.0 + 20.0 * (sin * cy + cos * sy),
                     0.0,
                 ),
             ]);
