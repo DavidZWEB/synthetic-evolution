@@ -132,9 +132,11 @@ export function decodeInspection(json: string): Inspection {
  * carrion, or "unfed" before its first meal (spec §7.9).
  */
 export function dietLabel(plants: number, animals: number): string {
-  const eaten = plants + animals;
-  if (!(eaten > 0)) return 'unfed';
-  const meat = Math.round((animals / eaten) * 100);
+  // Scaled by the larger first, so two finite totals cannot overflow their sum.
+  const larger = Math.max(plants, animals);
+  if (!(larger > 0)) return 'unfed';
+  const share = animals / larger / (plants / larger + animals / larger);
+  const meat = Math.round(share * 100);
   return `${meat}% meat, ${100 - meat}% plants`;
 }
 

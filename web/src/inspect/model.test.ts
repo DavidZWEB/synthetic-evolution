@@ -81,6 +81,8 @@ test('a diet reads as its meat and plant shares, or unfed', () => {
   assert.equal(dietLabel(30, 10), '25% meat, 75% plants');
   assert.equal(dietLabel(0, 4), '100% meat, 0% plants');
   assert.equal(dietLabel(0, 0), 'unfed');
+  assert.equal(dietLabel(Number.MAX_VALUE, Number.MAX_VALUE), '50% meat, 50% plants');
+  assert.equal(dietLabel(Number.MIN_VALUE, Number.MIN_VALUE), '50% meat, 50% plants');
 });
 
 test('birth identities preserve exact decimal strings above the safe integer range', () => {
