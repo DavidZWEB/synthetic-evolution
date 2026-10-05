@@ -74,6 +74,11 @@ pub struct WorldView<'a> {
     pub corpses: &'a Corpses,
     pub corpse_radius: f32,
     pub corpse_signature: Vec3,
+    /// How loudly every eye and every chemoreceptor reports: `sensing.vision_gain` and
+    /// `sensing.chemo_gain`. One in an ordinary world; zero silences that sense in every
+    /// agent at once, which is how a knockout asks whether a lineage uses it (spec §4.1).
+    pub vision_gain: f32,
+    pub chemo_gain: f32,
 }
 
 /// The sensing agent's own state — what an interoceptor reads and what every
@@ -144,9 +149,12 @@ pub fn sensor_count(genes: &[Gene]) -> usize {
 pub fn perceive(sensors: &[Sensor], agent: &SelfView, world: &WorldView, neurons: &mut [Neuron]) {
     let mut channels = [0.0f32; SENSOR_CHANNELS];
     for sensor in sensors {
-        let written = match sensor.modality {
-            Modality::VisionRay => vision_ray(sensor, agent, world, &mut channels),
-            Modality::Chemo => chemo(sensor, agent, world, &mut channels),
+        let (written, gain) = match sensor.modality {
+            Modality::VisionRay => (
+                vision_ray(sensor, agent, world, &mut channels),
+                world.vision_gain,
+            ),
+            Modality::Chemo => (chemo(sensor, agent, world, &mut channels), world.chemo_gain),
             // Spec §4.1 has the `which` param selecting energy, age, or health. Only
             // energy is worth sensing in Phase 1 — nothing reduces health before
             // predation lands, and age is a number an agent can do nothing about until
@@ -154,7 +162,7 @@ pub fn perceive(sensors: &[Sensor], agent: &SelfView, world: &WorldView, neurons
             // and the branch on it arrives with the second thing to report.
             Modality::Interoception => {
                 channels[0] = agent.energy_tanks;
-                1
+                (1, 1.0)
             }
         };
         debug_assert_eq!(written, sensor.modality.channels());
@@ -164,7 +172,8 @@ pub fn perceive(sensors: &[Sensor], agent: &SelfView, world: &WorldView, neurons
             // range rather than fail quietly.
             debug_assert!(!target.is_null(), "compiled sensor kept a NULL target");
             if let Some(neuron) = neurons.get_mut(target.index()) {
-                neuron.input += value;
+                // A gain of one is exact, so an ordinary world reads what it always did.
+                neuron.input += gain * value;
             }
         }
     }
@@ -449,6 +458,8 @@ mod tests {
                 corpses: &self.corpses,
                 corpse_radius: SimParams::default().corpses.radius,
                 corpse_signature: Vec3::from(SimParams::default().corpses.signature),
+                vision_gain: 1.0,
+                chemo_gain: 1.0,
             }
         }
 
@@ -840,6 +851,95 @@ mod tests {
         assert!(sees(0.0, 0.0));
         assert!(!sees(FRAC_PI_2, 0.0), "the eye did not turn with its body");
         assert!(sees(FRAC_PI_2, FRAC_PI_2));
+    }
+
+    #[test]
+    fn a_gain_scales_every_organ_of_its_sense_and_no_other() {
+        // One switch per modality multiplies what its organs report, so a knockout can
+        // silence or dim senses that already exist (spec §4.1). Neither reaches the
+        // other's organs, and interoception has no switch. Halving is exact in binary,
+        // so a dimmed sense reads exactly half.
+        let mut genes: Vec<Gene> = (0..8)
+            .map(|id| {
+                Gene::Neuron(NeuronGene {
+                    id: InnovationId::new(id),
+                    bias: 0.0,
+                    tau: 1.0,
+                    activation: Activation::Sigmoid,
+                    period: 0.0,
+                })
+            })
+            .collect();
+        let mut next_target = 0;
+        for (id, modality, params) in [
+            (100, Modality::VisionRay, [0.0, 0.0, 60.0, 0.5]),
+            (101, Modality::Chemo, [0.0, 40.0, 0.0, 0.0]),
+            (102, Modality::Interoception, [0.0; GENE_PARAMS]),
+        ] {
+            let mut targets = [InnovationId::NULL; SENSOR_CHANNELS];
+            for target in targets.iter_mut().take(modality.channels()) {
+                *target = InnovationId::new(next_target);
+                next_target += 1;
+            }
+            genes.push(Gene::Sensor(SensorGene {
+                id: InnovationId::new(id),
+                modality,
+                params,
+                targets,
+            }));
+        }
+        genes.sort_by_key(Gene::sort_key);
+        assert_eq!(validate(&genes), Ok(()), "fixture is incoherent");
+        let sensors = compile_sensors(&genes);
+        // Something ahead to see, and scent to the north-east to smell.
+        let mut fixture = Fixture::new(vec![
+            Vec3::new(400.0, 500.0, 0.0),
+            Vec3::new(420.0, 500.0, 0.0),
+        ]);
+        let chemo = ChemoParams {
+            decay: vec![1.0],
+            diffuse: 0.5,
+            ..ChemoParams::default()
+        };
+        fixture
+            .field
+            .deposit(0, Vec3::new(460.0, 520.0, 0.0), 5_000.0);
+        for _ in 0..200 {
+            fixture.field.update(&chemo);
+        }
+        let reads = |vision_gain, chemo_gain| {
+            let mut neurons = neurons_for(&genes);
+            let view = WorldView {
+                vision_gain,
+                chemo_gain,
+                ..fixture.view()
+            };
+            perceive(&sensors, &fixture.agent(0, 0.0), &view, &mut neurons);
+            neurons
+                .iter()
+                .map(|n| n.input.to_bits())
+                .collect::<Vec<_>>()
+        };
+        let full = reads(1.0, 1.0);
+        assert!(
+            full.iter().all(|&bits| f32::from_bits(bits) != 0.0),
+            "every channel must read something for silence to mean anything"
+        );
+        let silent = 0.0f32.to_bits();
+        let blind = reads(0.0, 1.0);
+        assert_eq!(blind[..4], [silent; 4], "the eye still sees");
+        assert_eq!(blind[4..], full[4..], "blinding reached the other organs");
+        let anosmic = reads(1.0, 0.0);
+        assert_eq!(anosmic[4..7], [silent; 3], "the nose still smells");
+        assert_eq!(anosmic[..4], full[..4], "the knockout reached the eye");
+        assert_eq!(anosmic[7], full[7], "the knockout reached interoception");
+        let dim = reads(0.5, 0.5);
+        let halved: Vec<u32> = full[..7]
+            .iter()
+            .map(|&bits| (0.5 * f32::from_bits(bits)).to_bits())
+            .collect();
+        assert_eq!(dim[..7], halved[..]);
+        assert_eq!(dim[7], full[7], "interoception has no switch");
     }
 
     #[test]

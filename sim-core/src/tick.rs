@@ -147,6 +147,8 @@ impl World {
                 corpses: &self.corpses,
                 corpse_radius: self.params.corpses.radius,
                 corpse_signature: Vec3::from(self.params.corpses.signature),
+                vision_gain: self.params.sensing.vision_gain,
+                chemo_gain: self.params.sensing.chemo_gain,
             };
             perceive::perceive(
                 self.sensors.get(self.agents.sensors[i]),
