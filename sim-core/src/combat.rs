@@ -142,9 +142,11 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
     let direction = Vec3::new(math::cos(aim.heading), math::sin(aim.heading), 0.0);
     // A full circle takes every direction, whatever rounding does behind the biter.
     let full_circle = targets.arc >= core::f32::consts::PI;
-    // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
-    // still finds every target in reach, whatever a retune did to the size ranges.
-    let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size);
+    // The hash filters by f32 squares against an f32 radius, both rounded, so it is only
+    // a pre-filter: doubled, rounding there can never drop a target the f64 test below
+    // would take, at any scale. Nearest images on the plane lie up to w/√2 apart, so a
+    // search capped at the world still finds every target in reach.
+    let search = ((aim.reach + aim.radius + targets.largest) * 2.0).min(targets.world_size);
     let mut nearest: Option<(f64, u32)> = None;
     targets.hash.for_each_within(
         targets.positions,
@@ -426,6 +428,34 @@ mod tests {
             hit_reaching(1e-22, &[at(0.0), at(2e-23), at(1e-23)], &tiny, 0.0, quarter),
             Some(2)
         );
+    }
+
+    #[test]
+    fn the_search_never_drops_a_target_the_reach_test_would_take() {
+        // Reach 4.4 past bodies of 3 and 6: this victim lies inside the f64 limit, but
+        // its f32 square exceeded the rounded search radius's, so the hash never
+        // offered it.
+        let positions = [
+            Vec3::new(40.0, 40.0, 0.0),
+            Vec3::new(53.399_998, 40.0074, 0.0),
+        ];
+        let mut hash = SpatialHash::new(100.0, 10.0, 2);
+        hash.rebuild(&positions, &[1; 2], &mut [0; 2]);
+        let aim = Aim {
+            position: positions[0],
+            heading: 0.0,
+            reach: 4.4,
+            radius: 3.0,
+        };
+        let targets = Targets {
+            positions: &positions,
+            sizes: &[3.0, 6.0],
+            hash: &hash,
+            largest: 6.0,
+            world_size: 100.0,
+            arc: core::f32::consts::FRAC_PI_4,
+        };
+        assert_eq!(target(0, &aim, &targets), Some(1));
     }
 
     #[test]
