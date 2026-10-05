@@ -108,8 +108,8 @@ const PARAMS = {
 
 /**
  * Params fields added after archives were first written. An older archive omits them
- * because it ran without them, which their zero default describes exactly; `combat`
- * is the exception, inert in a run whose founders could not bite.
+ * because it ran without them, and the archive reader restores each as that run had it
+ * (`shells/shared/later_params.rs`): mostly zero, and no combat at all before the bite.
  */
 const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
