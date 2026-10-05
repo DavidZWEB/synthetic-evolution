@@ -64,9 +64,12 @@ function assertLayoutsAgree(spans) {
     'part_offset',
     'part_count',
     'incarnation',
+    'bite_at',
   ];
+  const byteFields = ['alive', 'health', 'swing_age', 'hurt_age'];
   const agentBytes =
-    agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
+    agentFields.reduce((total, field) => total + spans[field].len * 4, 0) +
+    byteFields.reduce((total, field) => total + spans[field].len, 0);
   const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
   const corpseBytes = (spans.corpse_position.len + spans.corpse_energy.len) * 4;
 
@@ -108,11 +111,15 @@ function sourceViews() {
     partOffset: at(spans.part_offset, Uint32Array),
     partCount: at(spans.part_count, Uint32Array),
     incarnation: at(spans.incarnation, Uint32Array),
+    biteAt: at(spans.bite_at, Float32Array),
     plantPosition: at(spans.plant_position, Float32Array),
     plantEnergy: at(spans.plant_energy, Float32Array),
     corpsePosition: at(spans.corpse_position, Float32Array),
     corpseEnergy: at(spans.corpse_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
+    health: at(spans.health, Uint8Array),
+    swingAge: at(spans.swing_age, Uint8Array),
+    hurtAge: at(spans.hurt_age, Uint8Array),
   };
   sourceBuffer = memory.buffer;
   return source;

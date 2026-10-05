@@ -6,11 +6,11 @@
  * table is how a renderer ends up drawing orientation as position with no error anywhere.
  *
  * Field order is not cosmetic: every four-byte array comes first so each typed-array
- * view lands naturally aligned, and the one-byte `alive` array goes last. A `Float32Array`
- * over a non-multiple-of-4 offset throws, and putting `alive` in the middle would make
- * every array after it depend on the capacity being even.
+ * view lands naturally aligned, and the one-byte arrays (`alive`, then the combat bytes)
+ * go last. A `Float32Array` over a non-multiple-of-4 offset throws, and putting a byte
+ * array in the middle would make every array after it depend on the capacity.
  *
- * The totals here must match `sim_core::snapshot::BYTES_PER_AGENT` (61). The Rust side
+ * The totals here must match `sim_core::snapshot::BYTES_PER_AGENT` (72). The Rust side
  * pins that number with a test; this side derives it, and `bytesPerAgent` below is what
  * a test can compare.
  */
@@ -76,17 +76,25 @@ export function frameLayout(capacity, plantCapacity = 0, corpseCapacity = 0) {
     partOffset: wide(capacity),
     partCount: wide(capacity),
     incarnation: wide(capacity),
+    biteAt: wide(capacity * 2),
     plantPosition: wide(plantCapacity * 3),
     plantEnergy: wide(plantCapacity),
     corpsePosition: wide(corpseCapacity * 3),
     corpseEnergy: wide(corpseCapacity),
-    alive: { offset, length: capacity },
   };
-  offset += capacity;
+  const bytes = (count) => {
+    const field = { offset, length: count };
+    offset += count;
+    return field;
+  };
+  layout.alive = bytes(capacity);
+  layout.health = bytes(capacity);
+  layout.swingAge = bytes(capacity);
+  layout.hurtAge = bytes(capacity);
 
   layout.bytes = offset;
-  // The logical payload ends in `alive`, but every frame base must still align the
-  // four-byte fields in the next frame.
+  // The logical payload ends in the byte arrays, but every frame base must still align
+  // the four-byte fields in the next frame.
   layout.stride = Math.ceil(offset / 4) * 4;
   layout.capacity = capacity;
   layout.plantCapacity = plantCapacity;
@@ -94,7 +102,7 @@ export function frameLayout(capacity, plantCapacity = 0, corpseCapacity = 0) {
   return layout;
 }
 
-/** What one agent costs across a frame. Should be 61 (spec §7.5). */
+/** What one agent costs across a frame. Should be 72 (spec §7.5). */
 export function bytesPerAgent() {
   return frameLayout(1, 0).bytes;
 }
@@ -118,6 +126,7 @@ export function bytesPerCorpse() {
 export function frameViews(buffer, base, layout) {
   const f32 = (field) => new Float32Array(buffer, base + field.offset, field.length);
   const u32 = (field) => new Uint32Array(buffer, base + field.offset, field.length);
+  const u8 = (field) => new Uint8Array(buffer, base + field.offset, field.length);
   return {
     position: f32(layout.position),
     orientation: f32(layout.orientation),
@@ -127,11 +136,15 @@ export function frameViews(buffer, base, layout) {
     partOffset: u32(layout.partOffset),
     partCount: u32(layout.partCount),
     incarnation: u32(layout.incarnation),
+    biteAt: f32(layout.biteAt),
     plantPosition: f32(layout.plantPosition),
     plantEnergy: f32(layout.plantEnergy),
     corpsePosition: f32(layout.corpsePosition),
     corpseEnergy: f32(layout.corpseEnergy),
-    alive: new Uint8Array(buffer, base + layout.alive.offset, layout.alive.length),
+    alive: u8(layout.alive),
+    health: u8(layout.health),
+    swingAge: u8(layout.swingAge),
+    hurtAge: u8(layout.hurtAge),
   };
 }
 
@@ -145,11 +158,15 @@ export const FIELDS = [
   'partOffset',
   'partCount',
   'incarnation',
+  'biteAt',
   'plantPosition',
   'plantEnergy',
   'corpsePosition',
   'corpseEnergy',
   'alive',
+  'health',
+  'swingAge',
+  'hurtAge',
 ];
 
 /** Copies every array from one set of views into another of the same layout. */

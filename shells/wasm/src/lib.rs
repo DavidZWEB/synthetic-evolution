@@ -291,6 +291,13 @@ struct Layout {
     part_count: Span,
     /// Allocation generation per slot; changes when a dead slot is reused.
     incarnation: Span,
+    /// One byte per slot each: health (255 at full), and ticks since the last swing and
+    /// since the last hit, saturating at 255.
+    health: Span,
+    swing_age: Span,
+    hurt_age: Span,
+    /// `x, y` per slot where the latest swing landed; NaN in both for a miss.
+    bite_at: Span,
     /// Slots in the plant arrays. Fixed for the life of a world, like `capacity`.
     plant_capacity: u32,
     /// `x, y, z` per plant.
@@ -551,6 +558,10 @@ impl Sim {
             part_offset: span(self.snapshot.part_offset()),
             part_count: span(self.snapshot.part_count()),
             incarnation: span(self.snapshot.incarnation()),
+            health: span(self.snapshot.health()),
+            swing_age: span(self.snapshot.swing_age()),
+            hurt_age: span(self.snapshot.hurt_age()),
+            bite_at: span(self.snapshot.bite_at()),
             plant_capacity: self.snapshot.plant_capacity(),
             plant_position: span(self.snapshot.plant_position()),
             plant_energy: span(self.snapshot.plant_energy()),
@@ -694,7 +705,7 @@ impl Sim {
     /// Everything the inspector shows for one agent, as JSON.
     ///
     /// Pulled for the one selected agent rather than streamed for everybody: this is
-    /// kilobytes per agent against the snapshot's 61 bytes, and it is read at the rate a
+    /// kilobytes per agent against the snapshot's 72 bytes, and it is read at the rate a
     /// human clicks (spec §2.2b).
     pub fn inspect_agent(&self, index: u32, incarnation: u32) -> Result<String, JsError> {
         let id = AgentId::new(index);

@@ -1,7 +1,7 @@
 //! The render snapshot: the narrow projection of world state a frame needs.
 //!
-//! Spec §2.2b's render fields: agent appearance and identity, plant position and
-//! current stock, and corpse position and energy. A slot incarnation lets click
+//! Spec §2.2b's render fields: agent appearance and identity, what an attack needs to
+//! be drawn, plant position and current stock, and corpse position and energy. A slot incarnation lets click
 //! selection survive free-list reuse without exposing private agent state. No agent
 //! energy, genomes, or brain state. The buffer is written once per tick and read by the
 //! main thread at whatever rate it happens to be drawing, so every field added is
@@ -15,8 +15,8 @@
 //!
 //! **Sized once, at capacity, and never grown.** Growing WASM memory detaches every JS
 //! typed-array view over it, silently (spec §7.3). This is the buffer JS actually views,
-//! and at 61 bytes per agent it is 0.5% of per-agent state — 0.31 MB at the default 5000
-//! — so pre-allocating it is free and removes the hazard rather than managing it.
+//! and at 72 bytes per agent it is under 1% of per-agent state — 0.36 MB at the default
+//! 5000 — so pre-allocating it is free and removes the hazard rather than managing it.
 //!
 //! Deliberately not here: inspector data. A genome, a lineage, and live activations are
 //! pulled for one selected agent on demand through the command queue, at human speed,
@@ -25,9 +25,9 @@
 use crate::world::World;
 
 /// Bytes one agent occupies across every array here. Spec §7.5 budgets the snapshot at
-/// 61 bytes per agent, and the arithmetic that makes pre-allocation obviously free rests
-/// on it staying that way.
-pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4 + 4;
+/// 72 bytes per agent, 11 of them Phase 3's combat fields, and the arithmetic that makes
+/// pre-allocation obviously free rests on it staying that way.
+pub const BYTES_PER_AGENT: usize = 12 + 16 + 4 + 12 + 1 + 4 + 4 + 4 + 4 + 1 + 1 + 1 + 8;
 
 /// Bytes one plant occupies: its position and current stock (spec §2.2b).
 pub const BYTES_PER_PLANT: usize = 12 + 4;
@@ -60,6 +60,16 @@ pub struct Snapshot {
     part_count: Vec<u32>,
     /// Allocation generation for each slot, so a recycled index is a new identity.
     incarnation: Vec<u32>,
+    /// Health quantized to a byte, 255 at full: enough to draw a wound (spec §2.2b).
+    health: Vec<u8>,
+    /// Ticks since each agent last swung and since it was last hit, saturating at 255, so
+    /// a renderer that skipped frames still learns that it happened.
+    swing_age: Vec<u8>,
+    hurt_age: Vec<u8>,
+    /// `x, y` per slot: where the latest swing landed, the victim's centre, or NaN in both
+    /// for a miss. A position rather than a slot, because the victim's slot may already
+    /// hold a newborn by the time the frame is published (spec §2.2b).
+    bite_at: Vec<f32>,
     plant_capacity: u32,
     plant_position: Vec<f32>,
     /// What each site currently holds. An emptied plant stays in the world and stays
@@ -93,6 +103,10 @@ impl Snapshot {
             part_offset: vec![0; n],
             part_count: vec![0; n],
             incarnation: vec![0; n],
+            health: vec![0; n],
+            swing_age: vec![u8::MAX; n],
+            hurt_age: vec![u8::MAX; n],
+            bite_at: vec![f32::NAN; n * 2],
             plant_capacity,
             plant_position: vec![0.0; p * 3],
             plant_energy: vec![0.0; p],
@@ -156,6 +170,14 @@ impl Snapshot {
             self.species[i] = agents.species_id[i];
             self.part_offset[i] = agents.parts[i].offset();
             self.part_count[i] = agents.parts[i].len();
+
+            // A living agent's health lies in (0, 1], so this rounds onto 0..=255.
+            self.health[i] = (agents.health[i] * 255.0 + 0.5) as u8;
+            self.swing_age[i] = agents.swing_age[i];
+            self.hurt_age[i] = agents.hurt_age[i];
+            let [x, y] = agents.bite_at[i];
+            self.bite_at[i * 2] = x;
+            self.bite_at[i * 2 + 1] = y;
         }
 
         // Every plant, every frame. There is no alive flag to respect: an eaten plant
@@ -261,6 +283,30 @@ impl Snapshot {
         &self.incarnation
     }
 
+    /// Health per slot, 0..=255 for none to full.
+    #[inline]
+    pub fn health(&self) -> &[u8] {
+        &self.health
+    }
+
+    /// Ticks since each slot's agent last swung, saturating at 255.
+    #[inline]
+    pub fn swing_age(&self) -> &[u8] {
+        &self.swing_age
+    }
+
+    /// Ticks since each slot's agent was last hit, saturating at 255.
+    #[inline]
+    pub fn hurt_age(&self) -> &[u8] {
+        &self.hurt_age
+    }
+
+    /// `x, y` per slot where the latest swing landed; NaN in both for a miss.
+    #[inline]
+    pub fn bite_at(&self) -> &[f32] {
+        &self.bite_at
+    }
+
     #[inline]
     pub fn plant_capacity(&self) -> u32 {
         self.plant_capacity
@@ -352,8 +398,8 @@ mod tests {
     }
 
     #[test]
-    fn one_agent_costs_the_budgeted_sixty_one_bytes() {
-        // Spec §7.5 budgets the snapshot at 61 bytes per agent, and the argument that
+    fn one_agent_costs_the_budgeted_seventy_two_bytes() {
+        // Spec §7.5 budgets the snapshot at 72 bytes per agent, and the argument that
         // pre-allocating it at capacity is free rests on that number. A field added
         // without noticing is bandwidth paid 60 times a second forever.
         let snap = Snapshot::new(1, 0, 0);
@@ -365,9 +411,45 @@ mod tests {
             + snap.species().len() * 4
             + snap.part_offset().len() * 4
             + snap.part_count().len() * 4
-            + snap.incarnation().len() * 4;
+            + snap.incarnation().len() * 4
+            + snap.health().len()
+            + snap.swing_age().len()
+            + snap.hurt_age().len()
+            + snap.bite_at().len() * 4;
         assert_eq!(bytes, BYTES_PER_AGENT);
-        assert_eq!(bytes, 61);
+        assert_eq!(bytes, 72);
+    }
+
+    #[test]
+    fn an_attack_travels_with_the_frame() {
+        // Health as a byte, both ages, and where the swing landed: what a renderer
+        // needs to draw a bite, a wound, and a hit (spec §2.2b).
+        let mut world = world_of(2, 4);
+        let [biter, victim] = [0, 1].map(|n| world.pool().iter_live().nth(n).unwrap().index());
+        let mut snap = Snapshot::for_world(&world);
+        snap.update(&world);
+        assert_eq!(&snap.health()[..2], &[255, 255], "founders start whole");
+        assert_eq!(&snap.swing_age()[..2], &[255, 255]);
+        assert!(snap.bite_at()[..4].iter().all(|v| v.is_nan()));
+
+        let agents = world.agents_mut();
+        agents.health[victim] = 0.5;
+        agents.swing_age[biter] = 0;
+        agents.bite_at[biter] = [215.0, 500.0];
+        agents.hurt_age[victim] = 3;
+        snap.update(&world);
+        assert_eq!(
+            snap.health()[victim],
+            128,
+            "half health rounds to 128 of 255"
+        );
+        assert_eq!(snap.swing_age()[biter], 0);
+        assert_eq!(snap.hurt_age()[victim], 3);
+        assert_eq!(&snap.bite_at()[biter * 2..biter * 2 + 2], &[215.0, 500.0]);
+        assert!(
+            snap.bite_at()[victim * 2].is_nan(),
+            "the victim has not swung"
+        );
     }
 
     #[test]
