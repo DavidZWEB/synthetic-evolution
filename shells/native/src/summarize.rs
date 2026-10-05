@@ -15,7 +15,7 @@ use sim_core::control::{RANDOMIZED_AT_BIRTH_PROTOCOL, STRUCTURAL_NULL_PROTOCOL};
 use crate::Result;
 use crate::cli::SummarizeArgs;
 use crate::diagnose::control_label;
-use crate::metrics::{Retune, RunHeader, RunSample, WorldMetrics, meat_share};
+use crate::metrics::{PredationMetrics, Retune, RunHeader, RunSample, WorldMetrics, meat_share};
 use crate::metrics_reader::read_metrics;
 
 /// Final-sample metrics reported per cohort, in output order.
@@ -443,10 +443,7 @@ fn cohort_values(
         predation.map(|p| p.swings as f64),
         predation.map(|p| p.kills as f64),
         predation.and_then(|p| meat_share((p.eaten_plants, p.eaten_animals))),
-        predation.and_then(|p| {
-            let held = p.carnivore_biomass + p.herbivore_biomass + p.unfed_biomass;
-            (held > 0.0).then(|| p.carnivore_biomass / held)
-        }),
+        predation.and_then(|p| carnivore_share(&p)),
         predation.and(species).map(|s| {
             s.populations
                 .iter()
@@ -558,6 +555,22 @@ fn species_persistence(
         .max()
         .unwrap_or(0);
     (Some(persistent as f64), Some(longest as f64))
+}
+
+/// The share of living biomass carnivores hold, absent when nothing lives. Each tier is
+/// scaled by the largest first, as `meat_share` scales its two, so no three finite
+/// tiers overflow their sum.
+fn carnivore_share(predation: &PredationMetrics) -> Option<f64> {
+    let tiers = [
+        predation.carnivore_biomass,
+        predation.herbivore_biomass,
+        predation.unfed_biomass,
+    ];
+    let largest = tiers.into_iter().fold(0.0, f64::max);
+    (largest > 0.0).then(|| {
+        let [carnivores, herbivores, unfed] = tiers.map(|tier| tier / largest);
+        carnivores / (carnivores + herbivores + unfed)
+    })
 }
 
 /// Most of its intake from other agents: spec §8's Phase 3 carnivore.
@@ -713,7 +726,7 @@ pub(crate) fn write_human(output: &mut impl Write, summary: &Summary) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::{PredationMetrics, SpeciesMetrics, SpeciesPopulation};
+    use crate::metrics::{SpeciesMetrics, SpeciesPopulation};
     use sim_core::ids::SpeciesId;
 
     fn sample(tick: u64, species: &[u32]) -> RunSample {
@@ -738,6 +751,26 @@ mod tests {
             evolving,
             final_state_hashes: None,
         }
+    }
+
+    #[test]
+    fn carnivore_share_holds_at_the_extremes_of_the_range() {
+        let share = |carnivore_biomass, herbivore_biomass, unfed_biomass| {
+            carnivore_share(&PredationMetrics {
+                carnivore_biomass,
+                herbivore_biomass,
+                unfed_biomass,
+                ..PredationMetrics::default()
+            })
+        };
+        assert_eq!(share(0.0, 0.0, 0.0), None);
+        assert_eq!(share(1.0, 2.0, 1.0), Some(0.25));
+        assert_eq!(share(0.0, 3.0, 0.0), Some(0.0));
+        let third = share(f64::MAX, f64::MAX, f64::MAX).expect("living biomass");
+        assert!(
+            (third - 1.0 / 3.0).abs() < 1e-15,
+            "the sum overflowed: {third}"
+        );
     }
 
     #[test]
