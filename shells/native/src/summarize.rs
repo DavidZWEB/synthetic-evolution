@@ -550,7 +550,7 @@ fn species_persistence(
     let end = samples.last().map_or(0, |sample| sample.tick);
     let persistent = first_last
         .values()
-        .filter(|&&(first, last)| last == end && end - first >= ticks / 2)
+        .filter(|&&(first, last)| last == end && end - first >= half_run(ticks))
         .count();
     let longest = first_last
         .values()
@@ -565,9 +565,16 @@ fn carnivorous(meat_share: Option<f64>) -> bool {
     meat_share.is_some_and(|share| share > 0.5)
 }
 
-/// Species alive at the end that have been carnivorous at every sample since at least
-/// half the run before it: spec §8's Phase 3 measure, a carnivorous lineage that
-/// persisted. Unavailable unless every sample recorded diets.
+/// Half of a run of `ticks`, rounded up, so "at least half the run" holds for an odd
+/// length too.
+fn half_run(ticks: u64) -> u64 {
+    ticks.div_ceil(2)
+}
+
+/// Species alive at the end that have been carnivorous, with plant-eaters alive beside
+/// them, at every sample since at least half the run before it: spec §8's Phase 3
+/// measure, a carnivorous lineage that persisted without eating everything.
+/// Unavailable unless every sample recorded diets.
 fn persistent_carnivores(
     samples: &[RunSample],
     ticks: u64,
@@ -576,17 +583,20 @@ fn persistent_carnivores(
     let mut since: BTreeMap<u32, u64> = BTreeMap::new();
     for sample in samples {
         let metrics = select(sample);
-        metrics.predation?;
+        let predation = metrics.predation?;
         let species = metrics.species.as_ref()?;
-        // A species absent here, or eating mostly plants, starts again.
+        // A species absent here, or eating mostly plants, starts again, and so does
+        // every carnivore once no plant-eater lives beside it.
         let mut next = BTreeMap::new();
-        for entry in species
-            .populations
-            .iter()
-            .filter(|e| carnivorous(e.meat_share))
-        {
-            let id = entry.species_id.raw();
-            next.insert(id, since.get(&id).copied().unwrap_or(sample.tick));
+        if predation.herbivore_biomass > 0.0 {
+            for entry in species
+                .populations
+                .iter()
+                .filter(|e| carnivorous(e.meat_share))
+            {
+                let id = entry.species_id.raw();
+                next.insert(id, since.get(&id).copied().unwrap_or(sample.tick));
+            }
         }
         since = next;
     }
@@ -594,7 +604,7 @@ fn persistent_carnivores(
     Some(
         since
             .values()
-            .filter(|&&first| end - first >= ticks / 2)
+            .filter(|&&first| end - first >= half_run(ticks))
             .count() as f64,
     )
 }
@@ -763,7 +773,8 @@ mod tests {
         );
     }
 
-    /// A sample whose species eat the given shares of meat, with diets recorded.
+    /// A sample whose species eat the given shares of meat, beside living plant-eaters,
+    /// with diets recorded.
     fn diet_sample(tick: u64, species: &[(u32, Option<f64>)]) -> RunSample {
         let ids: Vec<u32> = species.iter().map(|&(id, _)| id).collect();
         let mut sample = sample(tick, &ids);
@@ -771,7 +782,10 @@ mod tests {
         for (entry, &(_, share)) in populations.iter_mut().zip(species) {
             entry.meat_share = share;
         }
-        sample.evolving.predation = Some(PredationMetrics::default());
+        sample.evolving.predation = Some(PredationMetrics {
+            herbivore_biomass: 1.0,
+            ..PredationMetrics::default()
+        });
         sample
     }
 
@@ -822,6 +836,45 @@ mod tests {
             persistent_carnivores(&legacy, 1_000, &|s| &s.evolving),
             None
         );
+        // Plant-eaters must live beside the carnivore throughout: with none at tick
+        // 500, species 1's streak restarts at 800, too late to count.
+        let mut eaten = samples.clone();
+        eaten[1]
+            .evolving
+            .predation
+            .as_mut()
+            .unwrap()
+            .herbivore_biomass = 0.0;
+        assert_eq!(
+            persistent_carnivores(&eaten, 1_000, &|s| &s.evolving),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn half_an_odd_run_is_rounded_up() {
+        // Half of 1001 ticks is 500.5, so a span of 500 falls short and 501 does not, for
+        // species and carnivores alike.
+        for (start, persists) in [(501, 0.0), (500, 1.0)] {
+            let species = vec![
+                sample(0, &[1]),
+                sample(start, &[1, 2]),
+                sample(1_001, &[1, 2]),
+            ];
+            let (persistent, _) = species_persistence(&species, 1_001, &|s| &s.evolving);
+            // Species 1 spans the whole run either way.
+            assert_eq!(persistent, Some(1.0 + persists), "species from {start}");
+            let diets = vec![
+                diet_sample(0, &[(1, Some(0.1))]),
+                diet_sample(start, &[(1, Some(0.9))]),
+                diet_sample(1_001, &[(1, Some(0.9))]),
+            ];
+            assert_eq!(
+                persistent_carnivores(&diets, 1_001, &|s| &s.evolving),
+                Some(persists),
+                "carnivore from {start}"
+            );
+        }
     }
 
     #[test]
