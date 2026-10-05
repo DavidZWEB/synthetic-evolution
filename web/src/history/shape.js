@@ -102,7 +102,7 @@ const PARAMS = {
     gate: f, reach: f, arc: f, attack_cost: f, attack_damage: f, cooldown_seconds: f,
     health_regen: f, dormant_bias: f, mouthful: f, assimilation: f,
   },
-  founder: { bite: 'boolean' },
+  founder: { bite: 'boolean', bite_wired: 'boolean' },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
 
@@ -115,7 +115,7 @@ const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
-  'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain',
+  'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain', 'bite_wired',
 ]);
 
 export function integerParam(path) {

@@ -340,6 +340,9 @@ fn backfill_later_params(
         founder
             .entry("bite")
             .or_insert_with(|| serde_json::json!(false));
+        founder
+            .entry("bite_wired")
+            .or_insert_with(|| serde_json::json!(false));
     }
     params.entry("combat").or_insert_with(|| {
         serde_json::to_value(crate::history_reader::later_params::no_combat())

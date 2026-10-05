@@ -84,8 +84,8 @@ pub struct FounderPlan {
     /// [`SimParams`] at instantiation, so changing it at runtime takes effect without
     /// rebuilding the plan.
     fan_in_scale: Vec<f32>,
-    /// The output neuron a founder's bite reads, when founders carry one. Its bias
-    /// starts at `combat.dormant_bias` rather than a draw (spec §4.2).
+    /// The output neuron a founder's bite reads, when founders carry a dormant one. Its
+    /// bias starts at `combat.dormant_bias` rather than a draw (spec §4.2).
     bite: Option<InnovationId>,
 }
 
@@ -103,9 +103,12 @@ impl FounderPlan {
         let sources = sensor_channels
             .checked_add(u64::from(params.brain.hidden_neurons))?
             .checked_add(u64::from(params.brain.oscillators))?;
-        let sinks = (EFFECTORS.len() as u64).checked_add(u64::from(params.brain.hidden_neurons))?;
-        // A founder's bite reads one more output neuron, which no founder wiring reaches.
+        // A founder's bite reads one more output neuron, which founder wiring reaches only
+        // when the bite is wired (spec §4.2).
         let outputs = (EFFECTORS.len() as u64).checked_add(u64::from(params.founder.bite))?;
+        let sinks = (EFFECTORS.len() as u64)
+            .checked_add(u64::from(params.founder.bite && params.founder.bite_wired))?
+            .checked_add(u64::from(params.brain.hidden_neurons))?;
         let neurons = sources.checked_add(outputs)?;
         let fan_in = params
             .brain
@@ -204,17 +207,19 @@ impl FounderPlan {
 
         // Inputs, hidden neurons and oscillators can source connections; only outputs
         // and hidden neurons receive them in the founding template (spec §3.3). The
-        // bite's neuron receives none: a founder's bite starts dormant (spec §4.2).
+        // bite's neuron receives none unless the bite is wired: a founder's bite starts
+        // dormant (spec §4.2).
         let input_end = sensor_channels;
         let output_end = input_end + outputs;
         let hidden_range = output_end..output_end + hidden;
         let oscillator_range = output_end + hidden..neurons;
+        let wired_bite = params.founder.bite && params.founder.bite_wired;
 
         let mut sources: Vec<usize> = (0..input_end)
             .chain(hidden_range.clone())
             .chain(oscillator_range)
             .collect();
-        let sinks: Vec<usize> = (input_end..input_end + EFFECTORS.len())
+        let sinks: Vec<usize> = (input_end..input_end + EFFECTORS.len() + usize::from(wired_bite))
             .chain(hidden_range)
             .collect();
 
@@ -286,7 +291,10 @@ impl FounderPlan {
             genes,
             neurons,
             fan_in_scale,
-            bite: bite.map(|_| neuron_ids[output_end - 1]),
+            // A wired bite draws its bias like any other output.
+            bite: bite
+                .filter(|_| !wired_bite)
+                .map(|_| neuron_ids[output_end - 1]),
         })
     }
 
@@ -367,7 +375,8 @@ impl FounderPlan {
     }
 
     /// `founding` is a new founder rather than a control's redraw: it also initializes
-    /// sensors, body, meta genes, and the bite, and starts the bite's neuron dormant.
+    /// sensors, body, meta genes, and the bite, and starts a dormant bite's neuron
+    /// dormant.
     fn randomize_scalars(
         &self,
         rng: &mut Rng,
@@ -552,7 +561,7 @@ mod tests {
             (12, 1, 1, 32, 4),
         ] {
             for fan_in in [None, Some(0), Some(1), Some(2), Some(u32::MAX)] {
-                for bite in [false, true] {
+                for (bite, bite_wired) in [(false, false), (true, false), (true, true)] {
                     let mut params = SimParams::default();
                     params.species.capacity = 0;
                     params.storage.max_genes = 4_096;
@@ -564,6 +573,7 @@ mod tests {
                     params.brain.oscillators = oscillators;
                     params.brain.connections_per_target = fan_in;
                     params.founder.bite = bite;
+                    params.founder.bite_wired = bite_wired;
                     assert_counts_and_wiring(&params, 42);
                 }
             }
@@ -627,12 +637,13 @@ mod tests {
         assert_eq!(counts.synapses as usize, pairs.len(), "duplicate edge");
 
         // Wired sinks: the four standing outputs and the hidden layer. A founder's bite
-        // reads the last output, which receives nothing (spec §4.2).
+        // reads the last output, which receives nothing unless it is wired (spec §4.2).
         let inputs = channels.len();
         let output_end = inputs + effectors.len();
         let hidden_end = output_end + params.brain.hidden_neurons as usize;
+        let wired_outputs = EFFECTORS.len() + usize::from(params.founder.bite_wired);
         let sinks = |slot: usize| {
-            (inputs..inputs + EFFECTORS.len()).contains(&slot)
+            (inputs..inputs + wired_outputs).contains(&slot)
                 || (output_end..hidden_end).contains(&slot)
         };
         let sources = plan.neuron_count() - effectors.len();
@@ -1093,6 +1104,48 @@ mod tests {
         let mut fan_in = vec![0; genes.len()];
         plan.randomize_brain(&mut Rng::from_seed(3), &params, &mut redrawn, &mut fan_in);
         assert_ne!(neuron(&redrawn).bias, params.combat.dormant_bias);
+    }
+
+    #[test]
+    fn a_wired_bite_joins_the_founding_network_with_a_drawn_bias() {
+        // The calibration diagnostic: the bite reads its neuron as the other effectors
+        // read theirs, wired in and biased by a draw (spec §4.2).
+        let mut params = SimParams::default();
+        params.founder.bite = true;
+        params.founder.bite_wired = true;
+        let genes = instantiate(&plan(&params), &params, 9);
+        let source = |action| {
+            genes
+                .iter()
+                .find_map(|gene| match gene {
+                    Gene::Effector(effector) if effector.action == action => Some(effector.source),
+                    _ => None,
+                })
+                .expect("an effector")
+        };
+        let fan_in = |to| {
+            genes
+                .iter()
+                .filter(|gene| matches!(gene, Gene::Connection(c) if c.to == to))
+                .count()
+        };
+        let bite = source(Action::Bite);
+        assert!(fan_in(bite) > 0, "a founder left its bite unwired");
+        assert_eq!(fan_in(bite), fan_in(source(Action::Thrust)));
+        let bias = genes
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Neuron(neuron) if neuron.id == bite => Some(neuron.bias),
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(bias, params.combat.dormant_bias);
+        assert!((-1.0..=1.0).contains(&bias), "drawn as any other bias");
+        params.founder.bite = false;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError("founder.bite_wired requires founder.bite"))
+        );
     }
 
     #[test]

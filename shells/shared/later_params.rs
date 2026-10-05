@@ -30,6 +30,7 @@ pub const LATER_PARAMS: &[&str] = &[
     "wired_weight_scale",
     "vision_gain",
     "chemo_gain",
+    "bite_wired",
 ];
 
 /// An archive records `founder` and `combat` together, as every writer since the bite
@@ -153,9 +154,13 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     if absent("/body/mouth_range") {
         params.body.mouth_range = [1.0; 2];
     }
-    // Founders could not bite before Phase 3, whatever a later default says.
+    // Founders could not bite before Phase 3, whatever a later default says, and no
+    // founder's bite was wired before the calibration diagnostic.
     if absent("/founder") {
         params.founder.bite = false;
+    }
+    if absent("/founder/bite_wired") {
+        params.founder.bite_wired = false;
     }
     if absent("/combat") {
         params.combat = no_combat();
