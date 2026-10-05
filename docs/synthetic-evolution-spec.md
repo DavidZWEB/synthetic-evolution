@@ -835,7 +835,7 @@ Two of these are disproportionately valuable and cheap:
   2. Hits then apply in agent-index order.
 
   An earlier biter's mouthful therefore cannot drain a later one below `attack_cost` and cancel its swing. Damage accumulates, so order cannot decide who swings or who dies. Mouthfuls are taken in index order, as food is (§2.4): a victim holding less than every biter asks serves earlier slots first, and that is the one place index order shows.
-- **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. No mutation adds or removes effectors yet, so `founder.bite` governs founders only: a world whose founders lack the bite bites only through genomes imported with one.
+- **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. For calibration only, `founder.bite_wired` wires a founder's bite into the founding network like its other effectors, with a drawn bias. A world where even that bite never pays cannot be told apart from one where evolution never finds the dormant bite without it. No mutation adds or removes effectors yet, so `founder.bite` governs founders only: a world whose founders lack the bite bites only through genomes imported with one.
 
 ---
 
@@ -1465,8 +1465,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 11 since
-Phase 3's drawn attacks added each agent's swing and hurt ages, where its latest bite
+manifest records the container and checkpoint formats (checkpoint format 12 since
+Phase 3's calibration added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
 landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
 sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's

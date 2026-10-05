@@ -879,6 +879,14 @@ pub struct FounderParams {
     /// **Off until calibration (Phase 3 M6)**, so every world runs as it did in Phase
     /// 2.
     pub bite: bool,
+    /// Whether a founder's bite is wired into the founding network like its other
+    /// effectors, with a drawn bias, instead of starting dormant (spec §4.2). A
+    /// calibration diagnostic: a world where even a connected bite never pays cannot be
+    /// told apart from one where evolution never finds the dormant one without it.
+    /// Requires `bite`, and is founding topology, so fixed for the life of a world.
+    ///
+    /// **Off**: founders' bites start dormant, as the design intends.
+    pub bite_wired: bool,
 }
 
 /// Pheromone field. A 3D grid of depth 1 in V1 (spec §9.1).
@@ -963,7 +971,7 @@ impl SimParams {
     /// | `corpses.max_corpses` | the corpse pool and its grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
-    /// | founder sensor counts, `founder.bite`, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
+    /// | founder sensor counts, `founder.bite`, `founder.bite_wired`, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
     /// **Frozen, because they would silently do nothing:** `plants.initial_fill`, read
     /// once when the larder is stocked, and `plants.patchiness` and `plants.patch_scale`,
@@ -1594,6 +1602,9 @@ impl SimParams {
         // A founder's bite gene takes `combat.reach`, and must reach no further than an
         // import's may (spec §4.2). A world whose founders do not bite builds no such
         // gene, as every world before the bite did not.
+        if self.founder.bite_wired && !self.founder.bite {
+            return Err(ParamError("founder.bite_wired requires founder.bite"));
+        }
         if self.founder.bite && !(self.combat.reach * 2.0 <= self.world.size) {
             return Err(ParamError(
                 "a founder's bite must reach no further than half the world",
@@ -2059,11 +2070,15 @@ mod tests {
         fn the_founding_topology_is_frozen() {
             // These counts size the founding template and fan-in scales. Changing them
             // without rebuilding the plan would silently keep the previous topology.
-            let cases: [Case; 4] = [
+            let cases: [Case; 5] = [
                 ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
                 ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
                 ("brain.oscillators", |p| p.brain.oscillators += 1),
                 ("founder.bite", |p| p.founder.bite = true),
+                ("founder.bite_wired", |p| {
+                    p.founder.bite = true;
+                    p.founder.bite_wired = true;
+                }),
             ];
             for (name, mutate) in cases {
                 let (current, mut next) = pair();
