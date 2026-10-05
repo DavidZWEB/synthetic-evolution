@@ -265,9 +265,14 @@ fn backfill_later_params(
                 "add_oscillator_rate",
             ][..],
         ),
+        // Phase 2 also added sensors unwired.
         (
             &["mutation", "organs"][..],
-            &["remove_sensor_rate", "add_sensor_rate"][..],
+            &[
+                "remove_sensor_rate",
+                "add_sensor_rate",
+                "wired_weight_scale",
+            ][..],
         ),
         (
             &["plants"][..],
@@ -339,6 +344,18 @@ fn backfill_later_params(
         serde_json::to_value(crate::history_reader::later_params::no_combat())
             .expect("combat params serialize")
     });
+    // Every sense reported at full strength before its knockout switch existed.
+    if let Some(sensing) = params
+        .entry("sensing")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        for field in ["vision_gain", "chemo_gain"] {
+            sensing
+                .entry(field)
+                .or_insert_with(|| serde_json::json!(1.0));
+        }
+    }
     Ok(())
 }
 
@@ -1182,6 +1199,25 @@ mod tests {
             assert_eq!(data.header.params.combat, none);
             assert_eq!(data.header.retune.unwrap().params.combat, none);
         }
+    }
+
+    #[test]
+    fn a_run_from_before_wiring_and_knockouts_reads_unwired_at_full_strength() {
+        // Explicitly, so the wire scale calibration ships cannot wire an older run's
+        // new sensors, while values the file wrote stay its own.
+        let mut params = serde_json::Map::new();
+        backfill_later_params(&mut params).unwrap();
+        assert_eq!(params["mutation"]["organs"]["wired_weight_scale"], 0);
+        assert_eq!(params["sensing"]["vision_gain"], 1.0);
+        assert_eq!(params["sensing"]["chemo_gain"], 1.0);
+        let mut written = serde_json::json!({
+            "mutation": {"organs": {"wired_weight_scale": 0.25}},
+            "sensing": {"vision_gain": 0.0, "chemo_gain": 0.5},
+        });
+        backfill_later_params(written.as_object_mut().unwrap()).unwrap();
+        assert_eq!(written["mutation"]["organs"]["wired_weight_scale"], 0.25);
+        assert_eq!(written["sensing"]["vision_gain"], 0.0);
+        assert_eq!(written["sensing"]["chemo_gain"], 0.5);
     }
 
     #[test]
