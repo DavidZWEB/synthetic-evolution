@@ -41,7 +41,7 @@ const near = (actual, expected) => Math.abs(actual - expected) < 1e-4;
 
 /** The overlay's shapes at `now`, as plain objects. */
 function shapes(fx, views, now) {
-  const { data, count } = fx.overlay(views, now, { arc: Math.PI / 4, reach: 4, corpseRadius: 2 });
+  const { data, count } = fx.overlay(views, now, Math.PI / 4, 4, 2);
   return Array.from({ length: count }, (_, k) => {
     const o = k * OVERLAY_STRIDE;
     return {

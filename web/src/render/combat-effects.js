@@ -23,7 +23,7 @@ export const SHAPE = { DISC: 0, RING: 1, WEDGE: 2, SEGMENT: 3 };
 const SPECKS = 5;
 /** Where a swing or hit age saturates: "at least this long ago". */
 const LONG_AGO = 255;
-const WOUND_RED = [0.95, 0.18, 0.15];
+const [RED_R, RED_G, RED_B] = [0.95, 0.18, 0.15];
 
 /**
  * The shortest offset from `from` to `to` on a torus `world` across, so an effect that
@@ -71,6 +71,27 @@ export function createCombatEffects({
   const flashes = new Float32Array(capacity);
   const wounds = new Float32Array(capacity);
   const overlay = new Float32Array(maxInstances * OVERLAY_STRIDE);
+  // Returned every frame rather than rebuilt, so drawing allocates nothing.
+  const animation = { offsets, flashes, wounds };
+  const shapes = { data: overlay, count: 0 };
+
+  /** Appends one overlay shape, field by field: an array per shape would be garbage. */
+  function push(x, y, radius, angle, r, g, b, a, kind, p1 = 0, p2 = 0) {
+    if (shapes.count >= maxInstances) return;
+    const o = shapes.count * OVERLAY_STRIDE;
+    overlay[o] = x;
+    overlay[o + 1] = y;
+    overlay[o + 2] = radius;
+    overlay[o + 3] = angle;
+    overlay[o + 4] = r;
+    overlay[o + 5] = g;
+    overlay[o + 6] = b;
+    overlay[o + 7] = a;
+    overlay[o + 8] = kind;
+    overlay[o + 9] = p1;
+    overlay[o + 10] = p2;
+    shapes.count++;
+  }
 
   function forget() {
     swungAt.fill(-Infinity);
@@ -137,9 +158,9 @@ export function createCombatEffects({
             kills[at] = x;
             kills[at + 1] = y;
             kills[at + 2] = body >= 0 ? lastSize[body] : corpseRadius;
-            kills[at + 3] = body >= 0 ? lastColor[body * 3] : WOUND_RED[0];
-            kills[at + 4] = body >= 0 ? lastColor[body * 3 + 1] : WOUND_RED[1];
-            kills[at + 5] = body >= 0 ? lastColor[body * 3 + 2] : WOUND_RED[2];
+            kills[at + 3] = body >= 0 ? lastColor[body * 3] : RED_R;
+            kills[at + 4] = body >= 0 ? lastColor[body * 3 + 1] : RED_G;
+            kills[at + 5] = body >= 0 ? lastColor[body * 3 + 2] : RED_B;
             kills[at + 6] = now;
             killCursor = (killCursor + 1) % maxKills;
           }
@@ -155,7 +176,9 @@ export function createCombatEffects({
         lastPosition[i * 2] = views.position[i * 3];
         lastPosition[i * 2 + 1] = views.position[i * 3 + 1];
         lastSize[i] = views.size[i];
-        lastColor.set(colors.subarray(i * 3, i * 3 + 3), i * 3);
+        lastColor[i * 3] = colors[i * 3];
+        lastColor[i * 3 + 1] = colors[i * 3 + 1];
+        lastColor[i * 3 + 2] = colors[i * 3 + 2];
       }
       lastTick = tick;
     },
@@ -188,7 +211,7 @@ export function createCombatEffects({
           flashes[i] = fade;
         }
       }
-      return { offsets, flashes, wounds };
+      return animation;
     },
 
     /**
@@ -196,25 +219,8 @@ export function createCombatEffects({
      * line and specks, and a kill's shrinking body and ring. `arc` and `reach` are the
      * bite's, from the params.
      */
-    overlay(views, now, { arc, reach, corpseRadius }) {
-      let count = 0;
-      // Written field by field: an array per shape would be garbage every frame.
-      const push = (x, y, radius, angle, r, g, b, a, kind, p1 = 0, p2 = 0) => {
-        if (count >= maxInstances) return;
-        const o = count * OVERLAY_STRIDE;
-        overlay[o] = x;
-        overlay[o + 1] = y;
-        overlay[o + 2] = radius;
-        overlay[o + 3] = angle;
-        overlay[o + 4] = r;
-        overlay[o + 5] = g;
-        overlay[o + 6] = b;
-        overlay[o + 7] = a;
-        overlay[o + 8] = kind;
-        overlay[o + 9] = p1;
-        overlay[o + 10] = p2;
-        count++;
-      };
+    overlay(views, now, arc, reach, corpseRadius) {
+      shapes.count = 0;
       for (let i = 0; i < capacity; i++) {
         if (views.alive[i] !== 1) continue;
         const swing = (now - swungAt[i]) / SWING_MS;
@@ -230,7 +236,7 @@ export function createCombatEffects({
         const fade = 1 - hit;
         const dx = wrapped(aim[i * 2] - x, worldSize);
         const dy = wrapped(aim[i * 2 + 1] - y, worldSize);
-        push(x, y, Math.hypot(dx, dy), Math.atan2(dy, dx), ...WOUND_RED, 0.75 * fade,
+        push(x, y, Math.hypot(dx, dy), Math.atan2(dy, dx), RED_R, RED_G, RED_B, 0.75 * fade,
           SHAPE.SEGMENT, 0.18 * size);
         // Specks fly from the biter's mouth, where it met its victim.
         const mouthX = x + size * Math.cos(angle);
@@ -239,7 +245,7 @@ export function createCombatEffects({
           const spread = angle + (scatter(i * 31 + s + swungAt[i]) - 0.5) * 2.4;
           const travel = size * (0.4 + 1.6 * hit) * (0.6 + 0.8 * scatter(i * 17 + s));
           push(mouthX + travel * Math.cos(spread), mouthY + travel * Math.sin(spread),
-            0.16 * size, 0, ...WOUND_RED, fade, SHAPE.DISC);
+            0.16 * size, 0, RED_R, RED_G, RED_B, fade, SHAPE.DISC);
         }
       }
       for (let k = 0; k < kills.length / 7; k++) {
@@ -255,9 +261,10 @@ export function createCombatEffects({
           push(x, y, body + (corpseRadius - body) * shrink, 0,
             kills[at + 3], kills[at + 4], kills[at + 5], 1 - shrink, SHAPE.DISC);
         }
-        push(x, y, corpseRadius * (1 + 3 * t), 0, ...WOUND_RED, 0.8 * (1 - t), SHAPE.RING, 0.18);
+        push(x, y, corpseRadius * (1 + 3 * t), 0, RED_R, RED_G, RED_B, 0.8 * (1 - t), SHAPE.RING,
+          0.18);
       }
-      return { data: overlay, count };
+      return shapes;
     },
   };
 

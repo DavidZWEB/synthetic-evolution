@@ -569,18 +569,15 @@ function buildRenderer(
 
       // Attacks over everything, so a bite is never hidden under its own biter.
       if (views) {
-        const overlay = combat.overlay(views, now, {
-          arc: currentCombatArc,
-          reach: currentCombatReach,
-          corpseRadius: currentCorpseRadius,
-        });
+        const overlay = combat.overlay(
+          views, now, currentCombatArc, currentCombatReach, currentCorpseRadius,
+        );
         if (overlay.count > 0) {
           gl.useProgram(effectProgram);
           gl.bindVertexArray(effectVao);
           gl.bindBuffer(gl.ARRAY_BUFFER, effectBuffer);
-          gl.bufferSubData(
-            gl.ARRAY_BUFFER, 0, overlay.data.subarray(0, overlay.count * OVERLAY_STRIDE),
-          );
+          // The WebGL2 offset-and-length form, so no subarray view is made each frame.
+          gl.bufferSubData(gl.ARRAY_BUFFER, 0, overlay.data, 0, overlay.count * OVERLAY_STRIDE);
           gl.uniform2f(effectUniforms.center, camera.state.x, camera.state.y);
           gl.uniform1f(effectUniforms.ppu, camera.state.ppu);
           gl.uniform2f(effectUniforms.viewport, camera.width, camera.height);
