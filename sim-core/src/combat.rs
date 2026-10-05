@@ -129,9 +129,7 @@ pub(crate) struct Targets<'a> {
 /// lower slot on a tie, so hash order cannot choose. `None` on a miss.
 pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<usize> {
     let direction = Vec3::new(math::cos(aim.heading), math::sin(aim.heading), 0.0);
-    let cos_arc = math::cos(targets.arc);
-    // A full circle takes every direction. Its threshold, minus the distance, is one a
-    // dot product rounded the other way can fall short of, behind the biter.
+    // A full circle takes every direction, whatever rounding does behind the biter.
     let full_circle = targets.arc >= core::f32::consts::PI;
     // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
     // still finds every target in reach, whatever a retune did to the size ranges.
@@ -146,9 +144,14 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
                 return;
             }
             let limit = aim.reach + aim.radius + targets.sizes[index as usize];
-            if distance_squared > limit * limit
-                || (!full_circle && offset.dot(direction) < math::sqrt(distance_squared) * cos_arc)
-            {
+            if distance_squared > limit * limit {
+                return;
+            }
+            // The angle off the aim, measured directly. Comparing the dot product with
+            // the distance times `cos(arc)` fails at narrow arcs, where the cosine
+            // rounds to 1 and demands an alignment no rounded offset has.
+            let across = offset.x * direction.y - offset.y * direction.x;
+            if !full_circle && math::atan2(across.abs(), offset.dot(direction)) > targets.arc {
                 return;
             }
             if nearest.is_none_or(|best| (distance_squared, index) < best) {
@@ -360,6 +363,44 @@ mod tests {
         assert_eq!(hit_from(&behind, &[1.0; 2], 0.3, pi), Some(1));
         // Short of a full circle, behind is out of the arc.
         assert_eq!(hit_from(&behind, &[1.0; 2], 0.3, pi - 0.01), None);
+    }
+
+    #[test]
+    fn a_narrow_arc_bites_along_its_aim_and_a_zero_arc_only_dead_ahead() {
+        // At 1e-4 rad the cosine rounds to exactly 1 in f32, so comparing the dot
+        // product with the distance missed a target under a microradian off the aim.
+        let at = |x: f32, y: f32| Vec3::new(x, y, 0.0);
+        let along = [at(50.0, 50.0), at(52.30217, 50.712143)];
+        assert_eq!(hit_from(&along, &[1.0; 2], 0.3, 1e-4), Some(1));
+        // A zero arc takes only what lies exactly on the aim.
+        let ahead = [at(50.0, 50.0), at(53.0, 50.0)];
+        assert_eq!(hit_from(&ahead, &[1.0; 2], 0.0, 0.0), Some(1));
+        let beside = [at(50.0, 50.0), at(53.0, 50.001)];
+        assert_eq!(hit_from(&beside, &[1.0; 2], 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn a_bite_finds_a_long_range_target_in_the_largest_world_validation_admits() {
+        // Every squared distance at this scale stays finite, so reach and arc compare
+        // against real numbers; past it, validation refuses the world.
+        let positions = [Vec3::ZERO, Vec3::new(2e17, 0.0, 0.0)];
+        let mut hash = SpatialHash::new(1e18, 1e17, 2);
+        hash.rebuild(&positions, &[1; 2], &mut [0; 2]);
+        let aim = Aim {
+            position: positions[0],
+            heading: 0.0,
+            reach: 3e17,
+            radius: 1.0,
+        };
+        let targets = Targets {
+            positions: &positions,
+            sizes: &[1.0; 2],
+            hash: &hash,
+            largest: 1.0,
+            world_size: 1e18,
+            arc: core::f32::consts::FRAC_PI_4,
+        };
+        assert_eq!(target(0, &aim, &targets), Some(1));
     }
 
     /// Agents in a 100-unit world, searched from slot 0 with a reach of 2.

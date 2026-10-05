@@ -163,6 +163,10 @@ impl Default for StorageParams {
 #[serde(default, deny_unknown_fields)]
 pub struct WorldParams {
     /// Side length of the square world, in world units. Wraps at the edges.
+    ///
+    /// At most 1e18: distances are squared in `f32` wherever agents search, sense, and
+    /// bite, and past that a square across the world overflows to infinity, which every
+    /// comparison against it then gets wrong.
     pub size: f32,
     /// Agent pool capacity. Pre-allocated at startup and never grown — growing WASM
     /// memory detaches every JS view over the snapshot (spec §7.3).
@@ -1073,6 +1077,11 @@ impl SimParams {
         }
         if !(self.world.size > 0.0) || !self.world.size.is_finite() {
             return Err(ParamError("world.size must be finite and positive"));
+        }
+        if self.world.size > 1e18 {
+            return Err(ParamError(
+                "world.size must be at most 1e18, so a squared distance across it stays finite",
+            ));
         }
         if !(self.world.dt > 0.0) || !self.world.dt.is_finite() {
             return Err(ParamError("world.dt must be finite and positive"));
@@ -2131,6 +2140,30 @@ mod tests {
         assert!(
             serde_json::from_str::<SimParams>(r#"{"storage":{"gene_per_slot":300}}"#,).is_err()
         );
+    }
+
+    #[test]
+    fn a_world_too_large_to_square_distances_across_is_refused() {
+        // Copilot's scale: a 1e20 world whose biting founders reach 3e19 validated, yet a
+        // squared distance across it overflows f32 and a target in reach was missed.
+        let mut params = SimParams::default();
+        params.world.size = 1e20;
+        params.sensing.vision_range = 1e19;
+        params.sensing.chemo_radius = 1e19;
+        params.plants.patchiness = 0.0;
+        params.founder.bite = true;
+        params.combat.reach = 3e19;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "world.size must be at most 1e18, so a squared distance across it stays finite"
+            ))
+        );
+        params.world.size = 1e18;
+        params.sensing.vision_range = 1e17;
+        params.sensing.chemo_radius = 1e17;
+        params.combat.reach = 3e17;
+        assert_eq!(params.validate(), Ok(()));
     }
 
     #[test]
