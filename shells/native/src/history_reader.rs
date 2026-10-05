@@ -573,7 +573,17 @@ mod tests {
                 assert_ne!(header.params.plants.patch_scale, 0.0);
                 assert_ne!(header.params.plants.death_seconds, 0.0);
             }
+            if !present {
+                // Stand in for the wire scale calibration will ship, and for a dimmed
+                // sense, should either ever be a default.
+                header.params.mutation.organs.wired_weight_scale = 0.25;
+                header.params.sensing.vision_gain = 0.5;
+                header.params.sensing.chemo_gain = 0.5;
+            }
             restore_later_params(&mut header.params, line).unwrap();
+            assert_eq!(header.params.mutation.organs.wired_weight_scale, 0.0);
+            assert_eq!(header.params.sensing.vision_gain, 1.0);
+            assert_eq!(header.params.sensing.chemo_gain, 1.0);
             assert_eq!(header.params.mutation.structural.add_oscillator_rate, 0.0);
             assert_eq!(header.params.plants.grazing_lag, 0.0);
             assert_eq!(header.params.plants.patchiness, 0.0);

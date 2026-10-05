@@ -284,17 +284,23 @@ in the metrics header. Two runs of one seed, with and without the retune, are
 identical up to that tick, so the difference afterwards is the intervention's effect.
 
 A retune changes world params, not genomes: a sensor's range lives in its gene, so
-shrinking `sensing.vision_range` does not blind eyes that already exist. What a retune
-can silence is a signal. Stopping food scent removes the shipped founders' only sense
-of food (they have no eyes; eyes appear only by mutation):
+shrinking `sensing.vision_range` does not blind eyes that already exist. The knockout
+switches reach them instead. `sensing.vision_gain` and `sensing.chemo_gain` multiply
+what every existing eye and nose reports, so a retune to 0 silences that sense in every
+agent at once, while each organ still pays its upkeep (spec section 4.1). The shipped
+founders smell food and have no eyes, which appear only by mutation:
 
 ```bash
-echo '{"plants":{"scent_rate":0.0}}' > no-scent.json
+echo '{"sensing":{"chemo_gain":0.0}}' > anosmic.json
 cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
   --sample-every 5000 --metrics intact.jsonl
 cargo run --release -p native -- --seed 42 --ticks 400000 --founders 2000 \
-  --sample-every 5000 --metrics no-scent.jsonl --retune no-scent.json --retune-at 300000
+  --sample-every 5000 --metrics anosmic.jsonl --retune anosmic.json --retune-at 300000
 ```
+
+Stopping food scent (`{"plants":{"scent_rate":0.0}}`) is the older intervention. It
+removes the signal rather than the sense, and scent already in the field fades over its
+decay rather than at once.
 
 `summarize` treats a retuned run as its own configuration and measures supply and
 plant capacity under the params in force; `diagnose` refuses retuned runs, whose

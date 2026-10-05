@@ -27,6 +27,9 @@ pub const LATER_PARAMS: &[&str] = &[
     "mouth_range",
     "combat",
     "founder",
+    "wired_weight_scale",
+    "vision_gain",
+    "chemo_gain",
 ];
 
 /// An archive records `founder` and `combat` together, as every writer since the bite
@@ -156,6 +159,17 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     }
     if absent("/combat") {
         params.combat = no_combat();
+    }
+    // Phase 2 added sensors unwired, and every sense reported at full strength
+    // before its knockout switch existed.
+    if absent("/mutation/organs/wired_weight_scale") {
+        params.mutation.organs.wired_weight_scale = 0.0;
+    }
+    if absent("/sensing/vision_gain") {
+        params.sensing.vision_gain = 1.0;
+    }
+    if absent("/sensing/chemo_gain") {
+        params.sensing.chemo_gain = 1.0;
     }
     Ok(())
 }

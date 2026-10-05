@@ -49,6 +49,14 @@ mod bodies_case;
 #[path = "common/combat_case.rs"]
 mod combat_case;
 
+#[path = "common/wiring_case.rs"]
+mod wiring_case;
+
+#[test]
+fn wired_sensors_and_knockouts_match_their_reference_in_every_mode() {
+    wiring_case::check_wiring_runs();
+}
+
 #[test]
 fn bites_match_their_reference_in_every_mode() {
     combat_case::check_combat_runs();

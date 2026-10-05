@@ -513,15 +513,22 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
     rates.toggle_connection_rate = 1.0;
     rates.add_connection_rate = 1.0;
     rates.add_neuron_rate = 1.0;
-    for mode in [
-        BrainInheritance::Evolving,
-        BrainInheritance::RandomizedAtBirth,
-        BrainInheritance::StructuralNull,
-    ] {
-        let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
+    // Unwired as in Phase 2, then wired: marking sinks reuses the neuron scratch.
+    for (scale, mode) in [0.0, 0.25].into_iter().flat_map(|scale| {
+        [
+            BrainInheritance::Evolving,
+            BrainInheritance::RandomizedAtBirth,
+            BrainInheritance::StructuralNull,
+        ]
+        .map(|mode| (scale, mode))
+    }) {
+        let mut params = params.clone();
+        params.mutation.organs.wired_weight_scale = scale;
+        let mut world = World::new_with_brain_inheritance(42, params, mode).unwrap();
         let parent = world.spawn_founder(Vec3::ZERO).unwrap();
         let mut counts = StructuralMutationCounts::default();
         let mut species = SpeciesEventCounts::default();
+        let mut wired = 0;
         let observed = count_allocations(|| {
             for _ in 0..20 {
                 world.agents_mut().energy[parent.index()] = 300.0;
@@ -535,14 +542,87 @@ fn sensor_edits_and_combined_mutation_observers_never_allocate() {
                     1
                 );
                 let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
+                wired += usize::from(carries_a_wired_sensor(world.genome(child)));
                 world.despawn_with_species_observer(child, |event| species.record(event));
             }
         });
-        assert_eq!(observed, 0);
+        assert_eq!(observed, 0, "{mode:?} at scale {scale} allocated");
         assert_eq!(counts.add_sensor.unwrap().applied, 20);
         assert_eq!(counts.remove_sensor.unwrap().applied, 20);
         assert_eq!(species.unclassified_capacity, 20);
+        // A later neural edit may remove the new wire, but not from every child. Unwired,
+        // the same check proves nothing: an added connection can look like a wire.
+        if scale > 0.0 {
+            assert!(wired > 0, "{mode:?}: no child kept its wire");
+        }
     }
+}
+
+/// Whether `genes` carries a sensor that arrived wired: its addition gives the wire the
+/// next innovation after the sensor's own (spec §3.3). Exact only where no neural
+/// operator adds connections, since one right after an unwired addition takes that
+/// innovation too.
+fn carries_a_wired_sensor(genes: &[sim_core::genome::Gene]) -> bool {
+    use sim_core::genome::Gene;
+    genes.iter().any(|gene| {
+        let Gene::Sensor(sensor) = gene else {
+            return false;
+        };
+        genes.iter().any(|other| {
+            matches!(other, Gene::Connection(wire)
+                if wire.id.raw() == sensor.id.raw() + 1 && sensor.targets.contains(&wire.from))
+        })
+    })
+}
+
+#[test]
+fn wired_births_and_dimmed_senses_never_allocate_in_the_tick() {
+    // The whole tick, with dimmed eyes and noses perceiving and births adding wired
+    // sensors, all inside the counted window. Organs are the only structure that grows,
+    // so a wired sensor is unambiguous.
+    use sim_core::mutate::{StructuralMutationResult, StructuralOperator};
+    let mut params = SimParams::default().without_structural_mutation();
+    params.world.max_agents = 64;
+    params.world.founder_spread = 0.05;
+    params.plants.max_plants = 256;
+    params.sensing.vision_rays = 1;
+    params.sensing.vision_gain = 0.5;
+    params.sensing.chemo_gain = 0.75;
+    params.mutation.organs.add_sensor_rate = 0.5;
+    params.mutation.organs.wired_weight_scale = 0.25;
+    params.reproduction.start_energy = 40.0;
+    params.reproduction.threshold = 45.0;
+    params.reproduction.gate = 0.0;
+    params.reproduction.maturity_ticks = 0;
+    let mut world = World::new(29, params).expect("valid params");
+    world.seed_founders(32);
+    let mut added = 0;
+    let observed = count_allocations(|| {
+        for _ in 0..120 {
+            world.step_with_observers(
+                |_| {},
+                |event| {
+                    added += usize::from(
+                        event.operator == StructuralOperator::AddSensor
+                            && event.outcome == StructuralMutationResult::Applied,
+                    );
+                },
+            );
+        }
+        std::hint::black_box(&world);
+    });
+    assert!(added > 0, "no sensor was added while counting");
+    assert!(
+        world
+            .pool()
+            .iter_live()
+            .any(|id| carries_a_wired_sensor(world.genome(id))),
+        "no wired sensor survived the window"
+    );
+    assert_eq!(
+        observed, 0,
+        "wiring or dimmed perception allocated {observed} times"
+    );
 }
 
 #[test]

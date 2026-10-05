@@ -1178,6 +1178,61 @@ mod tests {
     }
 
     #[test]
+    fn a_retuned_gain_silences_every_existing_organ_of_its_sense() {
+        // The knockout reaches organs already built, through the params alone. A retune
+        // of a range or radius cannot, because those live in each organ's gene (spec
+        // §4.1). A ring of founders fills every direction the observer's eye may face.
+        let mut params = SimParams::default();
+        params.world.max_agents = 32;
+        params.sensing.vision_rays = 1;
+        let mut w = World::new(7, params).expect("valid params");
+        let observer = w.spawn_founder(Vec3::new(500.0, 500.0, 0.0)).unwrap();
+        for k in 0..24 {
+            let angle = k as f32 * core::f32::consts::TAU / 24.0;
+            let at = Vec3::new(
+                500.0 + 12.0 * crate::math::cos(angle),
+                500.0 + 12.0 * crate::math::sin(angle),
+                0.0,
+            );
+            w.spawn_founder(at).unwrap();
+        }
+        w.deposit_chemo(0, Vec3::new(500.0, 500.0, 0.0), 250.0);
+        w.rebuild_spatial_hash();
+        let organ = |w: &World, modality| -> Vec<usize> {
+            w.sensors
+                .get(w.agents.sensors[observer.index()])
+                .iter()
+                .filter(|sensor| sensor.modality == modality)
+                .flat_map(|sensor| sensor.targets[..modality.channels()].iter())
+                .map(|target| target.index())
+                .collect()
+        };
+        let (eye, nose) = (
+            organ(&w, genome::Modality::VisionRay),
+            organ(&w, genome::Modality::Chemo),
+        );
+        assert_eq!((eye.len(), nose.len()), (4, 3), "one eye and one nose");
+        let mut reads = |vision_gain, chemo_gain| {
+            let mut retuned = w.params().clone();
+            retuned.sensing.vision_gain = vision_gain;
+            retuned.sensing.chemo_gain = chemo_gain;
+            w.set_params(retuned).unwrap();
+            w.perceive_all();
+            let inputs: Vec<f32> = w.brain(observer).iter().map(|n| n.input).collect();
+            // Consumes the inputs, so the next read starts from silence.
+            w.step_brains();
+            (
+                eye.iter().map(|&slot| inputs[slot]).collect::<Vec<_>>(),
+                nose.iter().map(|&slot| inputs[slot]).collect::<Vec<_>>(),
+            )
+        };
+        let (seen, smelled) = reads(1.0, 1.0);
+        assert!(seen[0] > 0.0 && smelled[0] > 0.0, "nothing to silence");
+        assert_eq!(reads(0.0, 1.0), (vec![0.0; 4], smelled.clone()));
+        assert_eq!(reads(1.0, 0.0), (seen, vec![0.0; 3]));
+    }
+
+    #[test]
     fn perception_is_consumed_by_the_brain_not_accumulated() {
         // `Neuron::input` persists between step 2 and step 3 by design. If step 3 did
         // not clear it, every tick would add to the last and the brain would saturate

@@ -1,11 +1,15 @@
 //! Bounded sensor addition and removal on caller-owned genome storage.
 //!
-//! Owns organ selection and channel/target creation, not wiring or neural pruning.
-//! The heredity pipeline schedules this pass before neural edits (spec section 3.3).
+//! Owns organ selection, channel/target creation, and the one wire a new organ arrives
+//! with; later wiring and neural pruning belong to the neural pass, which the heredity
+//! pipeline schedules after this one (spec section 3.3).
 
 use crate::founder::sensor_parameters;
-use crate::genome::{self, Activation, Gene, Modality, NeuronGene, SENSOR_CHANNELS, SensorGene};
+use crate::genome::{
+    self, Activation, ConnectionGene, Gene, Modality, NeuronGene, SENSOR_CHANNELS, SensorGene,
+};
 use crate::ids::{InnovationId, reserve_innovations};
+use crate::math;
 use crate::params::{OrganMutationParams, SimParams};
 use crate::rng::Rng;
 
@@ -72,29 +76,96 @@ fn choose_modality(params: &OrganMutationParams, rng: &mut Rng) -> Modality {
     unreachable!("a unit draw selects a positive-weight modality")
 }
 
+/// Marks in `scratch` the neurons a new organ's wire may reach, and counts them.
+///
+/// An effector source or a hidden neuron, one that no organ writes and no effector
+/// reads, is a sink. Another organ's input is not, and neither is an oscillator, which
+/// ignores its inputs (spec section 3.3).
+fn mark_sinks(genes: &[Gene], scratch: &mut [u32]) -> usize {
+    let sinks = &mut scratch[..genome::neuron_count(genes)];
+    sinks.fill(1);
+    for gene in genes {
+        if let Gene::Sensor(s) = gene {
+            for &target in &s.targets[..s.modality.channels()] {
+                sinks[genome::neuron_index(genes, target).expect("validated sensor target")] = 0;
+            }
+        }
+    }
+    for gene in genes {
+        if let Gene::Effector(e) = gene {
+            sinks[genome::neuron_index(genes, e.source).expect("validated effector source")] = 1;
+        }
+    }
+    for (sink, gene) in sinks.iter_mut().zip(genes) {
+        if matches!(gene, Gene::Neuron(n) if n.activation == Activation::Oscillator) {
+            *sink = 0;
+        }
+    }
+    sinks.iter().filter(|&&sink| sink == 1).count()
+}
+
 fn add_sensor(
     genes: &mut Vec<Gene>,
     params: &SimParams,
     state: &mut MutationState<'_>,
 ) -> StructuralMutationResult {
-    let modality = choose_modality(&params.mutation.organs, state.rng);
+    let organs = &params.mutation.organs;
+    let modality = choose_modality(organs, state.rng);
     let channels = modality.channels();
+    let wired = organs.wired_weight_scale > 0.0;
     if let Err(outcome) = preflight_growth(
         genes,
         &params.storage,
         state.neuron_scratch,
         Growth {
             neurons: channels,
+            connections: usize::from(wired),
             sensors: 1,
             vision_rays: usize::from(modality == Modality::VisionRay),
-            ..Growth::default()
         },
     ) {
         return outcome;
     }
-    let Ok(first) = reserve_innovations(state.next_innovation, channels as u32 + 1) else {
+    let neurons = genome::neuron_count(genes);
+    if wired && mark_sinks(genes, state.neuron_scratch) == 0 {
+        return StructuralMutationResult::NoCandidate;
+    }
+    let ids = channels as u32 + 1 + u32::from(wired);
+    let Ok(first) = reserve_innovations(state.next_innovation, ids) else {
         return StructuralMutationResult::InnovationExhausted;
     };
+    // An unwired organ's draws come first and unchanged, so wiring only appends to the
+    // stream, and only on a successful addition (spec section 3.3).
+    let mut taus = [0.0; SENSOR_CHANNELS];
+    for tau in taus.iter_mut().take(channels) {
+        *tau = state.rng.range(params.brain.tau_min, params.brain.tau_max);
+    }
+    let sensor_params = sensor_parameters(modality, &params.sensing, state.rng);
+    let wire = wired.then(|| {
+        let channel = state.rng.below(channels as u32);
+        let sink = select_index(&state.neuron_scratch[..neurons], state.rng, |&sink| {
+            sink == 1
+        })
+        .expect("a marked sink");
+        let to = genes[sink].as_neuron().expect("neuron prefix").id;
+        let fan_in = genes
+            .iter()
+            .filter(|gene| matches!(gene, Gene::Connection(c) if c.enabled && c.to == to))
+            .count();
+        let half_width = organs.wired_weight_scale
+            * params
+                .brain
+                .weight_init_scale
+                .min(params.mutation.weight_limit)
+            / math::sqrt((fan_in + 1) as f32);
+        ConnectionGene {
+            id: InnovationId::new(first.raw() + channels as u32 + 1),
+            from: InnovationId::new(first.raw() + channel),
+            to,
+            weight: state.rng.range(-half_width, half_width),
+            enabled: true,
+        }
+    });
     let mut targets = [InnovationId::NULL; SENSOR_CHANNELS];
     for (channel, target) in targets.iter_mut().take(channels).enumerate() {
         *target = InnovationId::new(first.raw() + channel as u32);
@@ -102,27 +173,32 @@ fn add_sensor(
             genes,
             Gene::Neuron(NeuronGene {
                 id: *target,
-                bias: params.mutation.organs.neuron_bias,
-                tau: state.rng.range(params.brain.tau_min, params.brain.tau_max),
+                bias: organs.neuron_bias,
+                tau: taus[channel],
                 activation: Activation::Sigmoid,
                 period: 0.0,
             }),
         );
     }
-    let sensor = SensorGene {
-        id: InnovationId::new(first.raw() + channels as u32),
-        modality,
-        params: sensor_parameters(modality, &params.sensing, state.rng),
-        targets,
-    };
-    insert_gene(genes, Gene::Sensor(sensor));
+    insert_gene(
+        genes,
+        Gene::Sensor(SensorGene {
+            id: InnovationId::new(first.raw() + channels as u32),
+            modality,
+            params: sensor_params,
+            targets,
+        }),
+    );
+    if let Some(wire) = wire {
+        insert_gene(genes, Gene::Connection(wire));
+    }
     StructuralMutationResult::Applied
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::genome::{ConnectionGene, fixtures::tiny};
+    use crate::genome::{Action, EffectorGene, GENE_PARAMS, fixtures::tiny};
     use crate::ids::NULL_ID;
     use crate::rng::Rng;
     use proptest::prelude::*;
@@ -448,6 +524,279 @@ mod tests {
         );
     }
 
+    fn neuron(id: u32, activation: Activation) -> Gene {
+        Gene::Neuron(NeuronGene {
+            id: InnovationId::new(id),
+            bias: 0.0,
+            tau: 1.0,
+            activation,
+            period: if activation == Activation::Oscillator {
+                30.0
+            } else {
+                0.0
+            },
+        })
+    }
+
+    fn connection(id: u32, from: u32, to: u32, enabled: bool) -> Gene {
+        Gene::Connection(ConnectionGene {
+            id: InnovationId::new(id),
+            from: InnovationId::new(from),
+            to: InnovationId::new(to),
+            weight: 0.5,
+            enabled,
+        })
+    }
+
+    fn effector(id: u32, action: Action, source: u32) -> Gene {
+        Gene::Effector(EffectorGene {
+            id: InnovationId::new(id),
+            action,
+            params: [0.0; GENE_PARAMS],
+            source: InnovationId::new(source),
+        })
+    }
+
+    /// One neuron of every role: 0 an organ's input, 1 a clock, 2 an effector's source
+    /// with fan-in two, 3 hidden with fan-in one, 4 a clock an effector reads, and 5 an
+    /// organ's input that an effector also reads. Only 2, 3, and 5 can take a new
+    /// organ's wire.
+    fn every_role(capacity: usize) -> Vec<Gene> {
+        let organ = |id, target| {
+            let mut targets = [InnovationId::NULL; SENSOR_CHANNELS];
+            targets[0] = InnovationId::new(target);
+            Gene::Sensor(SensorGene {
+                id: InnovationId::new(id),
+                modality: Modality::Interoception,
+                params: [0.0; GENE_PARAMS],
+                targets,
+            })
+        };
+        let mut genes = Vec::with_capacity(capacity);
+        genes.extend([
+            neuron(0, Activation::Sigmoid),
+            neuron(1, Activation::Oscillator),
+            neuron(2, Activation::Sigmoid),
+            neuron(3, Activation::Sigmoid),
+            neuron(4, Activation::Oscillator),
+            neuron(5, Activation::Sigmoid),
+            organ(10, 0),
+            organ(13, 5),
+            effector(11, Action::Thrust, 2),
+            effector(12, Action::Turn, 4),
+            effector(14, Action::Ingest, 5),
+            connection(20, 0, 2, true),
+            connection(21, 1, 2, true),
+            connection(22, 1, 3, true),
+            connection(23, 3, 2, false),
+        ]);
+        genes.sort_by_key(Gene::sort_key);
+        genome::validate_architecture(&genes).unwrap();
+        genes
+    }
+
+    fn wired(modality: Modality) -> SimParams {
+        let mut params = params_for(modality);
+        params.mutation.organs.wired_weight_scale = 0.25;
+        params
+    }
+
+    fn added_wire(before: &[Gene], after: &[Gene]) -> ConnectionGene {
+        let mut added = after.iter().filter_map(|gene| match gene {
+            Gene::Connection(c) if !before.contains(gene) => Some(*c),
+            _ => None,
+        });
+        let wire = added.next().expect("a wire");
+        assert_eq!(added.next(), None, "one wire per organ");
+        wire
+    }
+
+    #[test]
+    fn a_new_organ_wires_one_channel_to_an_effector_source_or_hidden_neuron() {
+        // Over enough seeds every channel and both sinks are drawn, and nothing else is:
+        // not another organ's input, not a clock, not a clock an effector reads.
+        for modality in [
+            Modality::VisionRay,
+            Modality::Chemo,
+            Modality::Interoception,
+        ] {
+            let params = wired(modality);
+            let limit = params
+                .brain
+                .weight_init_scale
+                .min(params.mutation.weight_limit);
+            let mut channels = vec![false; modality.channels()];
+            let mut sinks = [false; 3];
+            for seed in 0..200 {
+                let mut genes = every_role(64);
+                let before = genes.clone();
+                let mut next = 30;
+                let events = run(
+                    &mut genes,
+                    &params,
+                    &mut Rng::from_seed(seed),
+                    &mut next,
+                    &mut [0; 16],
+                );
+                assert_eq!(events[0].outcome, StructuralMutationResult::Applied);
+                genome::validate_architecture(&genes).unwrap();
+                let wire = added_wire(&before, &genes);
+                let channel = wire.from.raw() - 30;
+                assert!((channel as usize) < modality.channels(), "{wire:?}");
+                channels[channel as usize] = true;
+                assert_eq!(wire.id.raw(), 31 + modality.channels() as u32);
+                assert_eq!(next, 32 + modality.channels() as u32);
+                assert!(wire.enabled);
+                // Weighted as an added connection to its sink, at a quarter scale.
+                let (sink, fan_in) = match wire.to.raw() {
+                    2 => (0, 2.0f32),
+                    3 => (1, 1.0),
+                    5 => (2, 0.0),
+                    other => panic!("wired into neuron {other}"),
+                };
+                sinks[sink] = true;
+                let half_width = 0.25 * limit / math::sqrt(fan_in + 1.0);
+                assert!(wire.weight.abs() <= half_width, "{wire:?}");
+            }
+            assert!(
+                channels.iter().all(|&seen| seen),
+                "{modality:?} {channels:?}"
+            );
+            assert_eq!(sinks, [true; 3], "{modality:?}");
+        }
+    }
+
+    #[test]
+    fn wiring_only_appends_its_draws_to_an_unwired_organ_s() {
+        // The same seed grows the same organ with and without a wire: same targets, taus,
+        // and params. The wire then takes a channel, a sink, and a weight, in that order.
+        for modality in [
+            Modality::VisionRay,
+            Modality::Chemo,
+            Modality::Interoception,
+        ] {
+            let params = wired(modality);
+            let mut unwired_genes = every_role(64);
+            let mut unwired_rng = Rng::from_seed(42);
+            let mut unwired_next = 30;
+            run(
+                &mut unwired_genes,
+                &params_for(modality),
+                &mut unwired_rng,
+                &mut unwired_next,
+                &mut [0; 16],
+            );
+            let mut genes = every_role(64);
+            let mut rng = Rng::from_seed(42);
+            let mut next = 30;
+            run(&mut genes, &params, &mut rng, &mut next, &mut [0; 16]);
+            let wire = added_wire(&every_role(64), &genes);
+            let without_wire: Vec<_> = genes
+                .iter()
+                .copied()
+                .filter(|gene| *gene != Gene::Connection(wire))
+                .collect();
+            assert_eq!(without_wire, unwired_genes, "{modality:?}");
+            assert_eq!(next, unwired_next + 1);
+            let mut reference = unwired_rng;
+            let channel = reference.below(modality.channels() as u32);
+            let (sink, fan_in) = [(2, 2.0f32), (3, 1.0), (5, 0.0)][reference.below(3) as usize];
+            let half_width = 0.25
+                * params
+                    .brain
+                    .weight_init_scale
+                    .min(params.mutation.weight_limit)
+                / math::sqrt(fan_in + 1.0);
+            let weight = reference.range(-half_width, half_width);
+            assert_eq!(
+                wire,
+                ConnectionGene {
+                    id: InnovationId::new(31 + modality.channels() as u32),
+                    from: InnovationId::new(30 + channel),
+                    to: InnovationId::new(sink),
+                    weight,
+                    enabled: true,
+                }
+            );
+            assert_eq!(rng, reference, "{modality:?}");
+        }
+    }
+
+    #[test]
+    fn a_wire_that_cannot_be_grown_refuses_the_whole_organ() {
+        // Each refusal leaves the genome and the ID counter untouched, and draws nothing
+        // past the gate and the modality, while the same organ unwired would grow.
+        let channels = Modality::Chemo.channels();
+        type Setup = fn(&mut SimParams, &mut Vec<Gene>, &mut u32);
+        let cases: [(&str, Setup); 3] = [
+            ("connection limit", |params, genes, _| {
+                params.storage.max_connections = genes
+                    .iter()
+                    .filter(|gene| matches!(gene, Gene::Connection(_)))
+                    .count() as u32;
+            }),
+            ("no sink", |_, genes, _| {
+                // `tiny`'s one effector reads a clock and its other neuron is an input.
+                *genes = Vec::with_capacity(64);
+                genes.extend(tiny());
+            }),
+            ("one ID short", |_, _, next| {
+                *next = NULL_ID - Modality::Chemo.channels() as u32 - 1;
+            }),
+        ];
+        let expected = [
+            StructuralMutationResult::GenomeLimit,
+            StructuralMutationResult::NoCandidate,
+            StructuralMutationResult::InnovationExhausted,
+        ];
+        for ((name, setup), expected) in cases.into_iter().zip(expected) {
+            for scale in [0.0, 0.25] {
+                let mut params = params_for(Modality::Chemo);
+                params.mutation.organs.wired_weight_scale = scale;
+                let mut genes = every_role(64);
+                let mut next = 30;
+                setup(&mut params, &mut genes, &mut next);
+                let (original, original_next) = (genes.clone(), next);
+                let mut rng = Rng::from_seed(5);
+                let mut reference = rng.clone();
+                let outcome =
+                    run(&mut genes, &params, &mut rng, &mut next, &mut [0; 16])[0].outcome;
+                if scale == 0.0 {
+                    assert_eq!(outcome, StructuralMutationResult::Applied, "{name}");
+                    assert_eq!(genes.len(), original.len() + channels + 1, "{name}");
+                    continue;
+                }
+                assert_eq!(outcome, expected, "{name}");
+                assert_eq!(genes, original, "{name}");
+                assert_eq!(next, original_next, "{name}");
+                reference.chance(1.0);
+                reference.unit();
+                assert_eq!(rng, reference, "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_wired_organ_can_take_the_last_ids() {
+        let mut genes = every_role(64);
+        let channels = Modality::VisionRay.channels() as u32;
+        let first = NULL_ID - channels - 2;
+        let mut next = first;
+        let events = run(
+            &mut genes,
+            &wired(Modality::VisionRay),
+            &mut Rng::from_seed(3),
+            &mut next,
+            &mut [0; 16],
+        );
+        assert_eq!(events[0].outcome, StructuralMutationResult::Applied);
+        assert_eq!(next, NULL_ID);
+        let wire = added_wire(&every_role(64), &genes);
+        assert_eq!(wire.id.raw(), NULL_ID - 1);
+        assert!((first..first + channels).contains(&wire.from.raw()));
+        genome::validate_architecture(&genes).unwrap();
+    }
+
     #[test]
     fn extreme_finite_weights_do_not_overflow_selection() {
         let weights = OrganMutationParams {
@@ -473,10 +822,12 @@ mod tests {
         fn repeated_edits_stay_coherent_bounded_and_reproducible(
             seed in any::<u64>(),
             edits in prop::collection::vec(any::<bool>(), 1..200),
+            wired in any::<bool>(),
         ) {
             let execute = || {
                 let mut genes = prepared(64);
                 let mut params = SimParams::default().without_structural_mutation();
+                params.mutation.organs.wired_weight_scale = if wired { 0.25 } else { 0.0 };
                 params.storage.max_genes = 64;
                 params.storage.max_neurons = 32;
                 params.storage.max_sensors = 8;

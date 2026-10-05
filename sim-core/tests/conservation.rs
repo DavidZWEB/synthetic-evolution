@@ -168,6 +168,65 @@ fn biting_conserves_energy() {
     );
 }
 
+/// Whether `genes` carries a sensor that arrived wired: its addition gives the wire the
+/// next innovation after the sensor's own (spec §3.3). Exact only where no neural
+/// operator adds connections, since one right after an unwired addition takes that
+/// innovation too.
+fn carries_a_wired_sensor(genes: &[sim_core::genome::Gene]) -> bool {
+    use sim_core::genome::Gene;
+    genes.iter().any(|gene| {
+        let Gene::Sensor(sensor) = gene else {
+            return false;
+        };
+        genes.iter().any(|other| {
+            matches!(other, Gene::Connection(wire)
+                if wire.id.raw() == sensor.id.raw() + 1 && sensor.targets.contains(&wire.from))
+        })
+    })
+}
+
+#[test]
+fn wired_sensors_and_knocked_out_senses_conserve_energy() {
+    // Wiring and knockouts change what agents perceive and do, never the ledger: it
+    // balances with dimmed senses, wired additions, and a live blinding alike (spec
+    // §3.3, §4.1, §5.1). Organs are the only structure that grows, so a wired sensor
+    // is unambiguous.
+    let mut params = SimParams::default().without_structural_mutation();
+    params.world.max_agents = 300;
+    params.plants.max_plants = 400;
+    params.sensing.vision_rays = 1;
+    params.sensing.vision_gain = 0.5;
+    params.sensing.chemo_gain = 0.75;
+    params.mutation.organs.add_sensor_rate = 0.2;
+    params.mutation.organs.wired_weight_scale = 0.25;
+    let mut world = World::new(23, params.clone()).expect("valid params");
+    world.seed_founders(200);
+    let mut wired = false;
+    for t in 0..2_000 {
+        if t == 1_000 {
+            let mut blind = params.clone();
+            blind.sensing.vision_gain = 0.0;
+            world.set_params(blind).unwrap();
+        }
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+        if t % 100 == 0 {
+            wired |= world
+                .pool()
+                .iter_live()
+                .any(|id| carries_a_wired_sensor(world.genome(id)));
+        }
+    }
+    assert!(
+        wired,
+        "no sensor arrived wired; the test proved nothing about wiring"
+    );
+}
+
 #[test]
 fn corpses_conserve_energy_as_they_form_feed_and_decay() {
     // A death splits an agent's energy between a corpse and dissipation; eating moves

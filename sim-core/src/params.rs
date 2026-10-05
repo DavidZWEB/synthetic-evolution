@@ -325,6 +325,15 @@ pub struct SensingParams {
     pub energy_sensors: u32,
     /// Radius over which the chemo sensor samples concentration and gradient.
     pub chemo_radius: f32,
+    /// Multiplies what every vision ray reports. One is an ordinary run; a live retune
+    /// to zero blinds every eye that already exists, which retuning `vision_range`
+    /// cannot do because each eye's range lives in its gene. That is how a mid-run
+    /// knockout asks whether a lineage uses its eyes (spec §4.1, §7.9). At most one, so
+    /// a switch can silence or dim a sense but never push its organs past the range they
+    /// report in.
+    pub vision_gain: f32,
+    /// Multiplies what every chemoreceptor reports, as `vision_gain` does for eyes.
+    pub chemo_gain: f32,
 }
 
 impl SensingParams {
@@ -558,6 +567,15 @@ pub struct OrganMutationParams {
     pub energy_weight: f32,
     /// Initial bias of fresh sensor-target neurons; tau uses the configured brain range.
     pub neuron_bias: f32,
+    /// A new sensor's wire: the same addition connects one of its channels to an
+    /// effector source or hidden neuron, weighted as an added connection times this
+    /// scale, so the new input nudges behaviour rather than overriding it. Zero adds no
+    /// wire and draws nothing, which is how Phase 2 ran (spec §3.3).
+    ///
+    /// Default 0 until Phase 3's calibration (M6) decides the shipped value; the spec's
+    /// starting value for that sweep is 0.25. At most one, so a wire never starts
+    /// stronger than an added connection.
+    pub wired_weight_scale: f32,
 }
 
 impl Default for OrganMutationParams {
@@ -569,6 +587,7 @@ impl Default for OrganMutationParams {
             chemo_weight: 1.0,
             energy_weight: 1.0,
             neuron_bias: 0.0,
+            wired_weight_scale: 0.0,
         }
     }
 }
@@ -1133,6 +1152,12 @@ impl SimParams {
         if !(self.sensing.max_sense_radius() > 0.0) {
             return Err(ParamError("sensing radii must be positive"));
         }
+        if ![self.sensing.vision_gain, self.sensing.chemo_gain]
+            .iter()
+            .all(|gain| (0.0..=1.0).contains(gain))
+        {
+            return Err(ParamError("sensing gains must be in [0, 1]"));
+        }
         if self.sensing.max_sense_radius() * 2.0 > self.world.size {
             return Err(ParamError(
                 "sense radius exceeds half the world; the hash cannot wrap",
@@ -1290,6 +1315,11 @@ impl SimParams {
         }
         if !organs.neuron_bias.is_finite() {
             return Err(ParamError("mutation.organs.neuron_bias must be finite"));
+        }
+        if !(0.0..=1.0).contains(&organs.wired_weight_scale) {
+            return Err(ParamError(
+                "mutation.organs.wired_weight_scale must be in [0, 1]",
+            ));
         }
         // Structural edits can leave a target with fan-in one. The scalar control
         // must still be able to redraw its full two-sided interval (spec section 3.3).
@@ -1647,6 +1677,8 @@ impl Default for SensingParams {
             chemo_sensors: 1,
             energy_sensors: 0,
             chemo_radius: 40.0,
+            vision_gain: 1.0,
+            chemo_gain: 1.0,
         }
     }
 }
@@ -2165,6 +2197,45 @@ mod tests {
         params.sensing.chemo_radius = 1e17;
         params.combat.reach = 3e17;
         assert_eq!(params.validate(), Ok(()));
+    }
+
+    #[test]
+    fn sensing_gains_and_the_wire_scale_are_live_fractions() {
+        // A gain can silence or dim a sense but not push its organs past the range they
+        // report in, and a new organ's wire never starts stronger than an added
+        // connection. All three move on a running world: that is what a knockout is
+        // (spec §3.3, §4.1).
+        type Set = fn(&mut SimParams, f32);
+        let gains = "sensing gains must be in [0, 1]";
+        let wire = "mutation.organs.wired_weight_scale must be in [0, 1]";
+        let cases: [(Set, &str); 3] = [
+            (|p, value| p.sensing.vision_gain = value, gains),
+            (|p, value| p.sensing.chemo_gain = value, gains),
+            (
+                |p, value| p.mutation.organs.wired_weight_scale = value,
+                wire,
+            ),
+        ];
+        let base = SimParams::default();
+        let cell = base.sensing.max_sense_radius();
+        for (set, refusal) in cases {
+            for fraction in [0.0, 0.25, 1.0] {
+                let mut params = base.clone();
+                set(&mut params, fraction);
+                assert_eq!(params.validate(), Ok(()), "{fraction}");
+                assert_eq!(base.check_retune(&params, cell), Ok(()), "{fraction}");
+            }
+            for outside in [-0.25, 1.5, f32::NAN, f32::INFINITY] {
+                let mut params = base.clone();
+                set(&mut params, outside);
+                assert_eq!(params.validate(), Err(ParamError(refusal)), "{outside}");
+                assert_eq!(
+                    base.check_retune(&params, cell),
+                    Err(ParamError(refusal)),
+                    "a live retune to {outside}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -65,7 +65,7 @@ const PARAMS = {
   movement: { max_thrust: f, max_turn_rate: f, drag: f, max_speed: f },
   sensing: {
     vision_range: f, vision_fov: f, vision_rays: u, chemo_sensors: u,
-    energy_sensors: u, chemo_radius: f,
+    energy_sensors: u, chemo_radius: f, vision_gain: f, chemo_gain: f,
   },
   brain: {
     hidden_neurons: u, oscillators: u, connections_per_target: 'nullable-u32',
@@ -80,7 +80,7 @@ const PARAMS = {
     },
     organs: {
       remove_sensor_rate: f, add_sensor_rate: f, vision_weight: f, chemo_weight: f,
-      energy_weight: f, neuron_bias: f,
+      energy_weight: f, neuron_bias: f, wired_weight_scale: f,
     },
     weight_perturb_rate: f, weight_perturb_sigma: f, weight_reset_rate: f, weight_limit: f,
     neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f, body_trait_rate: f,
@@ -115,7 +115,7 @@ const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
-  'combat', 'founder',
+  'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain',
 ]);
 
 export function integerParam(path) {

@@ -9,7 +9,7 @@ use std::io;
 
 use crate::Result;
 use serde::{Deserialize, Serialize};
-use sim_core::genome::Gene;
+use sim_core::genome::{Gene, Modality};
 use sim_core::ids::SpeciesId;
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::params::SimParams;
@@ -172,6 +172,26 @@ pub struct WorldMetrics {
     /// absence is unknown, not a world without predation.
     #[serde(default)]
     pub predation: Option<PredationMetrics>,
+    /// Every sensor innovation the living carry, by innovation (spec §7.9). Files
+    /// written before M4 did not record them; their absence is unknown, not a world
+    /// without sensors.
+    #[serde(default)]
+    pub sensors: Option<Vec<SensorInnovation>>,
+}
+
+/// One sensor innovation carried by living agents, at one sample: the organ one birth's
+/// addition made, or the founding template's, as every descendant inherits it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SensorInnovation {
+    pub innovation: u32,
+    pub modality: Modality,
+    /// Part of the founding template rather than added by mutation, so not an
+    /// innovation whose survival is measured.
+    pub founding: bool,
+    /// Living agents carrying it.
+    pub carriers: u32,
+    /// Carriers in which one of its target channels reaches an effector.
+    pub wired: u32,
 }
 
 /// Bites, kills, carrion, and diet, at one sample.
@@ -428,7 +448,46 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         }),
         bodies: Some(body_metrics(world)),
         predation: Some(predation_metrics(world)?),
+        sensors: Some(sensor_innovations(world)),
     })
+}
+
+/// Each sensor innovation the living carry, with how many carry it and in how many of
+/// those it is wired, in innovation order.
+fn sensor_innovations(world: &World) -> Vec<SensorInnovation> {
+    let founding: BTreeSet<u32> = world
+        .founder_plan()
+        .genes()
+        .iter()
+        .filter_map(|gene| match gene {
+            Gene::Sensor(sensor) => Some(sensor.id.raw()),
+            _ => None,
+        })
+        .collect();
+    let mut innovations: BTreeMap<u32, SensorInnovation> = BTreeMap::new();
+    let (mut from_inputs, mut to_outputs) = (Vec::new(), Vec::new());
+    for id in world.pool().iter_live() {
+        complexity::wiring_counts(
+            world.genome(id),
+            &mut from_inputs,
+            &mut to_outputs,
+            |sensor, wired| {
+                let innovation = sensor.id.raw();
+                let entry = innovations
+                    .entry(innovation)
+                    .or_insert_with(|| SensorInnovation {
+                        innovation,
+                        modality: sensor.modality,
+                        founding: founding.contains(&innovation),
+                        carriers: 0,
+                        wired: 0,
+                    });
+                entry.carriers += 1;
+                entry.wired += u32::from(wired);
+            },
+        );
+    }
+    innovations.into_values().collect()
 }
 
 /// The share of `(plants, animals)` eaten from other agents, absent when nothing was.
@@ -778,6 +837,45 @@ mod tests {
         assert_eq!((bodies.muscle.min, bodies.muscle.max), (0.5, 2.0));
         assert_eq!((bodies.mouth.min, bodies.mouth.max), (0.25, 4.0));
         assert_eq!(bodies.mouth.mean, 2.125);
+    }
+
+    #[test]
+    fn sensor_innovations_count_living_carriers_and_wiring_and_flag_the_founders() {
+        // The founders' chemoreceptor is founding. A birth's added organ is not, and it
+        // arrives wired to an effector, since the minimal founder has no hidden neuron.
+        // Only the living carry anything.
+        let mut params = SimParams::default().without_structural_mutation();
+        params.world.max_agents = 4;
+        params.plants.max_plants = 2;
+        params.reproduction.maturity_ticks = 0;
+        params.mutation.organs.add_sensor_rate = 1.0;
+        params.mutation.organs.wired_weight_scale = 0.25;
+        let mut world = World::new(1, params).expect("valid params");
+        let parent = world.spawn_founder(Vec3::ZERO).expect("room");
+        let other = world.spawn_founder(Vec3::new(5.0, 0.0, 0.0)).expect("room");
+        world.agents_mut().energy[parent.index()] = 300.0;
+        world.intents_mut().reproduce[parent.index()] = 1.0;
+        assert_eq!(world.resolve_births(), 1);
+        world.despawn(other);
+        let sensors = sample_world(&world)
+            .expect("samples")
+            .sensors
+            .expect("recorded");
+        assert!(
+            sensors
+                .windows(2)
+                .all(|p| p[0].innovation < p[1].innovation)
+        );
+        let (founding, added): (Vec<&SensorInnovation>, Vec<_>) =
+            sensors.iter().partition(|s| s.founding);
+        assert_eq!(founding.len(), 1);
+        assert_eq!(
+            (founding[0].modality, founding[0].carriers),
+            (Modality::Chemo, 2)
+        );
+        assert!(founding[0].wired <= 2);
+        assert_eq!(added.len(), 1);
+        assert_eq!((added[0].carriers, added[0].wired), (1, 1));
     }
 
     #[test]
