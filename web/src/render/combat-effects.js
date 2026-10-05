@@ -61,7 +61,10 @@ export function createCombatEffects({
   const lastPosition = new Float32Array(capacity * 2);
   const lastSize = new Float32Array(capacity);
   const lastColor = new Float32Array(capacity * 3);
+  // Each corpse slot as the previous frame showed it.
   const corpseHeld = new Uint8Array(corpseCapacity);
+  const corpseAt = new Float32Array(corpseCapacity * 2);
+  const corpseEnergy = new Float32Array(corpseCapacity);
   // Kills animating: x, y, the vanished body's radius and colour, and when.
   const kills = new Float64Array(maxKills * 7);
   let killCursor = 0;
@@ -154,27 +157,31 @@ export function createCombatEffects({
         }
         if (views.hurtAge[i] < horizon) hurtAt[i] = now;
       }
-      if (elapsed > 0) {
-        for (let c = 0; c < corpseCapacity; c++) {
-          const held = views.corpseEnergy[c] > 0 ? 1 : 0;
-          if (held && !corpseHeld[c]) {
-            const x = views.corpsePosition[c * 3];
-            const y = views.corpsePosition[c * 3 + 1];
-            const body = vanishedNear(views, x, y, corpseRadius);
-            const at = killCursor * 7;
-            kills[at] = x;
-            kills[at + 1] = y;
-            kills[at + 2] = body >= 0 ? lastSize[body] : corpseRadius;
-            kills[at + 3] = body >= 0 ? lastColor[body * 3] : RED_R;
-            kills[at + 4] = body >= 0 ? lastColor[body * 3 + 1] : RED_G;
-            kills[at + 5] = body >= 0 ? lastColor[body * 3 + 2] : RED_B;
-            kills[at + 6] = now;
-            killCursor = (killCursor + 1) % maxKills;
-          }
-          corpseHeld[c] = held;
+      for (let c = 0; c < corpseCapacity; c++) {
+        const energy = views.corpseEnergy[c];
+        const x = views.corpsePosition[c * 3];
+        const y = views.corpsePosition[c * 3 + 1];
+        const held = energy > 0 ? 1 : 0;
+        // A corpse never moves and only loses energy, so one that moved or gained is a
+        // new death in a slot freed and refilled between frames (spec §5.1).
+        const replaced = corpseHeld[c] === 1 &&
+          (x !== corpseAt[c * 2] || y !== corpseAt[c * 2 + 1] || energy > corpseEnergy[c]);
+        if (elapsed > 0 && held && (!corpseHeld[c] || replaced)) {
+          const body = vanishedNear(views, x, y, corpseRadius);
+          const at = killCursor * 7;
+          kills[at] = x;
+          kills[at + 1] = y;
+          kills[at + 2] = body >= 0 ? lastSize[body] : corpseRadius;
+          kills[at + 3] = body >= 0 ? lastColor[body * 3] : RED_R;
+          kills[at + 4] = body >= 0 ? lastColor[body * 3 + 1] : RED_G;
+          kills[at + 5] = body >= 0 ? lastColor[body * 3 + 2] : RED_B;
+          kills[at + 6] = now;
+          killCursor = (killCursor + 1) % maxKills;
         }
-      } else {
-        for (let c = 0; c < corpseCapacity; c++) corpseHeld[c] = views.corpseEnergy[c] > 0 ? 1 : 0;
+        corpseHeld[c] = held;
+        corpseAt[c * 2] = x;
+        corpseAt[c * 2 + 1] = y;
+        corpseEnergy[c] = energy;
       }
       for (let i = 0; i < capacity; i++) {
         wasAlive[i] = views.alive[i];

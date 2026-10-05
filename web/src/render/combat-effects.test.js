@@ -221,6 +221,28 @@ test('a kill shrinks the vanished body into its corpse inside a spreading ring',
   assert.equal(shapes(fx, views, 2_000).length, 0);
 });
 
+test('a corpse slot refilled between frames is a new kill, by place or by energy', () => {
+  const fx = effects(1);
+  const views = frame(1);
+  views.corpsePosition.set([20, 20, 0]);
+  views.corpseEnergy[0] = 40;
+  fx.observe(views, 10n, 0, colors(1), 2);
+  const rings = (now) => shapes(fx, views, now).filter((s) => s.kind === SHAPE.RING).length;
+  // Eaten a little: the same corpse.
+  views.corpseEnergy[0] = 35;
+  fx.observe(views, 11n, 100, colors(1), 2);
+  assert.equal(rings(100), 0, 'a corpse losing energy is not a kill');
+  // Freed and refilled by a death elsewhere within one frame gap.
+  views.corpsePosition.set([60, 20, 0]);
+  views.corpseEnergy[0] = 30;
+  fx.observe(views, 12n, 1_000, colors(1), 2);
+  assert.equal(rings(1_000), 1, 'a corpse that moved');
+  // Refilled where it lay, by a death holding more.
+  views.corpseEnergy[0] = 50;
+  fx.observe(views, 13n, 2_000, colors(1), 2);
+  assert.equal(rings(2_000), 1, 'a corpse that gained');
+});
+
 test('a world that starts over forgets the old one\'s animations', () => {
   const fx = effects(1);
   const views = frame(1);
