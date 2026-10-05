@@ -30,7 +30,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 10;
+pub const CHECKPOINT_FORMAT: u32 = 11;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -111,6 +111,10 @@ struct AgentState {
     cooldown: u32,
     eaten_plants: f64,
     eaten_animals: f64,
+    swing_age: u8,
+    hurt_age: u8,
+    bite_at: [f32; 2],
+    kills: u32,
     age: u32,
     species_id: u32,
     signature: Vec3,
@@ -203,6 +207,10 @@ impl World {
                     cooldown: a.cooldown[i],
                     eaten_plants: a.eaten_plants[i],
                     eaten_animals: a.eaten_animals[i],
+                    swing_age: a.swing_age[i],
+                    hurt_age: a.hurt_age[i],
+                    bite_at: a.bite_at[i],
+                    kills: a.kills[i],
                     age: a.age[i],
                     species_id: a.species_id[i],
                     signature: a.signature[i],
@@ -447,6 +455,12 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         {
             return Err(invalid("a diet total must be finite and non-negative"));
         }
+        let [x, y] = agent.bite_at;
+        if !(x.is_nan() && y.is_nan() || x.is_finite() && y.is_finite()) {
+            return Err(invalid(
+                "a bite's landing point must be finite, or NaN for a miss",
+            ));
+        }
         if agent.birth_id != BirthId::NULL.raw() && agent.birth_id >= c.next_birth {
             return Err(invalid("an agent birth ID was never issued"));
         }
@@ -514,6 +528,10 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.cooldown[i] = agent.cooldown;
         a.eaten_plants[i] = agent.eaten_plants;
         a.eaten_animals[i] = agent.eaten_animals;
+        a.swing_age[i] = agent.swing_age;
+        a.hurt_age[i] = agent.hurt_age;
+        a.bite_at[i] = agent.bite_at;
+        a.kills[i] = agent.kills;
         a.age[i] = agent.age;
         a.species_id[i] = agent.species_id;
         a.signature[i] = agent.signature;
@@ -706,7 +724,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 22] = [
+        let cases: [(&str, Corrupt); 24] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -744,6 +762,12 @@ mod tests {
             ("a kill without a hit", |c| c.bites.kills = c.bites.hits + 1),
             ("a hit without a swing", |c| {
                 c.bites.hits = c.bites.swings + 1
+            }),
+            ("a bite landing half missed", |c| {
+                c.agents[0].bite_at = [f32::NAN, 1.0]
+            }),
+            ("a bite landing at infinity", |c| {
+                c.agents[0].bite_at = [f32::INFINITY, 1.0]
             }),
             ("bite aimed off the plane", |c| {
                 for gene in &mut c.agents[0].genome.values {

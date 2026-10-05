@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Inspection } from '../inspect/model';
   import {
-    birthIdLabel, parentBirthLabel, parentSlotLabel, speciesLabel, summarizeGenes,
+    birthIdLabel, dietLabel, parentBirthLabel, parentSlotLabel, speciesLabel, summarizeGenes,
   } from '../inspect/model';
 
   let {
@@ -62,7 +62,18 @@
       <div><dt>energy</dt><dd>{inspection.energy.toFixed(2)}</dd></div>
       <div><dt>age</dt><dd>{inspection.age}</dd></div>
       <div><dt>species</dt><dd>{speciesLabel(inspection.species_id)}</dd></div>
+      <div><dt>health</dt><dd>{Math.round(inspection.health * 100)}%</dd></div>
       <div><dt>size</dt><dd>{inspection.size.toFixed(2)}</dd></div>
+      <div><dt>muscle</dt><dd>{inspection.muscle.toFixed(2)}</dd></div>
+      <div><dt>mouth</dt><dd>{inspection.mouth.toFixed(2)}</dd></div>
+      <div>
+        <dt title="Lifetime intake; bites and carrion count as meat">diet</dt>
+        <dd>{dietLabel(inspection.eaten_plants, inspection.eaten_animals)}</dd>
+      </div>
+      <div>
+        <dt title="Victims it bit on the tick they fell; shared kills count for each biter">kills</dt>
+        <dd>{inspection.kills}</dd>
+      </div>
       <div><dt>brain units</dt><dd>{inspection.brain_units}</dd></div>
       <div><dt>sensor load</dt><dd>{inspection.sensor_load.toFixed(1)}</dd></div>
       <div class="identity">

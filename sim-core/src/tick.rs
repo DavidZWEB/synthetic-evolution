@@ -382,6 +382,10 @@ impl World {
         self.swings.clear();
         for id in self.pool.iter_live() {
             let i = id.index();
+            // Every swing and hit grows a tick older, so a renderer can tell a new one
+            // from one it has drawn (spec §2.2b).
+            self.agents.swing_age[i] = self.agents.swing_age[i].saturating_add(1);
+            self.agents.hurt_age[i] = self.agents.hurt_age[i].saturating_add(1);
             if !combat::swings(
                 self.intents.bite[i],
                 self.agents.cooldown[i],
@@ -399,6 +403,8 @@ impl World {
             );
             self.ledger.record_dissipated_amount(paid);
             self.agents.cooldown[i] = cooldown;
+            self.agents.swing_age[i] = 0;
+            self.agents.bite_at[i] = [f32::NAN; 2];
             self.bites.swings = self.bites.swings.saturating_add(1);
             self.swings.push(Swing {
                 biter: id,
@@ -436,6 +442,8 @@ impl World {
             };
             if let Some(victim) = combat::target(i, &aim, &targets) {
                 swing.target = AgentId::from(victim);
+                let centre = self.agents.position[victim];
+                self.agents.bite_at[i] = [centre.x, centre.y];
             }
         }
 
@@ -469,11 +477,20 @@ impl World {
             agents.energy[j] = victim_energy;
             agents.energy_reserve[j] = victim_reserve;
             agents.eaten_animals[i] += mouthful.kept;
+            agents.hurt_age[j] = 0;
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits = self.bites.hits.saturating_add(1);
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
+        // Living agents start the step above 0, so a victim at 0 fell to this tick's
+        // hits, and every biter that landed one shares the kill.
+        for swing in &self.swings {
+            if !swing.target.is_null() && agents.health[swing.target.index()] <= 0.0 {
+                let kills = &mut agents.kills[swing.biter.index()];
+                *kills = kills.saturating_add(1);
+            }
+        }
     }
 
     /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
@@ -1098,6 +1115,114 @@ mod tests {
                 "biter facing {yaw}, target placed for {target}"
             );
         }
+    }
+
+    #[test]
+    fn a_swing_leaves_its_age_and_landing_for_the_renderer() {
+        // A frame shows when each agent last swung and was hit, and where its latest
+        // swing landed, so a miss after a hit cannot replay the hit (spec §2.2b).
+        let mut world = duel(
+            duel_params(3),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(140.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        let ages = |world: &World, i: usize| {
+            let a = world.agents();
+            (a.swing_age[i], a.hurt_age[i])
+        };
+        let missed = |world: &World, i: usize| world.agents().bite_at[i].iter().all(|v| v.is_nan());
+        assert_eq!(
+            ages(&world, 0),
+            (u8::MAX, u8::MAX),
+            "a founder has done neither"
+        );
+        assert!(missed(&world, 0));
+
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        assert_eq!(ages(&world, 0), (0, u8::MAX), "slot 0 swung");
+        assert_eq!(
+            world.agents().bite_at[0],
+            [104.0, 100.0],
+            "at its victim's centre"
+        );
+        assert_eq!(ages(&world, 1), (u8::MAX, 0), "slot 1 was hit");
+        assert_eq!(ages(&world, 2), (0, u8::MAX), "slot 2 swung at nothing");
+        assert!(missed(&world, 2));
+
+        world.intents_mut().bite.fill(0.0);
+        world.resolve_bites();
+        assert_eq!(
+            (ages(&world, 0), ages(&world, 1)),
+            ((1, u8::MAX), (u8::MAX, 1))
+        );
+        assert_eq!(
+            world.agents().bite_at[0],
+            [104.0, 100.0],
+            "kept until the next swing"
+        );
+
+        // The victim steps away, and the next swing misses.
+        world.agents_mut().position[1] = Vec3::new(160.0, 160.0, 0.0);
+        world.agents_mut().cooldown[0] = 0;
+        world.intents_mut().bite[0] = 1.0;
+        world.resolve_bites();
+        assert_eq!(ages(&world, 0).0, 0);
+        assert!(missed(&world, 0), "a miss replaces the hit's landing");
+
+        world.intents_mut().bite.fill(0.0);
+        for _ in 0..300 {
+            world.resolve_bites();
+        }
+        assert_eq!(ages(&world, 0), (u8::MAX, u8::MAX), "ages saturate");
+    }
+
+    #[test]
+    fn every_biter_in_a_killing_tick_is_credited_with_the_kill() {
+        // Wounds sum per victim, so there is no single killer: each biter that hit a
+        // victim on the tick it fell is credited, and a hit it survived counts nothing.
+        let mut world = duel(
+            duel_params(5),
+            &[
+                (Vec3::new(96.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(104.0, 100.0, 0.0), core::f32::consts::PI, 100.0),
+                (Vec3::new(140.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(144.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        world.agents_mut().health[1] = 0.4;
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.intents_mut().bite[4] = 0.0;
+        world.resolve_bites();
+        assert_eq!(world.agents().health[1], 0.0, "two bites felled it");
+        assert!(world.agents().health[4] > 0.0, "one bite did not");
+        assert_eq!(&world.agents().kills[..5], &[1, 0, 1, 0, 0]);
+        world.charge_metabolism();
+        world.resolve_deaths();
+        assert_eq!(
+            world.bite_counts().kills,
+            1,
+            "the world counts the death once"
+        );
+
+        // A newborn in the freed slot starts with none of its predecessor's history.
+        let reborn = world
+            .spawn_founder(Vec3::new(50.0, 50.0, 0.0))
+            .unwrap()
+            .index();
+        assert_eq!(reborn, 1, "the freed slot is reused");
+        let a = world.agents();
+        assert_eq!(
+            (a.swing_age[1], a.hurt_age[1], a.kills[1]),
+            (u8::MAX, u8::MAX, 0)
+        );
+        assert!(a.bite_at[1].iter().all(|v| v.is_nan()));
     }
 
     #[test]

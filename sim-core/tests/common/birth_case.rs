@@ -7,8 +7,8 @@ use sim_core::World;
 use sim_core::control::BrainInheritance;
 use sim_core::ids::BirthId;
 
-pub const EVOLVING_GOLDEN: u64 = 0xc8cb_69f3_0373_1473;
-pub const CONTROL_GOLDEN: u64 = 0x4e1f_a0de_8d10_613d;
+pub const EVOLVING_GOLDEN: u64 = 0xd704_7093_5dbb_4169;
+pub const CONTROL_GOLDEN: u64 = 0x754f_f831_3f24_7aa3;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();

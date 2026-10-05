@@ -158,13 +158,17 @@ corpses: positions, energy            (Phase 3)
 
 Plant energy is the current stock, used to show whether a plant is full or depleted (§5.1); it is not a history. Plant positions change when a plant dies and reseeds, so they travel with every frame too. There is no agent energy, no genomes, and no brain state. This buffer is written once per tick and read by the main thread at whatever rate it happens to be rendering. Keeping it small matters: at 50k agents you're copying it 60 times a second, and every field you add is bandwidth you don't get back.
 
-**DECIDED (Phase 3): combat travels with the frame,** so attacks can be drawn. Each agent carries `health` quantized to a byte, `swingAge` and `hurtAge` (ticks since it last swung and since it was last hit, saturating at 255, so a renderer that skipped frames still learns that it happened), and `biteAt`, where its latest swing landed (the victim's centre, x and y), or NaN in both if that swing missed. `swingAge` is therefore always the age of whatever `biteAt` describes: a miss cannot replay an old hit, and two hits on the same spot are told apart by `swingAge` restarting. A slot index would not do: deaths and births resolve before a frame is published, so a killed victim's slot can already hold a newborn, and the killing blow is the hit most worth drawing. That is 11 bytes, taking an agent from 61 to 72. A renderer turns a newly seen event into a wall-clock animation, as it does for plant reseeds, so attacks stay visible at any sim speed.
+**DECIDED (Phase 3): combat travels with the frame,** so attacks can be drawn. Each agent carries `health` quantized to a byte, `swingAge` and `hurtAge` (ticks since it last swung and since it was last hit, saturating at 255, so a renderer that skipped frames still learns that it happened), and `biteAt`, where its latest swing landed (the victim's centre, x and y), or NaN in both if that swing missed. `swingAge` is therefore always the age of whatever `biteAt` describes: a miss cannot replay an old hit, and two hits on the same spot are told apart by `swingAge` restarting. A slot index would not do: deaths and births resolve before a frame is published, so a killed victim's slot can already hold a newborn, and the killing blow is the hit most worth drawing. That is 11 bytes, taking an agent from 61 to 72. A renderer turns a newly seen event into a wall-clock animation, as it does for plant reseeds, so attacks stay visible at any sim speed. The frame describes the living, so a biter that dies on the tick it swings, as in a mutual kill, is not drawn swinging; the kills it made still show, through its victims' corpses. Drawing its last swing would need per-tick event records in the frame, which this budget does not carry. Likewise a miss carries no direction, so it is drawn along the body's heading. Only an imported bite can aim elsewhere, since founders' bites aim straight ahead and no mutation moves a bite's azimuth.
 
 `incarnation` changes whenever a pool slot is allocated. A slot index alone is not an agent identity because the free list reuses it; `(index, incarnation)` lets a click-driven inspector reject a response for a replacement born after the displayed frame.
 
 Three frames are required because the renderer must lease one while it issues uploads. The worker publishes into either remaining frame and only reclaims an older published frame after the replacement is complete. An unleased two-frame flip can overwrite the renderer's live typed-array view after two worker publications, producing a frame assembled from different ticks.
 
 Inspector data (full genome, live brain activations, lineage) is **pulled on demand** for the one selected agent via a request on the command queue, not streamed for everybody.
+
+**DECIDED (Phase 3): the inspector shows combat.** Health, the three body traits, the lifetime diet split, and kills. An agent is credited with a kill for each victim it bit on the tick that victim fell to health 0. Wounds sum per victim (§4.2), so there is no single killer to name: biters that bring one victim down together are each credited, and agents' kills can sum to more than the world's count of deaths by bite (§7.9).
+
+**DECIDED (Phase 3): a diet colour mode.** Agents can be coloured by their lifetime diet, from green (all plants) to red (all meat), with the unfed grey. A diet is not in the frame: it changes over many meals, so while the mode is on the client pulls one byte per slot a few times a second. Each sample carries the slots' incarnations, so a newborn in a reused slot never wears its predecessor's diet.
 
 Everything crossing into the sim — including UI actions like placing food or spawning an agent — goes through a single serde-serializable `Command` enum stamped with an `apply_at_tick`. Replay, batch scripting, and the multi-client path in §9.5 all fall out of that one choice.
 
@@ -1461,9 +1465,10 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 10 since
-Phase 3's wired sensors and knockout switches added `mutation.organs.wired_weight_scale`
-and the sensing gains; format 9 had added each agent's lifetime intake from plants and
+manifest records the container and checkpoint formats (checkpoint format 11 since
+Phase 3's drawn attacks added each agent's swing and hurt ages, where its latest bite
+landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
+sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's
 combat and founder params and each agent's cooldown; format 7 had added evolvable bodies'
 trait ranges, trait upkeep, and trait mutation, and format 6 corpses' params, slots,

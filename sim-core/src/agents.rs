@@ -66,6 +66,16 @@ pub struct Agents {
     /// large total. A lifetime of `f32::MAX` meals still fits.
     pub eaten_plants: Vec<f64>,
     pub eaten_animals: Vec<f64>,
+    /// Ticks since this agent last swung and since it was last hit, saturating at
+    /// `u8::MAX`, and where its latest swing landed: the victim's centre on a hit, NaN on
+    /// a miss. What a renderer animates attacks from; nothing in the tick reads them
+    /// (spec §2.2b).
+    pub swing_age: Vec<u8>,
+    pub hurt_age: Vec<u8>,
+    pub bite_at: Vec<[f32; 2]>,
+    /// Victims this agent bit on the tick they fell to health 0, over its life. Several
+    /// biters that bring one victim down together are each credited.
+    pub kills: Vec<u32>,
     pub age: Vec<u32>,
     /// Species cluster, or `NULL_ID` when classification is unavailable.
     pub species_id: Vec<u32>,
@@ -176,6 +186,10 @@ impl Agents {
             cooldown: vec![0; n],
             eaten_plants: vec![0.0; n],
             eaten_animals: vec![0.0; n],
+            swing_age: vec![u8::MAX; n],
+            hurt_age: vec![u8::MAX; n],
+            bite_at: vec![[f32::NAN; 2]; n],
+            kills: vec![0; n],
             age: vec![0; n],
             species_id: vec![NULL_ID; n],
             signature: vec![Vec3::ZERO; n],
@@ -218,6 +232,10 @@ impl Agents {
         self.cooldown[i] = 0;
         self.eaten_plants[i] = 0.0;
         self.eaten_animals[i] = 0.0;
+        self.swing_age[i] = u8::MAX;
+        self.hurt_age[i] = u8::MAX;
+        self.bite_at[i] = [f32::NAN; 2];
+        self.kills[i] = 0;
         self.age[i] = 0;
         self.species_id[i] = NULL_ID;
         self.signature[i] = spec.signature;

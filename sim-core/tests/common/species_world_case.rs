@@ -15,11 +15,13 @@ use sim_core::{SpawnSpec, World};
 
 // Phase 3 M3 coverage refreshes: the hash covers each agent's bite cooldown (spec §4.2),
 // then each agent's diet and the world's bite counts (spec §7.9).
+// Phase 3 M5's coverage refresh adds each agent's swing and hurt ages, where its
+// latest bite landed, and its kills (spec §2.2b).
 // Before it, Phase 3 M2's founders gained muscle and mouth genes and the hash covered
 // both (spec §3.5), and M5's coverage-only refresh added lifetime birth identities
 // (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0xdc50_fc6e_d745_5fee;
-pub const CONTROL_GOLDEN: u64 = 0x3f3f_5d2d_a03d_372b;
+pub const EVOLVING_GOLDEN: u64 = 0x84de_714d_6c9e_8862;
+pub const CONTROL_GOLDEN: u64 = 0xe557_f24d_3f16_8c7b;
 
 fn genes(weight: f32) -> [Gene; 4] {
     [

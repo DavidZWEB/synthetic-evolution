@@ -17,9 +17,9 @@ pub const MODES: [BrainInheritance; 3] = [
 ];
 /// `state_hash` after `TICKS`, per mode.
 pub const GOLDEN: [u64; 3] = [
-    0x801b_e08b_a448_45ec,
-    0x6396_3621_05a1_c190,
-    0x4156_0850_25d2_8aa8,
+    0xe40b_c961_731e_20ae,
+    0x0fcf_dab6_20b6_36b4,
+    0xb9e2_f1a2_572a_c7f6,
 ];
 const TICKS: u32 = 120;
 /// Every eye goes dark here, on a running world.

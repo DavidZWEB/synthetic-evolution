@@ -20,7 +20,8 @@ function source(capacity, plantCapacity, marker, corpseCapacity = 0) {
 }
 
 test('shared frame bases stay aligned for every capacity residue', () => {
-  assert.equal(frameLayout(1, 0).bytes, 61);
+  // Matches sim_core::snapshot::BYTES_PER_AGENT.
+  assert.equal(frameLayout(1, 0).bytes, 72);
   // Matches sim_core::snapshot::BYTES_PER_PLANT and BYTES_PER_CORPSE.
   assert.equal(bytesPerPlant(), 16);
   assert.equal(bytesPerCorpse(), 16);
@@ -112,6 +113,25 @@ test('transferable frames stay attached until the next animation read', () => {
   const second = reader.latest();
   assert.equal(second.views.alive[1], 1);
   assert.equal(reader.takeRecycle(), firstBuffer);
+});
+
+test('an attack travels with the frame through either transport', () => {
+  for (const kind of [SHARED, TRANSFERABLE]) {
+    const writer = createWriter(kind, 3, 0);
+    const reader = createReader(writer.handoff);
+    const frame = source(3, 0, 0);
+    frame.health.set([255, 128, 1]);
+    frame.swingAge.set([0, 255, 7]);
+    frame.hurtAge.set([255, 0, 3]);
+    frame.biteAt.set([10.5, 20.25, NaN, NaN, 1, 2]);
+    const published = writer.publish(frame, 5n, 3);
+    if (kind === TRANSFERABLE) reader.accept(published);
+    const { views } = reader.latest();
+    assert.deepEqual([...views.health], [255, 128, 1], kind);
+    assert.deepEqual([...views.swingAge], [0, 255, 7], kind);
+    assert.deepEqual([...views.hurtAge], [255, 0, 3], kind);
+    assert.deepEqual([...views.biteAt], [10.5, 20.25, NaN, NaN, 1, 2], kind);
+  }
 });
 
 test('corpses travel with the frame through either transport', () => {

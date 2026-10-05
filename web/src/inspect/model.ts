@@ -24,6 +24,12 @@ export interface Inspection {
   parent_b: number;
   brain_units: number;
   sensor_load: number;
+  health: number;
+  muscle: number;
+  mouth: number;
+  eaten_plants: number;
+  eaten_animals: number;
+  kills: number;
   activations: number[];
   genome: Gene[];
 }
@@ -93,6 +99,16 @@ function isInspection(value: unknown): value is Inspection {
     isUint32(value.parent_b) &&
     Number.isSafeInteger(value.brain_units) &&
     isFiniteNumber(value.sensor_load) &&
+    isFiniteNumber(value.health) &&
+    value.health > 0 &&
+    value.health <= 1 &&
+    isFiniteNumber(value.muscle) &&
+    isFiniteNumber(value.mouth) &&
+    isFiniteNumber(value.eaten_plants) &&
+    value.eaten_plants >= 0 &&
+    isFiniteNumber(value.eaten_animals) &&
+    value.eaten_animals >= 0 &&
+    isUint32(value.kills) &&
     Array.isArray(value.activations) &&
     value.activations.every(isFiniteNumber) &&
     Array.isArray(value.genome) &&
@@ -109,6 +125,19 @@ export function decodeInspection(json: string): Inspection {
   const value: unknown = JSON.parse(json);
   if (!isInspection(value)) throw new TypeError('invalid inspection payload');
   return value;
+}
+
+/**
+ * What an agent has eaten over its life: the share taken from other agents, by bite or
+ * carrion, or "unfed" before its first meal (spec §7.9).
+ */
+export function dietLabel(plants: number, animals: number): string {
+  // Scaled by the larger first, so two finite totals cannot overflow their sum.
+  const larger = Math.max(plants, animals);
+  if (!(larger > 0)) return 'unfed';
+  const share = animals / larger / (plants / larger + animals / larger);
+  const meat = Math.round(share * 100);
+  return `${meat}% meat, ${100 - meat}% plants`;
 }
 
 export function summarizeGenes(genes: Gene[]): Array<{ kind: string; count: number }> {

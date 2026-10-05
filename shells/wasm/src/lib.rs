@@ -291,6 +291,13 @@ struct Layout {
     part_count: Span,
     /// Allocation generation per slot; changes when a dead slot is reused.
     incarnation: Span,
+    /// One byte per slot each: health (255 at full), and ticks since the last swing and
+    /// since the last hit, saturating at 255.
+    health: Span,
+    swing_age: Span,
+    hurt_age: Span,
+    /// `x, y` per slot where the latest swing landed; NaN in both for a miss.
+    bite_at: Span,
     /// Slots in the plant arrays. Fixed for the life of a world, like `capacity`.
     plant_capacity: u32,
     /// `x, y, z` per plant.
@@ -326,6 +333,10 @@ struct RenderHints {
     corpse_signature: [f32; 3],
     /// A newborn's tank, against which a renderer shades how much a corpse holds.
     corpse_full_energy: f32,
+    /// The bite's half-angle, and the founders' reach past both bodies, so a renderer
+    /// can draw a swing's arc. An evolved bite may reach further or less far.
+    combat_arc: f32,
+    combat_reach: f32,
 }
 
 fn span<T>(slice: &[T]) -> Span {
@@ -355,6 +366,15 @@ struct Inspection<'a> {
     parent_b: u32,
     brain_units: u32,
     sensor_load: f32,
+    /// Combat, for the inspector (spec §2.2b): health in (0, 1], the body's muscle and
+    /// mouth, lifetime intake from plants and from other agents, and the victims it bit
+    /// on the tick they fell.
+    health: f32,
+    muscle: f32,
+    mouth: f32,
+    eaten_plants: f64,
+    eaten_animals: f64,
+    kills: u32,
     /// Live neuron outputs, in brain-slot order — the activations, not the genome's
     /// description of them.
     activations: Vec<f32>,
@@ -551,6 +571,10 @@ impl Sim {
             part_offset: span(self.snapshot.part_offset()),
             part_count: span(self.snapshot.part_count()),
             incarnation: span(self.snapshot.incarnation()),
+            health: span(self.snapshot.health()),
+            swing_age: span(self.snapshot.swing_age()),
+            hurt_age: span(self.snapshot.hurt_age()),
+            bite_at: span(self.snapshot.bite_at()),
             plant_capacity: self.snapshot.plant_capacity(),
             plant_position: span(self.snapshot.plant_position()),
             plant_energy: span(self.snapshot.plant_energy()),
@@ -576,6 +600,8 @@ impl Sim {
             corpse_radius: params.corpses.radius,
             corpse_signature: params.corpses.signature,
             corpse_full_energy: params.reproduction.start_energy,
+            combat_arc: params.combat.arc,
+            combat_reach: params.combat.reach,
         };
         serde_json::to_string(&hints).map_err(|e| js_error("render hints", e))
     }
@@ -694,7 +720,7 @@ impl Sim {
     /// Everything the inspector shows for one agent, as JSON.
     ///
     /// Pulled for the one selected agent rather than streamed for everybody: this is
-    /// kilobytes per agent against the snapshot's 61 bytes, and it is read at the rate a
+    /// kilobytes per agent against the snapshot's 72 bytes, and it is read at the rate a
     /// human clicks (spec §2.2b).
     pub fn inspect_agent(&self, index: u32, incarnation: u32) -> Result<String, JsError> {
         let id = AgentId::new(index);
@@ -724,9 +750,61 @@ impl Sim {
             parent_b: agents.parent_b[i],
             brain_units: agents.brain_units[i],
             sensor_load: agents.sensor_load[i],
+            health: agents.health[i],
+            muscle: agents.muscle[i],
+            mouth: agents.mouth[i],
+            eaten_plants: agents.eaten_plants[i],
+            eaten_animals: agents.eaten_animals[i],
+            kills: agents.kills[i],
             activations: self.world.brain(id).iter().map(|n| n.output).collect(),
             genome: self.world.genome(id),
         };
         serde_json::to_string(&inspection).map_err(|e| js_error("inspect", e))
+    }
+
+    /// One byte per slot for the diet colour mode: the share of each living agent's
+    /// lifetime intake taken from other agents, as 0 (all plants) to 254 (all meat), and
+    /// 255 for one that has eaten nothing or an empty slot.
+    ///
+    /// Pulled a few times a second while the mode is on rather than carried in every
+    /// frame (spec §2.2b). It allocates, so it can detach snapshot views (§7.3).
+    pub fn diet_shares(&self) -> Vec<u8> {
+        let agents = self.world.agents();
+        let mut shares = vec![UNFED; self.world.pool().capacity() as usize];
+        for id in self.world.pool().iter_live() {
+            let i = id.index();
+            shares[i] = diet_byte(agents.eaten_plants[i], agents.eaten_animals[i]);
+        }
+        shares
+    }
+}
+
+/// The diet byte of an agent that has eaten nothing, or of an empty slot.
+const UNFED: u8 = 255;
+
+/// The share of `plants + animals` eaten from other agents, scaled onto 0..=254. Both
+/// are scaled by the larger first, so no two finite totals overflow their sum.
+fn diet_byte(plants: f64, animals: f64) -> u8 {
+    let larger = plants.max(animals);
+    if larger.is_nan() || larger <= 0.0 {
+        return UNFED;
+    }
+    let meat = animals / larger;
+    (meat / (plants / larger + meat) * 254.0).round() as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_diet_byte_runs_from_plants_to_meat_and_marks_the_unfed() {
+        assert_eq!(diet_byte(0.0, 0.0), UNFED);
+        assert_eq!(diet_byte(5.0, 0.0), 0);
+        assert_eq!(diet_byte(0.0, 5.0), 254);
+        assert_eq!(diet_byte(1.0, 4.0), 203, "four fifths meat");
+        assert_eq!(diet_byte(f64::MAX, f64::MAX), 127, "the sum overflowed");
+        let least = f64::from_bits(1);
+        assert_eq!(diet_byte(least, least), 127);
     }
 }

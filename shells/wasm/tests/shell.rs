@@ -754,3 +754,15 @@ fn half_founder_slot(params: &str) -> String {
     value["storage"]["genes_per_slot"] = (founder / 2).into();
     value.to_string()
 }
+
+#[wasm_bindgen_test]
+fn diet_shares_cover_every_slot_and_mark_the_unfed() {
+    // Founders have eaten nothing yet, and empty slots read the same: 255 (spec §2.2b).
+    let sim = sim(3);
+    let shares = sim.diet_shares();
+    assert_eq!(
+        shares.len(),
+        layout(&sim)["capacity"].as_u64().unwrap() as usize
+    );
+    assert!(shares.iter().all(|&share| share == 255));
+}

@@ -8,8 +8,8 @@
  *
  * **Views over WASM memory are rebuilt whenever the buffer changes identity.** Growing
  * WASM memory detaches every existing `TypedArray` silently, and while stepping never
- * grows it, `push_command`, `inspect_agent`, `species_diagnostics`, and
- * `complexity_diagnostics` allocate and might. Comparing the buffer is a pointer check
+ * grows it, `push_command`, `inspect_agent`, `species_diagnostics`,
+ * `complexity_diagnostics`, and `diet_shares` allocate and might. Comparing the buffer is a pointer check
  * per frame and removes the whole class (spec §7.3).
  *
  * Deliberately not here: anything that decides what the simulation does. The worker
@@ -64,9 +64,12 @@ function assertLayoutsAgree(spans) {
     'part_offset',
     'part_count',
     'incarnation',
+    'bite_at',
   ];
+  const byteFields = ['alive', 'health', 'swing_age', 'hurt_age'];
   const agentBytes =
-    agentFields.reduce((total, field) => total + spans[field].len * 4, 0) + spans.alive.len;
+    agentFields.reduce((total, field) => total + spans[field].len * 4, 0) +
+    byteFields.reduce((total, field) => total + spans[field].len, 0);
   const plantBytes = (spans.plant_position.len + spans.plant_energy.len) * 4;
   const corpseBytes = (spans.corpse_position.len + spans.corpse_energy.len) * 4;
 
@@ -108,11 +111,15 @@ function sourceViews() {
     partOffset: at(spans.part_offset, Uint32Array),
     partCount: at(spans.part_count, Uint32Array),
     incarnation: at(spans.incarnation, Uint32Array),
+    biteAt: at(spans.bite_at, Float32Array),
     plantPosition: at(spans.plant_position, Float32Array),
     plantEnergy: at(spans.plant_energy, Float32Array),
     corpsePosition: at(spans.corpse_position, Float32Array),
     corpseEnergy: at(spans.corpse_energy, Float32Array),
     alive: at(spans.alive, Uint8Array),
+    health: at(spans.health, Uint8Array),
+    swingAge: at(spans.swing_age, Uint8Array),
+    hurtAge: at(spans.hurt_age, Uint8Array),
   };
   sourceBuffer = memory.buffer;
   return source;
@@ -386,6 +393,24 @@ const handlers = {
       });
     } catch (error) {
       postMessage({ kind: 'species', requestId, diagnostics: null, message: String(error) });
+    }
+  },
+
+  /** One diet byte per slot for the diet colour mode, with the slots' incarnations. */
+  diets({ requestId }) {
+    try {
+      if (!Number.isSafeInteger(requestId) || requestId < 1) {
+        throw new RangeError('invalid diet request identity');
+      }
+      const shares = sim.diet_shares();
+      // Read after the call, which can grow memory and detach the views.
+      const incarnation = sourceViews().incarnation.slice();
+      postMessage(
+        { kind: 'diets', requestId, tick: sim.tick().toString(), shares, incarnation },
+        [shares.buffer, incarnation.buffer],
+      );
+    } catch (error) {
+      postMessage({ kind: 'diets', requestId, shares: null, message: String(error) });
     }
   },
 

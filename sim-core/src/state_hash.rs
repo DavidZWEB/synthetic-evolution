@@ -246,6 +246,12 @@ impl World {
             h.u32(agents.cooldown[i]);
             h.f64(agents.eaten_plants[i]);
             h.f64(agents.eaten_animals[i]);
+            h.byte(agents.swing_age[i]);
+            h.byte(agents.hurt_age[i]);
+            // A miss is NaN by bits, always the same constant, so it folds the same.
+            h.f32(agents.bite_at[i][0]);
+            h.f32(agents.bite_at[i][1]);
+            h.u32(agents.kills[i]);
             h.u32(agents.age[i]);
             h.u32(if include_metadata {
                 agents.species_id[i]

@@ -36,3 +36,26 @@ test('palette handles full-width IDs and exposes matching readable legend swatch
   assert.throws(() => validateSpeciesView({ colorMode: 'invalid', selectedSpecies: null }));
   assert.throws(() => validateSpeciesView({ colorMode: 'species', selectedSpecies: -1 }));
 });
+
+test('diet colours run from plants to meat and grey out the unfed and replaced', () => {
+  const views = {
+    species: new Uint32Array(4),
+    signature: new Float32Array(12),
+    incarnation: new Uint32Array([1, 1, 1, 2]),
+  };
+  const diets = {
+    shares: new Uint8Array([0, 254, 255, 127]),
+    incarnation: new Uint32Array([1, 1, 1, 1]),
+  };
+  const out = displayColors(views, 4, { colorMode: 'diet', selectedSpecies: null },
+    new Float32Array(12), diets);
+  const rgb = (slot) => [...out.slice(slot * 3, slot * 3 + 3)].map((v) => Math.round(v * 100));
+  assert.deepEqual(rgb(0), [30, 85, 35], 'all plants is green');
+  assert.deepEqual(rgb(1), [95, 20, 15], 'all meat is red');
+  assert.deepEqual(rgb(2), [55, 55, 55], 'the unfed are grey');
+  assert.deepEqual(rgb(3), [55, 55, 55], 'a newborn in a reused slot is not its predecessor');
+  const none = displayColors(views, 4, { colorMode: 'diet', selectedSpecies: null },
+    new Float32Array(12));
+  assert.ok([...none].every((v) => v === Math.fround(0.55)), 'no sample yet');
+  assert.doesNotThrow(() => validateSpeciesView({ colorMode: 'diet', selectedSpecies: null }));
+});

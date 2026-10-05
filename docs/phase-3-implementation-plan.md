@@ -14,7 +14,7 @@ Design decisions live in the spec: §2.2b combat in the snapshot, §3.3 wired se
 §5.5 constants. This plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: M1 through M4 done; M5 next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1 through M5 done; M6 next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**. It is measured as a species
 whose members take most of their energy from other agents (bites and corpses),
 persisting for at least half a run on several seeds while plant-eaters persist beside
@@ -28,7 +28,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 | M2 Evolvable bodies | Done: muscle and mouth genes, mass, gape, upkeep, the mutation operator at rate 0, and trait telemetry |
 | M3 The bite | Done: the dormant bite, the two-pass swing, health, kills, and diet and kill telemetry |
 | M4 Protecting innovation | Done: wired sensor addition, sensor-innovation telemetry, and the vision and chemo knockout switches |
-| M5 Seeing predation | Not started |
+| M5 Seeing predation | Done: combat in the 72-byte frame, attack animations, combat in the inspector, and the diet colour mode |
 | M6 Calibration | Not started |
 | M7 Acceptance | Not started |
 
@@ -258,6 +258,18 @@ visible at 100× speed.
 
 **Tests:** byte budgets on both sides, both transports, and the animation state
 machine, as the reseed glow is tested.
+
+**Landed** as specified, with these settled along the way (spec §2.2b):
+
+- Each agent keeps its swing and hurt ages, its latest bite's landing point, and its
+  kills. All four are hashed and checkpointed (format 11) but read by nothing in the
+  tick.
+- A kill credits every biter that hit the victim on the tick it fell, since wounds sum
+  per victim.
+- A swing's wedge uses the founders' reach, from the render hints; an evolved bite may
+  reach further or less far.
+- The diet colour mode is not in the frame. The client pulls one byte per slot at most
+  twice a second, with the slots' incarnations, while the mode is on.
 
 ## M6 - Calibration
 

@@ -24,7 +24,7 @@
     transitioning,
     onspecies,
     speciesOpen,
-    speciesViewActive,
+    colorViewActive,
   } = $props();
 </script>
 
@@ -78,7 +78,7 @@
   </button>
   <button onclick={onreset}>reset view</button>
   <button onclick={onspecies} disabled={!ready} aria-expanded={speciesOpen}
-    aria-controls="species-browser" class:active={speciesViewActive}>species</button>
+    aria-controls="species-browser" class:active={colorViewActive}>species</button>
   <button onclick={onhistory}>history{captureStatus === 'recording' ? ' (recording)' : ''}</button>
   {#if captureStatus === 'incomplete'}<span role="status">history incomplete</span>{/if}
 </footer>

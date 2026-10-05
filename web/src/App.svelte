@@ -7,6 +7,7 @@
   import SpeciesPanel from './ui/SpeciesPanel.svelte';
   import LineagePanel from './ui/LineagePanel.svelte';
   import { createSpeciesController } from './species/controller.js';
+  import { createDietController } from './diet/controller.js';
   import { createHistorySession } from './history/controller.js';
   import { parseArchive } from './history/archive.js';
   import { openHistoryStore } from './history/store.js';
@@ -136,6 +137,10 @@
       corpseColor: hints.corpse_signature,
       corpseFullEnergy: hints.corpse_full_energy,
     };
+  }
+
+  function combatHints(hints) {
+    return { combatArc: hints.combat_arc, combatReach: hints.combat_reach };
   }
 
   function download(bytes, name) {
@@ -330,7 +335,13 @@
   function setColorMode(value) {
     renderer?.setSpeciesView({ colorMode: value, selectedSpecies });
     colorMode = value;
+    diets.setActive(value === 'diet', performance.now());
   }
+
+  const diets = createDietController({
+    getSim: () => sim,
+    onChange: (sample) => renderer?.setDiets(sample),
+  });
 
   const gestures = createPointerGestures({
     getRenderer: () => renderer,
@@ -403,6 +414,7 @@
     metricSamples = [];
     inspector.select(null);
     species.reset();
+    diets.reset();
     start(next.load ?? null);
     transitioning = false;
     return true;
@@ -497,6 +509,7 @@
           plantMaxEnergy: hints.plant_max_energy,
           corpseCapacity: hints.corpse_capacity,
           ...corpseHints(hints),
+          ...combatHints(hints),
           onContextLost: () => {
             rendererFailure = 'renderer: WebGL context lost; restoring…';
           },
@@ -511,6 +524,7 @@
         failure = String(error);
         historySession?.abort(`renderer initialization failed: ${String(error)}`);
         species.reset();
+        diets.reset();
         nextSim.destroy();
         sim = null;
         return;
@@ -541,6 +555,7 @@
         plantColor: hints.plant_signature,
         plantMaxEnergy: hints.plant_max_energy,
         ...corpseHints(hints),
+        ...combatHints(hints),
       });
     });
     nextSim.on('metrics', (message) => {
@@ -562,6 +577,9 @@
     nextSim.on('species', (message) => {
       if (sim === nextSim) species.accept(message);
     });
+    nextSim.on('diets', (message) => {
+      if (sim === nextSim) diets.accept(message);
+    });
     nextSim.on('validatedRun', (message) => {
       if (sim === nextSim) runValidation.accept(message);
     });
@@ -580,6 +598,7 @@
         latestFrame = null;
         inspector.select(null);
         species.reset();
+        diets.reset();
         if (message.context === 'create' && startingSource === 'url' && previousShareUrl) {
           shareUrl = previousShareUrl;
           globalThis.history.replaceState(null, '', previousShareUrl);
@@ -644,7 +663,7 @@
       handle = requestAnimationFrame(loop);
       const frame = sim?.latest();
       latestFrame = frame;
-      renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false);
+      renderer?.draw(frame?.views ?? null, capacity, frame?.fresh ?? false, frame?.tick ?? null);
       // Read back rather than tracked alongside: the renderer owns the camera, and a
       // second copy here would go stale the moment anything but an input moved it — a
       // resize, a reseed, the zoom floor refusing a scroll.
@@ -658,6 +677,7 @@
       const now = performance.now();
       inspector.poll(frame, now);
       species.poll(frame, now);
+      diets.poll(frame, now);
       if (now - since >= 500) {
         fps = Math.round((frames * 1000) / (now - since));
         frames = 0;
@@ -768,7 +788,7 @@
     }}
     onspecies={() => setSpeciesOpen(!showSpecies)}
     speciesOpen={showSpecies}
-    speciesViewActive={colorMode === 'species' || selectedSpecies !== null}
+    colorViewActive={colorMode !== 'signature' || selectedSpecies !== null}
     {captureStatus}
     {transitioning}
   />
