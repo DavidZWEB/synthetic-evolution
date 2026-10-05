@@ -4,7 +4,7 @@
 //! the native shell when metrics are requested, so ordinary simulation ticks pay no
 //! instrumentation cost.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use crate::Result;
@@ -86,6 +86,11 @@ pub struct Summary {
 pub struct SpeciesPopulation {
     pub species_id: SpeciesId,
     pub population: u32,
+    /// The share of its living members' lifetime intake eaten from other agents, by
+    /// bites and carrion (spec §7.9). Absent when they have eaten nothing yet, or in a
+    /// file written before diets were recorded.
+    #[serde(default)]
+    pub meat_share: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -163,6 +168,33 @@ pub struct WorldMetrics {
     /// them; their absence is unknown, not a population of reference bodies.
     #[serde(default)]
     pub bodies: Option<BodyMetrics>,
+    /// Who eats whom (spec §7.9). Files written before the bite did not record it; its
+    /// absence is unknown, not a world without predation.
+    #[serde(default)]
+    pub predation: Option<PredationMetrics>,
+}
+
+/// Bites, kills, carrion, and diet, at one sample.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PredationMetrics {
+    /// Swings, hits, and kills since the world began.
+    pub swings: u64,
+    pub hits: u64,
+    pub kills: u64,
+    /// Corpses on the ground, and the energy they hold.
+    pub corpses: u32,
+    pub corpse_energy: f64,
+    /// What the living have eaten over their lives: from plants, and from other agents
+    /// through bites and carrion.
+    pub eaten_plants: f64,
+    pub eaten_animals: f64,
+    /// Energy held by living agents that took most of their food from other agents,
+    /// by those that took at least half from plants, and by those that have eaten
+    /// nothing yet: the trophic tiers spec §7.9 diagnoses, with newborns kept out of
+    /// both until they eat.
+    pub carnivore_biomass: f64,
+    pub herbivore_biomass: f64,
+    pub unfed_biomass: f64,
 }
 
 /// Each evolvable body trait across living agents, at one sample.
@@ -345,6 +377,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
         }
     }
 
+    let diets = species_diets(world)?;
     let ledger = world.ledger();
     let plant_energy = finite(world.plants().total_energy(), "plant energy")?;
     let total_energy = finite(world.total_energy(), "total energy")?;
@@ -379,6 +412,9 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
                 .map(|(species_id, population)| SpeciesPopulation {
                     species_id,
                     population,
+                    meat_share: diets
+                        .get(&species_id.raw())
+                        .and_then(|&diet| meat_share(diet)),
                 })
                 .collect(),
             unclassified_population: world.unclassified_population(),
@@ -391,7 +427,70 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
             clustering: plant_clustering(world.plants(), world.params().world.size),
         }),
         bodies: Some(body_metrics(world)),
+        predation: Some(predation_metrics(world)?),
     })
+}
+
+/// The share of `(plants, animals)` eaten from other agents, absent when nothing was.
+/// Both are scaled by the larger first, so no two finite totals overflow their sum.
+pub(crate) fn meat_share((plants, animals): (f64, f64)) -> Option<f64> {
+    let larger = plants.max(animals);
+    (larger > 0.0).then(|| {
+        let animals = animals / larger;
+        animals / (plants / larger + animals)
+    })
+}
+
+/// Each classified species' living members' lifetime intake, from plants and from
+/// other agents.
+fn species_diets(world: &World) -> Result<BTreeMap<u32, (f64, f64)>> {
+    let agents = world.agents();
+    let mut diets = BTreeMap::new();
+    for id in world.pool().iter_live() {
+        let i = id.index();
+        let diet: &mut (f64, f64) = diets.entry(agents.species_id[i]).or_default();
+        diet.0 += agents.eaten_plants[i];
+        diet.1 += agents.eaten_animals[i];
+    }
+    for &(plants, animals) in diets.values() {
+        finite(plants, "a species' plant intake")?;
+        finite(animals, "a species' meat intake")?;
+    }
+    Ok(diets)
+}
+
+fn predation_metrics(world: &World) -> Result<PredationMetrics> {
+    let counts = world.bite_counts();
+    let agents = world.agents();
+    let mut metrics = PredationMetrics {
+        swings: counts.swings,
+        hits: counts.hits,
+        kills: counts.kills,
+        corpses: world.corpses().count() as u32,
+        corpse_energy: finite(world.corpses().total_energy(), "corpse energy")?,
+        ..PredationMetrics::default()
+    };
+    for id in world.pool().iter_live() {
+        let i = id.index();
+        let plants = agents.eaten_plants[i];
+        let animals = agents.eaten_animals[i];
+        metrics.eaten_plants += plants;
+        metrics.eaten_animals += animals;
+        let held = f64::from(agents.energy[i]) + agents.energy_reserve[i];
+        // Most of its food from other agents: what spec §7.9 calls a carnivore.
+        if plants + animals == 0.0 {
+            metrics.unfed_biomass += held;
+        } else if animals > plants {
+            metrics.carnivore_biomass += held;
+        } else {
+            metrics.herbivore_biomass += held;
+        }
+    }
+    // Finite totals can still overflow their sum, and the reader refuses what JSON
+    // would write for it. Biomass cannot: it is part of the total energy already checked.
+    finite(metrics.eaten_plants, "plant intake")?;
+    finite(metrics.eaten_animals, "meat intake")?;
+    Ok(metrics)
 }
 
 fn body_metrics(world: &World) -> BodyMetrics {
@@ -478,6 +577,57 @@ mod tests {
     use super::*;
 
     use super::complexity_case;
+
+    #[test]
+    fn meat_shares_hold_at_the_extremes_of_the_range() {
+        assert_eq!(meat_share((0.0, 0.0)), None);
+        assert_eq!(meat_share((1.0, 3.0)), Some(0.75));
+        assert_eq!(
+            meat_share((f64::MAX, f64::MAX)),
+            Some(0.5),
+            "the sum overflowed"
+        );
+        assert_eq!(meat_share((0.0, f64::MAX)), Some(1.0));
+        let least = f64::from_bits(1);
+        assert_eq!(meat_share((least, least)), Some(0.5), "halving underflowed");
+    }
+
+    /// Two founders that have each eaten `amount` over their lives, of meat or of
+    /// plants, each its own species or both one.
+    fn gluttons(amount: f64, meat: bool, one_species: bool) -> World {
+        let mut params = SimParams::default();
+        params.species.threshold = if one_species { 1e6 } else { 1e-6 };
+        let mut world = World::new(5, params).unwrap();
+        assert_eq!(world.seed_founders(2), 2);
+        let live: Vec<usize> = world.pool().iter_live().map(|id| id.index()).collect();
+        let agents = world.agents_mut();
+        for i in live {
+            if meat {
+                agents.eaten_animals[i] = amount;
+            } else {
+                agents.eaten_plants[i] = amount;
+            }
+        }
+        world
+    }
+
+    #[test]
+    fn totals_that_overflow_their_sums_are_refused_rather_than_written() {
+        let refusal = |world: &World| sample_world(world).err().map(|error| error.to_string());
+        for (meat, food) in [(false, "plant intake"), (true, "meat intake")] {
+            assert_eq!(refusal(&gluttons(f64::MAX / 4.0, meat, true)), None);
+            // Separate species: only the world's total overflows.
+            let spread =
+                refusal(&gluttons(f64::MAX * 0.6, meat, false)).expect("an infinite total");
+            assert!(
+                spread.ends_with(food) && !spread.contains("species"),
+                "{spread}"
+            );
+            // One species: its own total overflows first.
+            let shared = refusal(&gluttons(f64::MAX * 0.6, meat, true)).expect("an infinite total");
+            assert!(shared.ends_with(&format!("a species' {food}")), "{shared}");
+        }
+    }
 
     #[test]
     fn plant_clustering_reads_one_for_scatter_and_less_for_patches() {
@@ -842,11 +992,13 @@ mod tests {
             vec![
                 SpeciesPopulation {
                     species_id: SpeciesId::new(second_species),
-                    population: 1
+                    population: 1,
+                    meat_share: None,
                 },
                 SpeciesPopulation {
                     species_id: SpeciesId::new(third_species),
-                    population: 1
+                    population: 1,
+                    meat_share: None,
                 },
             ]
         );

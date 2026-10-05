@@ -8,12 +8,23 @@
 //! dying. A victim at health 0 joins the starved in step 10.
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 use crate::energy::{self, Amount};
 use crate::ids::AgentId;
 use crate::math;
 use crate::params::CombatParams;
 use crate::spatial::SpatialHash;
+
+/// Swings, hits, and kills since the world began: what the shells report about
+/// predation (spec §7.9). Counts, not behaviour; nothing in the tick reads them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BiteCounts {
+    pub swings: u64,
+    pub hits: u64,
+    /// Agents that died at health 0, whoever landed the last hit.
+    pub kills: u64,
+}
 
 /// One swing fixed by the first pass: who swung, whom it hits (`AgentId::NULL` for a
 /// miss), and, once it lands, the damage it deals.
@@ -131,9 +142,11 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
     let direction = Vec3::new(math::cos(aim.heading), math::sin(aim.heading), 0.0);
     // A full circle takes every direction, whatever rounding does behind the biter.
     let full_circle = targets.arc >= core::f32::consts::PI;
-    // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
-    // still finds every target in reach, whatever a retune did to the size ranges.
-    let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size);
+    // The hash filters by f32 squares against an f32 radius, both rounded, so it is only
+    // a pre-filter: doubled, rounding there can never drop a target the f64 test below
+    // would take, at any scale. Nearest images on the plane lie up to w/√2 apart, so a
+    // search capped at the world still finds every target in reach.
+    let search = ((aim.reach + aim.radius + targets.largest) * 2.0).min(targets.world_size);
     let mut nearest: Option<(f64, u32)> = None;
     targets.hash.for_each_within(
         targets.positions,
@@ -211,10 +224,16 @@ pub(crate) struct Hit<'a> {
     pub gape: f32,
 }
 
-/// Takes one hit's mouthful and returns what it dissipated (spec §4.2). It asks
-/// `mouthful · g²` and takes what the victim holds, of which the biter keeps
-/// `assimilation`; the rest leaves the world.
-pub(crate) fn take_mouthful(hit: Hit<'_>, combat: &CombatParams) -> Amount {
+/// What a landed hit's mouthful moved: the biter's share, and the rest, which left
+/// the world.
+pub(crate) struct Mouthful {
+    pub kept: f64,
+    pub dissipated: Amount,
+}
+
+/// Takes one hit's mouthful (spec §4.2). It asks `mouthful · g²` and takes what the
+/// victim holds, of which the biter keeps `assimilation`; the rest leaves the world.
+pub(crate) fn take_mouthful(hit: Hit<'_>, combat: &CombatParams) -> Mouthful {
     let ask = (combat.mouthful * hit.gape * hit.gape) as f64;
     let taken = ask.min(energy::total(*hit.victim_energy, *hit.victim_reserve));
     let kept = energy::transfer(
@@ -224,7 +243,8 @@ pub(crate) fn take_mouthful(hit: Hit<'_>, combat: &CombatParams) -> Amount {
         hit.biter_reserve,
         taken * combat.assimilation as f64,
     );
-    energy::take_amount(hit.victim_energy, hit.victim_reserve, taken - kept)
+    let dissipated = energy::take_amount(hit.victim_energy, hit.victim_reserve, taken - kept);
+    Mouthful { kept, dissipated }
 }
 
 /// Step 9's recovery for one living agent: health regenerates by `health_regen` per
@@ -411,6 +431,34 @@ mod tests {
     }
 
     #[test]
+    fn the_search_never_drops_a_target_the_reach_test_would_take() {
+        // Reach 4.4 past bodies of 3 and 6: this victim lies inside the f64 limit, but
+        // its f32 square exceeded the rounded search radius's, so the hash never
+        // offered it.
+        let positions = [
+            Vec3::new(40.0, 40.0, 0.0),
+            Vec3::new(53.399_998, 40.0074, 0.0),
+        ];
+        let mut hash = SpatialHash::new(100.0, 10.0, 2);
+        hash.rebuild(&positions, &[1; 2], &mut [0; 2]);
+        let aim = Aim {
+            position: positions[0],
+            heading: 0.0,
+            reach: 4.4,
+            radius: 3.0,
+        };
+        let targets = Targets {
+            positions: &positions,
+            sizes: &[3.0, 6.0],
+            hash: &hash,
+            largest: 6.0,
+            world_size: 100.0,
+            arc: core::f32::consts::FRAC_PI_4,
+        };
+        assert_eq!(target(0, &aim, &targets), Some(1));
+    }
+
+    #[test]
     fn a_bite_finds_a_long_range_target_in_the_largest_world_validation_admits() {
         // Every squared distance at this scale stays finite, so reach and arc compare
         // against real numbers; past it, validation refuses the world.
@@ -532,7 +580,7 @@ mod tests {
         assert_eq!(damage(2.0, 0.25, &c), 1.0, "clamped to full health");
         let (mut biter, mut biter_reserve) = (10.0f32, 0.0f64);
         let (mut victim, mut victim_reserve) = (100.0f32, 0.0f64);
-        let dissipated = take_mouthful(
+        let mouthful = take_mouthful(
             Hit {
                 biter_energy: &mut biter,
                 biter_reserve: &mut biter_reserve,
@@ -545,12 +593,15 @@ mod tests {
         // A mouthful of 20 · 2², of which 0.75 is kept.
         assert_eq!((victim, victim_reserve), (20.0, 0.0));
         assert_eq!((biter, biter_reserve), (70.0, 0.0));
-        assert_eq!(dissipated.approximate(), 20.0);
+        assert_eq!(
+            (mouthful.kept, mouthful.dissipated.approximate()),
+            (60.0, 20.0)
+        );
 
         // A victim holding less than the ask gives what it has.
         let mut biter = 0.0f32;
         let mut victim = 30.0f32;
-        let dissipated = take_mouthful(
+        let mouthful = take_mouthful(
             Hit {
                 biter_energy: &mut biter,
                 biter_reserve: &mut 0.0,
@@ -561,7 +612,10 @@ mod tests {
             &c,
         );
         assert_eq!((victim, biter), (0.0, 22.5));
-        assert_eq!(dissipated.approximate(), 7.5);
+        assert_eq!(
+            (mouthful.kept, mouthful.dissipated.approximate()),
+            (22.5, 7.5)
+        );
     }
 
     #[test]

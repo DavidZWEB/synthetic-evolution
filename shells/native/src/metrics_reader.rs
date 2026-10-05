@@ -114,6 +114,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                 })?;
                 validate_history(samples.last(), &sample)?;
+                validate_predation(run, samples.last(), &sample)?;
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
                     validate_complexity(metrics)?;
@@ -427,6 +428,69 @@ fn validate_history(previous: Option<&RunSample>, sample: &RunSample) -> Result<
     Ok(())
 }
 
+/// Diets are recorded for both cohorts at every sample or at none. Amounts are finite
+/// and non-negative, every kill followed a hit and every hit a swing, the corpses fit
+/// their pool, and the counts only grow, so a corrupt file cannot pass for predation.
+fn validate_predation(
+    header: &RunHeader,
+    previous: Option<&RunSample>,
+    sample: &RunSample,
+) -> Result<()> {
+    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
+    let pair = [sample.evolving.predation, sample.random_control.predation];
+    let recorded = pair[0].is_some();
+    if pair[1].is_some() != recorded
+        || previous.is_some_and(|previous| previous.evolving.predation.is_some() != recorded)
+    {
+        return Err(invalid(
+            "predation must be recorded for both cohorts at every sample or at none",
+        )
+        .into());
+    }
+    let before = previous.map(|previous| {
+        [
+            previous.evolving.predation,
+            previous.random_control.predation,
+        ]
+    });
+    for (cohort, predation) in pair.iter().enumerate() {
+        let Some(predation) = predation else {
+            continue;
+        };
+        let amounts = [
+            predation.corpse_energy,
+            predation.eaten_plants,
+            predation.eaten_animals,
+            predation.carnivore_biomass,
+            predation.herbivore_biomass,
+            predation.unfed_biomass,
+        ];
+        if amounts
+            .iter()
+            .any(|amount| !(amount.is_finite() && *amount >= 0.0))
+        {
+            return Err(invalid("predation amounts must be finite and non-negative").into());
+        }
+        if predation.kills > predation.hits
+            || predation.hits > predation.swings
+            || predation.corpses > header.params.corpses.max_corpses
+        {
+            return Err(invalid(
+                "predation requires kills <= hits <= swings, and corpses within max_corpses",
+            )
+            .into());
+        }
+        if let Some(before) = before.and_then(|before| before[cohort])
+            && (predation.swings < before.swings
+                || predation.hits < before.hits
+                || predation.kills < before.kills)
+        {
+            return Err(invalid("cumulative bite counts must never decrease").into());
+        }
+    }
+    Ok(())
+}
+
 fn validate_species(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
     let invalid = |message| io::Error::new(io::ErrorKind::InvalidData, message);
     let species = metrics
@@ -451,6 +515,12 @@ fn validate_species(header: &RunHeader, metrics: &WorldMetrics) -> Result<()> {
                 "species populations require ascending unique non-NULL IDs and positive counts",
             )
             .into());
+        }
+        if row
+            .meat_share
+            .is_some_and(|share| !(0.0..=1.0).contains(&share))
+        {
+            return Err(invalid("a species' meat share must lie between 0 and 1").into());
         }
         previous = Some(row.species_id);
         population += u64::from(row.population);
@@ -659,6 +729,56 @@ mod tests {
         }
     }
 
+    fn predation_records(predation: [serde_json::Value; 2]) -> Vec<serde_json::Value> {
+        let mut records = history_records([serde_json::Value::Null, serde_json::Value::Null]);
+        for (record, value) in records[1..].iter_mut().zip(&predation) {
+            for cohort in ["evolving", "random_control"] {
+                record["data"][cohort]["predation"] = value.clone();
+            }
+        }
+        records
+    }
+
+    #[test]
+    fn predation_is_paired_finite_ordered_bounded_and_cumulative() {
+        let diet = |swings: u64, hits: u64, kills: u64| {
+            serde_json::json!({
+                "swings": swings, "hits": hits, "kills": kills,
+                "corpses": 1, "corpse_energy": 4.0,
+                "eaten_plants": 0.0, "eaten_animals": 0.0,
+                "carnivore_biomass": 0.0, "herbivore_biomass": 0.0, "unfed_biomass": 0.0
+            })
+        };
+        let (first, later) = (diet(3, 2, 1), diet(5, 3, 1));
+        parse_values(&predation_records([first.clone(), later.clone()])).expect("growing counts");
+        parse_values(&predation_records([
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        ]))
+        .expect("a run from before the bite");
+        let mut negative = later.clone();
+        negative["herbivore_biomass"] = serde_json::json!(-1.0);
+        let mut crowded = later.clone();
+        crowded["corpses"] = (SimParams::default().corpses.max_corpses + 1).into();
+        for predation in [
+            [later.clone(), first.clone()],
+            [first.clone(), diet(5, 3, 4)],
+            [first.clone(), diet(3, 4, 1)],
+            [first.clone(), negative],
+            [first.clone(), crowded],
+            [first.clone(), serde_json::Value::Null],
+            [serde_json::Value::Null, first.clone()],
+        ] {
+            assert!(
+                parse_values(&predation_records(predation.clone())).is_err(),
+                "accepted {predation:?}"
+            );
+        }
+        let mut unpaired = predation_records([first.clone(), later]);
+        unpaired[2]["data"]["random_control"]["predation"] = serde_json::Value::Null;
+        assert!(parse_values(&unpaired).is_err(), "one cohort without diets");
+    }
+
     #[test]
     fn reads_the_structural_null_control_and_refuses_the_retired_one() {
         let mut records = final_records();
@@ -755,8 +875,8 @@ mod tests {
             valid[1]["data"][cohort]["complexity"] = living_complexity();
             valid[1]["data"][cohort]["species"] = serde_json::json!({
                 "populations": [
-                    {"species_id": 5, "population": 1},
-                    {"species_id": 19, "population": 2}
+                    {"species_id": 5, "population": 1, "meat_share": 1.0},
+                    {"species_id": 19, "population": 2, "meat_share": 0.0}
                 ],
                 "unclassified_population": 1,
                 "events": null
@@ -771,6 +891,8 @@ mod tests {
                 ("/populations/1/species_id", serde_json::json!(u32::MAX)),
                 ("/unclassified_population", serde_json::json!(0)),
                 ("/unclassified_population", serde_json::json!(u32::MAX)),
+                ("/populations/0/meat_share", serde_json::json!(2.0)),
+                ("/populations/1/meat_share", serde_json::json!(-0.25)),
             ] {
                 let mut records = valid.clone();
                 *records[1]["data"][cohort]["species"]

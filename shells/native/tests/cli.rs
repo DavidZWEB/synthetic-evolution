@@ -78,6 +78,48 @@ fn diagnose_file(metrics: &std::path::Path) -> serde_json::Value {
 }
 
 #[test]
+fn biting_founders_record_swings_hits_kills_and_meat() {
+    // Founders packed close with their bites awake from the start, and the energy to
+    // swing, so the sampled diets, counts, and corpses are a fight's (spec §7.9).
+    let mut params: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/sustaining.json")).unwrap();
+    params["world"]["founder_spread"] = serde_json::json!(0.05);
+    params["reproduction"]["start_energy"] = serde_json::json!(40.0);
+    params["reproduction"]["threshold"] = serde_json::json!(60.0);
+    params["founder"] = serde_json::json!({"bite": true});
+    params["combat"] = serde_json::json!({"dormant_bias": 3.0, "reach": 8.0});
+    let (lines, report) = run_and_diagnose(&params.to_string(), 7, 60, 30, 16);
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    for cohort in ["evolving", "random_control"] {
+        let predation = &last["data"][cohort]["predation"];
+        assert!(
+            predation["swings"].as_u64().unwrap() > 0,
+            "{cohort}: {predation}"
+        );
+        assert!(
+            predation["hits"].as_u64().unwrap() > 0,
+            "{cohort}: {predation}"
+        );
+        assert!(
+            predation["kills"].as_u64().unwrap() > 0,
+            "{cohort}: {predation}"
+        );
+        assert!(
+            predation["eaten_animals"].as_f64().unwrap() > 0.0,
+            "{cohort}"
+        );
+    }
+    assert!(
+        !report["unavailable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason.as_str().unwrap().contains("predator/prey")),
+        "{report}"
+    );
+}
+
+#[test]
 fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     let (lines, report) = run_and_diagnose(include_str!("fixtures/sustaining.json"), 7, 10, 5, 1);
 
@@ -177,6 +219,11 @@ fn run_writes_self_describing_jsonl_that_diagnose_reads() {
                 assert_eq!(bodies[field]["min"], value, "{field}");
                 assert_eq!(bodies[field]["max"], value, "{field}");
             }
+            // The bite is off by default, so nobody swings and nobody eats meat.
+            let predation = &sample["data"][cohort]["predation"];
+            assert_eq!(predation["swings"], 0);
+            assert_eq!(predation["eaten_animals"], 0.0);
+            assert_eq!(predation["carnivore_biomass"], 0.0);
         }
     }
     for cohort in ["evolving", "random_control"] {

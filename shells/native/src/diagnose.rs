@@ -13,7 +13,9 @@ use sim_core::mutate::{OperatorCounts, StructuralMutationCounts, StructuralOpera
 use crate::Result;
 use crate::cli::DiagnoseArgs;
 use crate::diagnose_output::print_human;
-use crate::metrics::{ComplexityMetrics, HistoryAvailability, RunHeader, RunSample, WorldMetrics};
+use crate::metrics::{
+    ComplexityMetrics, HistoryAvailability, PredationMetrics, RunHeader, RunSample, WorldMetrics,
+};
 use crate::metrics_reader::read_metrics;
 
 const IDLE_SPEED_FRACTION: f64 = 0.001;
@@ -170,10 +172,8 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
     let (evolving, evolving_idle_unavailable) = diagnose_cohort(header, samples, Cohort::Evolving);
     let (random_control, control_idle_unavailable) =
         diagnose_cohort(header, samples, Cohort::control(header));
-    let mut unavailable = vec![
-        "predator/prey diagnostics require Phase 3 trophic roles".to_owned(),
-        "signal-correlation diagnostics require Phase 4 signaling".to_owned(),
-    ];
+    let mut unavailable =
+        vec!["signal-correlation diagnostics require Phase 4 signaling".to_owned()];
     if let Some(reason) = evolving_idle_unavailable {
         unavailable.push(reason);
     }
@@ -202,6 +202,16 @@ pub fn diagnose(header: &RunHeader, samples: &[RunSample]) -> DiagnosisReport {
         {
             unavailable.push(format!(
                 "complete species-event counts for {} are unavailable: unobserved sampling does not establish zero transitions",
+                cohort.name()
+            ));
+        }
+        if samples.is_empty()
+            || samples
+                .iter()
+                .any(|sample| select(sample, cohort).predation.is_none())
+        {
+            unavailable.push(format!(
+                "predator/prey diagnostics for {} are unavailable: sampling did not record diets",
                 cohort.name()
             ));
         }
@@ -337,6 +347,7 @@ fn diagnose_cohort(
     }
     diagnose_structural_mutations(&metrics, &mut findings);
     diagnose_species(&metrics, &mut findings);
+    diagnose_predation(&metrics, &mut findings);
     if let Some((tick, history)) = metrics
         .last()
         .and_then(|(tick, sample)| Some((tick, sample.history?)))
@@ -593,6 +604,50 @@ fn diagnose_cohort(
     }
 
     (findings, None)
+}
+
+/// Spec §7.9's two trophic failures, over the samples that recorded diets.
+fn diagnose_predation(metrics: &[(u64, &WorldMetrics)], findings: &mut Vec<Finding>) {
+    let tiers: Vec<(u64, PredationMetrics, u32)> = metrics
+        .iter()
+        .filter_map(|(tick, sample)| Some((*tick, sample.predation?, sample.population)))
+        .collect();
+    // Carnivores appeared, and none were left while others lived.
+    if let Some(&(appeared, ..)) = tiers.iter().find(|(_, p, _)| p.carnivore_biomass > 0.0)
+        && let Some(&(tick, last, population)) = tiers.last()
+        && last.carnivore_biomass == 0.0
+        && population > 0
+    {
+        findings.push(Finding {
+            code: "carnivore_collapse",
+            signal: format!(
+                "carnivore biomass, present from tick {appeared}, was 0 at tick {tick} while {population} agents lived"
+            ),
+            likely_causes: vec!["attack_cost too high relative to the mouthful and prey energy"],
+        });
+    }
+    // Plant-eaters that had lived were gone while carnivores lived, stayed gone, and then
+    // so was everyone. Prey that recovered, or was never seen, is not this collapse.
+    let extinct = tiers.iter().position(|(_, _, population)| *population == 0);
+    let fed = extinct.and_then(|end| {
+        tiers[..end]
+            .iter()
+            .rposition(|(_, p, _)| p.herbivore_biomass > 0.0)
+    });
+    if let (Some(end), Some(fed)) = (extinct, fed)
+        && let Some(&(gone, ..)) = tiers[fed + 1..end]
+            .iter()
+            .find(|(_, p, population)| *population > 0 && p.carnivore_biomass > 0.0)
+    {
+        let tick = tiers[end].0;
+        findings.push(Finding {
+            code: "prey_collapse",
+            signal: format!(
+                "plant-eater biomass was 0 at tick {gone} while carnivores lived, and every agent was gone by tick {tick}"
+            ),
+            likely_causes: vec!["attack_cost too low", "no refugia"],
+        });
+    }
 }
 
 fn diagnose_storage(tick: u64, sample: &WorldMetrics, findings: &mut Vec<Finding>) {
@@ -943,6 +998,7 @@ mod tests {
             history: None,
             plants: None,
             bodies: None,
+            predation: None,
         }
     }
 
@@ -953,6 +1009,77 @@ mod tests {
             random_control: world(population, variants, 1.0),
             final_state_hashes: None,
         }
+    }
+
+    /// A sample whose cohorts hold the given carnivore and plant-eater biomass.
+    fn tiers(tick: u64, population: u32, carnivores: f64, plant_eaters: f64) -> RunSample {
+        let mut sample = sample(tick, population, 1);
+        let predation = Some(PredationMetrics {
+            carnivore_biomass: carnivores,
+            herbivore_biomass: plant_eaters,
+            ..PredationMetrics::default()
+        });
+        sample.evolving.predation = predation;
+        sample.random_control.predation = predation;
+        sample
+    }
+
+    #[test]
+    fn detects_carnivores_dying_out_and_prey_eaten_to_collapse() {
+        let header = header(4_000);
+        let codes = |samples: &[RunSample]| {
+            diagnose(&header, samples)
+                .evolving
+                .iter()
+                .map(|finding| finding.code)
+                .collect::<Vec<_>>()
+        };
+        // Carnivores appear, then die out while the plant-eaters live on.
+        let starved = [
+            tiers(0, 10, 0.0, 100.0),
+            tiers(1_000, 10, 50.0, 100.0),
+            tiers(2_000, 10, 0.0, 120.0),
+        ];
+        assert!(codes(&starved).contains(&"carnivore_collapse"));
+        assert!(!codes(&starved).contains(&"prey_collapse"));
+        // Carnivores eat every plant-eater, then everything dies.
+        let overeaten = [
+            tiers(0, 10, 0.0, 100.0),
+            tiers(1_000, 10, 80.0, 0.0),
+            tiers(2_000, 0, 0.0, 0.0),
+        ];
+        assert!(codes(&overeaten).contains(&"prey_collapse"));
+        // Plant-eaters that recover before the end are not that collapse, and nor is a
+        // world whose prey was never seen.
+        let recovered = [
+            tiers(0, 10, 0.0, 100.0),
+            tiers(1_000, 10, 80.0, 0.0),
+            tiers(2_000, 10, 40.0, 50.0),
+            tiers(3_000, 0, 0.0, 0.0),
+        ];
+        assert!(!codes(&recovered).contains(&"prey_collapse"));
+        let unseen = [tiers(0, 10, 80.0, 0.0), tiers(1_000, 0, 0.0, 0.0)];
+        assert!(!codes(&unseen).contains(&"prey_collapse"));
+        assert!(
+            !codes(&overeaten).contains(&"carnivore_collapse"),
+            "a total collapse is not carnivores dying beside living prey"
+        );
+        // A world that never grew a carnivore claims neither.
+        let grazing = [tiers(0, 10, 0.0, 100.0), tiers(2_000, 10, 0.0, 90.0)];
+        assert!(
+            codes(&grazing)
+                .iter()
+                .all(|code| !code.contains("collapse"))
+        );
+        // Without recorded diets neither is claimed, and the gap is named.
+        let unrecorded = [sample(0, 10, 1), sample(1_000, 10, 1)];
+        let report = diagnose(&header, &unrecorded);
+        assert!(
+            report
+                .unavailable
+                .iter()
+                .any(|reason| reason.starts_with("predator/prey diagnostics for evolving"))
+        );
     }
 
     #[test]
@@ -966,6 +1093,7 @@ mod tests {
             populations: vec![SpeciesPopulation {
                 species_id: SpeciesId::new(7),
                 population: 2,
+                meat_share: None,
             }],
             unclassified_population: 1,
             events: Some(SpeciesEventCounts::default()),
@@ -1099,6 +1227,7 @@ mod tests {
                     populations: vec![SpeciesPopulation {
                         species_id: SpeciesId::new(2),
                         population: 3,
+                        meat_share: None,
                     }],
                     unclassified_population: 0,
                     events: Some(SpeciesEventCounts {

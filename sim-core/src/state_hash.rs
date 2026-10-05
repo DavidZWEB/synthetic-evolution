@@ -216,6 +216,10 @@ impl World {
         h.f64(ledger.input());
         h.f64(ledger.dissipated());
         h.f64(ledger.expected_stock());
+        let bites = self.bite_counts();
+        h.u64(bites.swings);
+        h.u64(bites.hits);
+        h.u64(bites.kills);
 
         let agents = self.agents();
         for id in self.pool().iter_live() {
@@ -240,6 +244,8 @@ impl World {
             h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.cooldown[i]);
+            h.f64(agents.eaten_plants[i]);
+            h.f64(agents.eaten_animals[i]);
             h.u32(agents.age[i]);
             h.u32(if include_metadata {
                 agents.species_id[i]

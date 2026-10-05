@@ -28,15 +28,15 @@ pub const CONTINUE_TICKS: u32 = 350;
 
 /// FNV-1a of the checkpoint bytes, per mode: both targets must encode identically.
 pub const CHECKPOINT_FINGERPRINT: [u64; 3] = [
-    0xaf5b_b4a2_674e_151b,
-    0x6d2c_b318_9119_33d0,
-    0xb5e2_0c2a_93c6_f75b,
+    0x80db_c627_c3e3_78de,
+    0xf1d7_0f5e_4421_2ff2,
+    0xa43a_9b3c_2043_901f,
 ];
 /// `state_hash` after restoring and continuing `CONTINUE_TICKS`, per mode.
 pub const CONTINUED_HASH: [u64; 3] = [
-    0x44d1_4b19_990e_60e5,
-    0x30d5_ebf0_ec8e_b8d5,
-    0x04ab_8b12_6ced_6810,
+    0x3449_05a6_091c_0b25,
+    0xe601_c79b_5ece_2bb1,
+    0x5586_273a_6a9a_40b0,
 ];
 
 pub fn params() -> SimParams {

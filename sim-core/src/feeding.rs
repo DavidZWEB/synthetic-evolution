@@ -20,6 +20,14 @@ use crate::corpses::Corpses;
 use crate::plants::Plants;
 use crate::spatial::SpatialHash;
 
+/// What one ingest took, and whether it was carrion, which a diet counts as eaten
+/// from other agents (spec §7.9).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Meal {
+    pub amount: f64,
+    pub carrion: bool,
+}
+
 /// The food one agent can reach this tick. Each reach is the agent's body plus that
 /// food's radius plus the feeding reach, so comparing distance minus reach compares
 /// distance to the food's edge.
@@ -77,9 +85,9 @@ pub fn ingest(
     agent_energy: &mut f32,
     agent_energy_reserve: &mut f64,
     larder: &mut Larder<'_>,
-) -> f64 {
+) -> Meal {
     if wanted <= 0.0 {
-        return 0.0;
+        return Meal::default();
     }
     // Found first, taken second: the search borrows the food to read and the take
     // borrows it to write, and they cannot overlap.
@@ -101,22 +109,24 @@ pub fn ingest(
             })
         })
         .map(|(index, d2)| (index, d2.sqrt() - larder.corpse_reach));
-    match (plant, corpse) {
-        (Some((index, plant_edge)), Some((_, corpse_edge))) if plant_edge <= corpse_edge => larder
+    let (index, carrion) = match (plant, corpse) {
+        (Some((index, plant_edge)), Some((_, corpse_edge))) if plant_edge <= corpse_edge => {
+            (index, false)
+        }
+        (_, Some((index, _))) => (index, true),
+        (Some((index, _)), None) => (index, false),
+        (None, None) => return Meal::default(),
+    };
+    let amount = if carrion {
+        larder
+            .corpses
+            .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
+    } else {
+        larder
             .plants
-            .transfer_to(index, agent_energy, agent_energy_reserve, wanted),
-        (_, Some((index, _))) => {
-            larder
-                .corpses
-                .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
-        }
-        (Some((index, _)), None) => {
-            larder
-                .plants
-                .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
-        }
-        (None, None) => 0.0,
-    }
+            .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
+    };
+    Meal { amount, carrion }
 }
 
 #[cfg(test)]
@@ -281,7 +291,7 @@ mod tests {
         corpses
     }
 
-    fn eat(at: Vec3, plants: &mut Plants, corpses: &mut Corpses) -> f64 {
+    fn eat(at: Vec3, plants: &mut Plants, corpses: &mut Corpses) -> Meal {
         let (mut energy, mut reserve) = (0.0, 0.0);
         ingest(
             at,
@@ -302,8 +312,9 @@ mod tests {
         let mut plants = plants_at(&[Vec3::new(504.0, 500.0, 0.0)], 60.0);
         let mut corpses = corpse_at(Vec3::new(501.0, 500.0, 0.0), 50.0);
         let plant_before = plants.total_energy();
-        let taken = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
-        assert!(taken > 0.0);
+        let meal = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
+        let taken = meal.amount;
+        assert!(taken > 0.0 && meal.carrion, "{meal:?}");
         assert_eq!(plants.total_energy(), plant_before, "ate the farther plant");
         assert!((corpses.total_energy() - (50.0 - taken)).abs() < 1e-4);
     }
@@ -313,7 +324,8 @@ mod tests {
         let at = Vec3::new(500.0, 500.0, 0.0);
         let mut plants = plants_at(&[Vec3::new(503.0, 500.0, 0.0)], 60.0);
         let mut corpses = corpse_at(Vec3::new(497.0, 500.0, 0.0), 50.0);
-        eat(at, &mut plants, &mut corpses);
+        let meal = eat(at, &mut plants, &mut corpses);
+        assert!(meal.amount > 0.0 && !meal.carrion, "{meal:?}");
         assert_eq!(
             corpses.total_energy(),
             50.0,
@@ -326,8 +338,9 @@ mod tests {
         let mut plants = plants_at(&[Vec3::new(900.0, 900.0, 0.0)], 60.0);
         let mut corpses = corpse_at(Vec3::new(500.0, 501.0, 0.0), 50.0);
         let before = corpses.total_energy() + plants.total_energy();
-        let taken = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
-        assert!(taken > 0.0, "a corpse in reach fed nothing");
+        let meal = eat(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut corpses);
+        let taken = meal.amount;
+        assert!(taken > 0.0 && meal.carrion, "a corpse in reach fed nothing");
         assert!((corpses.total_energy() + plants.total_energy() + taken - before).abs() < 1e-6);
     }
 }

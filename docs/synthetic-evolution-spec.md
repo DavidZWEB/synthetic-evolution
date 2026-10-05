@@ -1319,6 +1319,8 @@ One JSON line per sample interval: population by species, trophic biomass by tie
 
 **DECIDED (M8): report functional wiring alongside size.** Gene counts include structure nothing reads, so each cohort also reports, per living agent, the hidden neurons on an enabled path from an input (a sensor target or an oscillator) to an output (an effector source), the sensors with a target on such a path, and the effectors driven from any input. These describe wiring, not usefulness; they exist because M8 found genomes growing while perception was shed. Files written before them report wiring as unknown.
 
+**DECIDED (Phase 3): diet telemetry.** Each agent keeps lifetime totals of energy eaten from plants and from other agents, the latter counting both a bite's kept share and carrion. A carnivore is an agent, or a species' living members together, that took more than half its intake from other agents; an agent that has eaten nothing is neither, until it eats. Each cohort records swings, hits, and kills since the world began, the corpses on the ground, intake by source, biomass by tier (carnivore, plant-eater, unfed), and each species' meat share. `diagnose` reports the two trophic rows of the table below. `summarize` counts **persistent carnivores**: species alive at the end that ate mostly meat, with plant-eaters alive beside them, at every sample for at least the last half of the run, rounded up. That count is the measurement behind §8's Phase 3 criterion. Files written before the bite report all of this as unknown.
+
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
 
 | Signal | Diagnosis |
@@ -1453,8 +1455,10 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 8 since
-Phase 3's bite added combat and founder params; format 7 had added evolvable bodies'
+manifest records the container and checkpoint formats (checkpoint format 9 since
+Phase 3's diet telemetry added each agent's lifetime intake from plants and from other
+agents and the world's swing, hit, and kill counts; format 8 had added the bite's
+combat and founder params and each agent's cooldown; format 7 had added evolvable bodies'
 trait ranges, trait upkeep, and trait mutation, and format 6 corpses' params, slots,
 energies, and free order; earlier formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the

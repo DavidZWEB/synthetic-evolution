@@ -14,7 +14,7 @@ Design decisions live in the spec: §2.2b combat in the snapshot, §3.3 wired se
 §5.5 constants. This plan tracks status and order. Phase 2's record is in
 [`phase-2-implementation-plan.md`](phase-2-implementation-plan.md).
 
-**Status: M1 and M2 done; M3's bite landed, with its diet and kill telemetry next.** The success criterion is **a carnivorous lineage becomes
+**Status: M1, M2, and M3 done; M4 next.** The success criterion is **a carnivorous lineage becomes
 established without going extinct or eating everything**. It is measured as a species
 whose members take most of their energy from other agents (bites and corpses),
 persisting for at least half a run on several seeds while plant-eaters persist beside
@@ -26,7 +26,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 | M0 Design | Recorded in the spec; revised 2026-10-04 from the research below |
 | M1 Corpses | Done: pool, decomposition, eating, sight, hashing, checkpoints, snapshot, and drawing |
 | M2 Evolvable bodies | Done: muscle and mouth genes, mass, gape, upkeep, the mutation operator at rate 0, and trait telemetry |
-| M3 The bite | In progress: the dormant bite, the two-pass swing, health, and kills landed; diet and kill telemetry next |
+| M3 The bite | Done: the dormant bite, the two-pass swing, health, kills, and diet and kill telemetry |
 | M4 Protecting innovation | Not started |
 | M5 Seeing predation | Not started |
 | M6 Calibration | Not started |
@@ -131,7 +131,7 @@ Each moves hashes without changing dynamics, in its own commit.
 (spec §3.5). History and metrics files written earlier read one-point trait ranges at
 the founders' values, which is exactly a run whose bodies never evolved.
 
-## M3 - The bite
+## M3 - The bite (done)
 
 Spec §4.2 and §2.4.
 
@@ -189,6 +189,16 @@ M6 should weigh that when comparing against it. History and metrics files writte
 before the bite read with founders that cannot bite and every combat number zero,
 since today's defaults are checked against each run's own timestep and body ranges
 and could refuse a run that never swung.
+
+**Landed (telemetry).**
+- Each agent keeps lifetime totals eaten from plants and from other agents, with
+  carrion counted as meat, and the world counts swings, hits, and kills. All are
+  checkpointed and hashed.
+- Native metrics record them per cohort, with biomass by tier and each species' meat
+  share.
+- `summarize` counts persistent carnivores, the Phase 3 criterion's measurement
+  (spec §7.9).
+- `diagnose` reports carnivore collapse and prey collapse.
 
 ## M4 - Protecting innovation
 

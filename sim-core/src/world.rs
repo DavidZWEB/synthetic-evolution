@@ -154,6 +154,8 @@ pub struct World {
     /// This tick's swings, fixed before any hit lands (spec §4.2). Owned and sized for
     /// the same reason.
     pub(crate) swings: Vec<crate::combat::Swing>,
+    /// Swings, hits, and kills since the world began, for the shells to report.
+    pub(crate) bites: crate::combat::BiteCounts,
     /// Requests from outside the simulation, waiting for the tick they are stamped for
     /// (spec §2.2b). Kept in submission order, which is what makes two runs fed the same
     /// commands apply them the same way.
@@ -240,6 +242,7 @@ impl World {
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
             swings: Vec::with_capacity(capacity as usize),
+            bites: crate::combat::BiteCounts::default(),
             // Not sized at capacity: commands arrive at human speed, a handful per
             // second at most, and reserving a slot per agent for them would cost more
             // memory than the queue will ever hold.
@@ -463,6 +466,12 @@ impl World {
     #[inline]
     pub fn ledger(&self) -> &EnergyLedger {
         &self.ledger
+    }
+
+    /// Swings, hits, and kills since the world began (spec §7.9).
+    #[inline]
+    pub fn bite_counts(&self) -> crate::combat::BiteCounts {
+        self.bites
     }
 
     /// How far the world's energy has drifted from what the ledger accounts for. Zero
