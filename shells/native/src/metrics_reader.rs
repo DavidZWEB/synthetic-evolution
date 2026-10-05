@@ -240,12 +240,12 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
 }
 
 /// Fills the params fields a file written before them omits with the values its run
-/// actually had, which today's serde defaults would not. Refuses a run whose founders
-/// bite without every combat parameter recorded, as the history readers do.
+/// actually had, which today's serde defaults would not. Refuses incomplete bite
+/// sections, as the history readers do.
 fn backfill_later_params(
     params: &mut serde_json::Map<String, serde_json::Value>,
 ) -> std::result::Result<(), &'static str> {
-    crate::history_reader::later_params::require_recorded_combat(&serde_json::Value::Object(
+    crate::history_reader::later_params::require_complete_bite_params(&serde_json::Value::Object(
         params.clone(),
     ))?;
     // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
@@ -1058,6 +1058,40 @@ mod tests {
             for (case, unrecord) in unrecorded.into_iter().enumerate() {
                 let mut records = records.clone();
                 unrecord(records[0].pointer_mut(path).unwrap());
+                assert!(parse_values(&records).is_err(), "{path}, case {case}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_recorded_bite_section_must_be_complete_even_without_a_bite() {
+        // A run whose founders never bit may omit both sections, but one it wrote is its
+        // own: an empty founder or combat section is refused, not filled with defaults.
+        let records = final_records();
+        for path in ["/data/params", "/data/retune/params"] {
+            let mut records = records.clone();
+            records[0]["data"]["retune"] = serde_json::json!({
+                "at_tick": 0,
+                "params": serde_json::to_value(SimParams::default()).unwrap(),
+            });
+            let mut omitted = records.clone();
+            omitted[0]
+                .pointer_mut(path)
+                .unwrap()
+                .as_object_mut()
+                .unwrap()
+                .remove("combat");
+            assert!(
+                parse_values(&omitted).is_ok(),
+                "{path}: biteless and combat-free reads"
+            );
+            let partial: [fn(&mut serde_json::Value); 2] = [
+                |params| params["founder"] = serde_json::json!({}),
+                |params| params["combat"] = serde_json::json!({}),
+            ];
+            for (case, break_it) in partial.into_iter().enumerate() {
+                let mut records = records.clone();
+                break_it(records[0].pointer_mut(path).unwrap());
                 assert!(parse_values(&records).is_err(), "{path}, case {case}");
             }
         }

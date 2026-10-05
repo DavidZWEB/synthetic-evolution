@@ -124,6 +124,12 @@ fn an_archive_whose_founders_bite_must_record_their_combat() {
     let mut empty = biting.clone();
     empty["combat"] = json!({});
     assert!(compare_representatives(&genes, &genes, &empty.to_string()).is_err());
+    // Without a bite, a present section must still be complete.
+    empty["founder"]["bite"] = json!(false);
+    assert!(compare_representatives(&genes, &genes, &empty.to_string()).is_err());
+    let mut empty_founder = biting.clone();
+    empty_founder["founder"] = json!({});
+    assert!(compare_representatives(&genes, &genes, &empty_founder.to_string()).is_err());
     biting.as_object_mut().unwrap().remove("combat");
     assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_err());
 }

@@ -637,6 +637,22 @@ mod tests {
         let mut empty = wire.clone();
         empty["data"]["params"]["combat"] = serde_json::json!({});
         assert!(restored(&empty).is_err(), "empty combat read as today's");
+        // Without a bite, a section the archive wrote must still be complete.
+        let mut biteless = wire.clone();
+        biteless["data"]["params"]["founder"]["bite"] = serde_json::json!(false);
+        assert!(restored(&biteless).is_ok());
+        let mut empty_founder = biteless.clone();
+        empty_founder["data"]["params"]["founder"] = serde_json::json!({});
+        assert!(
+            restored(&empty_founder).is_err(),
+            "an empty founder read as today's"
+        );
+        let mut biteless_empty_combat = biteless.clone();
+        biteless_empty_combat["data"]["params"]["combat"] = serde_json::json!({});
+        assert!(
+            restored(&biteless_empty_combat).is_err(),
+            "empty combat without a bite"
+        );
         wire["data"]["params"]
             .as_object_mut()
             .unwrap()

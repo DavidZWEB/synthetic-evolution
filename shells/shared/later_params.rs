@@ -29,18 +29,29 @@ pub const LATER_PARAMS: &[&str] = &[
     "founder",
 ];
 
-/// An archive whose founders bite must record every combat parameter: serde would fill
-/// a missing one from today's defaults, which could describe attack rules the run never
-/// had. `wire` is the params object exactly as written.
-pub fn require_recorded_combat(wire: &serde_json::Value) -> Result<(), &'static str> {
-    if wire
-        .pointer("/founder/bite")
-        .and_then(serde_json::Value::as_bool)
-        != Some(true)
-    {
-        return Ok(());
-    }
-    let recorded = wire.get("combat").and_then(serde_json::Value::as_object);
+/// A present `founder` section must record `bite`, and a present `combat` section every
+/// combat parameter, because serde would fill a missing one from today's defaults,
+/// which could describe a run that never had them. An archive whose founders bite must
+/// record its combat. One written before the bite may omit both sections. `wire` is
+/// the params object exactly as written.
+pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'static str> {
+    let bite = match wire.get("founder") {
+        None => None,
+        Some(founder) => Some(
+            founder
+                .get("bite")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or("a recorded founder section must record bite")?,
+        ),
+    };
+    let Some(combat) = wire.get("combat") else {
+        return if bite == Some(true) {
+            Err("an archive whose founders bite must record its combat parameters")
+        } else {
+            Ok(())
+        };
+    };
+    let recorded = combat.as_object();
     let fields = serde_json::to_value(CombatParams::default()).ok();
     let complete = fields
         .as_ref()
@@ -53,7 +64,7 @@ pub fn require_recorded_combat(wire: &serde_json::Value) -> Result<(), &'static 
     if complete {
         Ok(())
     } else {
-        Err("an archive whose founders bite must record every combat parameter")
+        Err("a recorded combat section must record every combat parameter")
     }
 }
 
@@ -64,9 +75,9 @@ pub fn require_recorded_combat(wire: &serde_json::Value) -> Result<(), &'static 
 /// Body-trait ranges read as one point at the founders' traits instead: bodies did not
 /// evolve before Phase 3, and a zero range would neither describe that nor validate.
 ///
-/// Refuses an archive whose founders bite without every combat parameter recorded.
+/// Refuses incomplete bite sections, as [`require_complete_bite_params`] describes.
 pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &'static str> {
-    require_recorded_combat(wire)?;
+    require_complete_bite_params(wire)?;
     let absent = |path: &str| wire.pointer(path).is_none();
     if absent("/mutation/structural/add_oscillator_rate") {
         params.mutation.structural.add_oscillator_rate = 0.0;
