@@ -544,6 +544,8 @@ function buildRenderer(
         // After the colours, so a kill's vanishing body keeps the colour it was drawn in.
         if (shouldUpload && tick !== null) {
           combat.observe(views, tick, now, colors, currentCorpseRadius);
+        } else {
+          combat.recolor(views, colors);
         }
       }
       // Every frame, not only fresh ones: the animations run in wall-clock time.

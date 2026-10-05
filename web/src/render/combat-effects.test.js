@@ -267,6 +267,21 @@ test('a mass death starts a bounded number of kills, each body matched once', ()
     'slot 0\'s body shrinks into its own corpse only');
 });
 
+test('a recolour without a new frame changes the colour a later kill fades from', () => {
+  const fx = effects(1);
+  const views = frame(1);
+  place(views, 0, 20, 20);
+  fx.observe(views, 10n, 0, new Float32Array([0.9, 0.1, 0.2]), 2);
+  // Paused, the agent is recoloured (a diet sample arrives), then it dies.
+  fx.recolor(views, new Float32Array([0.2, 0.8, 0.3]));
+  views.alive[0] = 0;
+  views.corpsePosition.set([20, 20, 0]);
+  views.corpseEnergy[0] = 40;
+  fx.observe(views, 11n, 100, new Float32Array(3), 2);
+  const [body] = shapes(fx, views, 100);
+  assert.deepEqual(body.color.map((c) => Math.round(c * 10) / 10), [0.2, 0.8, 0.3]);
+});
+
 test('a world that starts over forgets the old one\'s animations', () => {
   const fx = effects(1);
   const views = frame(1);

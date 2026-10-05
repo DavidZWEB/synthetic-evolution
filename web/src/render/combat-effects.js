@@ -222,6 +222,20 @@ export function createCombatEffects({
     },
 
     /**
+     * Records the colours living agents are now drawn in, after a redraw that changed
+     * colours without a new frame, so a kill's vanishing body keeps the colour it was
+     * last drawn in.
+     */
+    recolor(views, colors) {
+      for (let i = 0; i < capacity; i++) {
+        if (views.alive[i] !== 1) continue;
+        lastColor[i * 3] = colors[i * 3];
+        lastColor[i * 3 + 1] = colors[i * 3 + 1];
+        lastColor[i * 3 + 2] = colors[i * 3 + 2];
+      }
+    },
+
+    /**
      * Per-slot animation state at `now`: a world-unit offset (a swing's lunge toward its
      * aim, a hit's shake), a hit's red flash, and the wound health has not yet healed.
      */
