@@ -184,7 +184,10 @@ one's remaining time. Two bites on one agent sum their drives,
 and the stronger aims. An imported bite must aim on the plane and reach no further than
 half the world. The random control redraws the bite's bias with every other neural
 scalar, so once calibration turns the bite on, its children bite at random from birth;
-M6 should weigh that when comparing against it.
+M6 should weigh that when comparing against it. History and metrics files written
+before the bite read with founders that cannot bite and every combat number zero,
+since today's defaults are checked against each run's own timestep and body ranges
+and could refuse a run that never swung.
 
 ## M4 - Protecting innovation
 

@@ -590,6 +590,7 @@ mod tests {
                 assert_eq!(header.params.body.muscle_range, [1.0, 1.0]);
                 assert_eq!(header.params.body.mouth_range, [1.0, 1.0]);
                 assert!(!header.params.founder.bite, "a pre-Phase-3 founder bit");
+                assert_eq!(header.params.combat, later_params::no_combat());
             } else {
                 // A field the archive wrote is its own value, not one to reset.
                 assert_eq!(header.params.metabolism.k_muscle, 0.008);
@@ -597,6 +598,7 @@ mod tests {
                 assert_eq!(header.params.mutation.body_trait_sigma, 0.05);
                 assert_eq!(header.params.body.size_range, [1.5, 6.0]);
                 assert_eq!(header.params.body.muscle_range, [0.25, 4.0]);
+                assert_eq!(header.params.combat.mouthful, 20.0);
             }
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);
@@ -604,6 +606,35 @@ mod tests {
                 assert_eq!(header.params.plants.local_dispersal, 0.0);
                 assert_eq!(header.params.plants.dispersal_radius, 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn an_archive_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+        // Today's combat defaults are not inert against an older run's params: half a
+        // second is 5 billion ticks of 1e-10 s, and a mouthful of 20 overflows a mouth
+        // range reaching 5e18 that grazing at rate 1 does not. A run without a bite
+        // reads with none.
+        let fixture = include_bytes!("../tests/fixtures/history-v2-root.ndjson");
+        let header = fixture
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let edits: [fn(&mut serde_json::Value); 2] = [
+            |params| params["world"]["dt"] = serde_json::json!(1e-10),
+            |params| {
+                params["feeding"]["rate"] = serde_json::json!(1.0);
+                params["body"]["mouth_range"] = serde_json::json!([1.0, 5e18]);
+            },
+        ];
+        for edit in edits {
+            let mut wire: serde_json::Value = serde_json::from_slice(header).unwrap();
+            edit(&mut wire["data"]["params"]);
+            let mut archive = serde_json::to_vec(&wire).unwrap();
+            archive.push(b'\n');
+            archive.extend_from_slice(&fixture[header.len()..]);
+            let (header, _) = parse_archive(&archive[..]).unwrap();
+            assert_eq!(header.params.combat, later_params::no_combat());
         }
     }
 

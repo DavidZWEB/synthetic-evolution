@@ -323,8 +323,8 @@ fn backfill_later_params(
                 .or_insert_with(|| serde_json::json!([1.0, 1.0]));
         }
     }
-    // Nor could their founders bite, whatever a later default says. Without a bite no
-    // agent swings, so an absent `combat` is inert and keeps today's values.
+    // Nor could their founders bite, whatever a later default says, so they had no
+    // combat; a recorded section is complete, as checked above.
     if let Some(founder) = params
         .entry("founder")
         .or_insert_with(|| serde_json::json!({}))
@@ -334,6 +334,10 @@ fn backfill_later_params(
             .entry("bite")
             .or_insert_with(|| serde_json::json!(false));
     }
+    params.entry("combat").or_insert_with(|| {
+        serde_json::to_value(crate::history_reader::later_params::no_combat())
+            .expect("combat params serialize")
+    });
     Ok(())
 }
 
@@ -1026,6 +1030,36 @@ mod tests {
         let mut written = serde_json::json!({"founder": {"bite": true}, "combat": combat});
         backfill_later_params(written.as_object_mut().unwrap()).unwrap();
         assert_eq!(written["founder"]["bite"], true);
+    }
+
+    #[test]
+    fn a_run_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+        // Today's combat defaults are not inert against an older run's params, in its
+        // header or a recorded retune: half a second is 5 billion ticks of 1e-10 s, and
+        // a mouthful of 20 overflows a mouth range reaching 5e18. A run without a bite
+        // reads with none.
+        let edits: [fn(&mut serde_json::Value); 2] = [
+            |params| params["world"]["dt"] = serde_json::json!(1e-10),
+            |params| params["body"]["mouth_range"] = serde_json::json!([1.0, 5e18]),
+        ];
+        let none = crate::history_reader::later_params::no_combat();
+        for edit in edits {
+            let mut records = final_records();
+            records[0]["data"]["retune"] = serde_json::json!({
+                "at_tick": 0,
+                "params": records[0]["data"]["params"].clone(),
+            });
+            for path in ["/data/params", "/data/retune/params"] {
+                let params = records[0].pointer_mut(path).unwrap();
+                for section in ["combat", "founder"] {
+                    params.as_object_mut().unwrap().remove(section);
+                }
+                edit(params);
+            }
+            let data = parse_values(&records).unwrap();
+            assert_eq!(data.header.params.combat, none);
+            assert_eq!(data.header.retune.unwrap().params.combat, none);
+        }
     }
 
     #[test]

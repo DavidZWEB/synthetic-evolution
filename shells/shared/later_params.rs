@@ -68,12 +68,33 @@ pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'st
     }
 }
 
+/// Combat as a run from before the bite had it: founders that could not bite, so every
+/// combat number reads as zero. Today's defaults are not inert even there, because
+/// validation measures them against the run's other params: a half-second cooldown is
+/// uncountable at a tiny enough timestep, and a default mouthful overflows a wide
+/// enough mouth range. Zero is valid against any params.
+pub fn no_combat() -> CombatParams {
+    CombatParams {
+        gate: 0.0,
+        reach: 0.0,
+        arc: 0.0,
+        attack_cost: 0.0,
+        attack_damage: 0.0,
+        cooldown_seconds: 0.0,
+        health_regen: 0.0,
+        dormant_bias: 0.0,
+        mouthful: 0.0,
+        assimilation: 0.0,
+    }
+}
+
 /// Serde fills an omitted later field from today's default; this resets it to what the
 /// archived run actually had. `wire` is the params object exactly as written.
 ///
-/// Most fields read as zero, because a run that predates them ran without them.
-/// Body-trait ranges read as one point at the founders' traits instead: bodies did not
-/// evolve before Phase 3, and a zero range would neither describe that nor validate.
+/// Most fields read as zero, because a run that predates them ran without them; an
+/// absent `combat` reads as [`no_combat`]. Body-trait ranges read as one point at the
+/// founders' traits instead: bodies did not evolve before Phase 3, and a zero range
+/// would neither describe that nor validate.
 ///
 /// Refuses incomplete bite sections, as [`require_complete_bite_params`] describes.
 pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &'static str> {
@@ -132,10 +153,12 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     if absent("/body/mouth_range") {
         params.body.mouth_range = [1.0; 2];
     }
-    // Founders could not bite before Phase 3, whatever a later default says. Without a
-    // bite no agent swings, so an absent `combat` is inert and keeps today's values.
+    // Founders could not bite before Phase 3, whatever a later default says.
     if absent("/founder") {
         params.founder.bite = false;
+    }
+    if absent("/combat") {
+        params.combat = no_combat();
     }
     Ok(())
 }

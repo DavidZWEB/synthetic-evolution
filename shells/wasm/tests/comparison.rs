@@ -108,6 +108,38 @@ fn a_small_world_from_before_the_bite_reads_without_a_founder_bite() {
 }
 
 #[wasm_bindgen_test]
+fn an_archive_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+    // Today's combat defaults are not inert against an older run's params: half a
+    // second is 5 billion ticks of 1e-10 s, and a mouthful of 20 overflows a mouth
+    // range reaching 5e18. A run without a bite reads with none, as the native reader
+    // reads it.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let edits: [fn(&mut Value); 2] = [
+        |params| params["world"]["dt"] = json!(1e-10),
+        |params| params["body"]["mouth_range"] = json!([1.0, 5e18]),
+    ];
+    for edit in edits {
+        let mut older: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+        for section in ["combat", "founder"] {
+            older.as_object_mut().unwrap().remove(section);
+        }
+        edit(&mut older);
+        let same: Value = serde_json::from_str(
+            &compare_representatives(&genes, &genes, &older.to_string()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(same["value"], 0.0);
+    }
+}
+
+#[wasm_bindgen_test]
 fn an_archive_whose_founders_bite_must_record_their_combat() {
     // Today's defaults could describe attack rules the run never had.
     let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
