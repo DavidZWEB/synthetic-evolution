@@ -56,6 +56,11 @@ const METRICS: &[&str] = &[
     "wired_hidden_neurons_mean",
     "wired_sensors_mean",
     "driven_effectors_mean",
+    "sensor_innovations",
+    "sensor_innovations_kept",
+    "sensor_innovation_span_median",
+    "sensor_innovation_span_max",
+    "sensor_innovation_wired_share",
     "active_species",
     "persistent_species",
     "longest_species_span",
@@ -117,6 +122,7 @@ const NOTES: &[&str] = &[
     "persistent_species: species alive at the end that were first sampled at least half the run earlier",
     "longest_species_span: longest first-to-last sampled presence of any species, in ticks",
     "wired_*/driven_effectors: structure on an enabled path from a sensor or oscillator to an effector, per agent",
+    "sensor_innovation*: sensors added by mutation, founding ones excluded; spans run from the first sample that saw one carried to the last, in ticks, and wired_share is the final carriers whose organ reaches an effector",
     "supply_captured: energy eaten over the second half as a fraction of the plants' nominal input (plants refuse input once full)",
     "plant_stock: plant energy as a fraction of every plant full; plant_clustering: Clark-Evans ratio, near 1 random and below 1 clustered",
     "plants_reseeded: plants that died of starvation and reseeded over the run",
@@ -420,6 +426,8 @@ fn cohort_values(
     let edits = last.structural_mutations;
     let (persistent, longest) = species_persistence(samples, ticks, &select);
     let captured = supply_captured(samples, ticks, &supply, &select);
+    let [innovations, kept, span_median, span_max, wired_share] =
+        sensor_innovation_persistence(samples, &select);
     let values: Vec<Option<f64>> = vec![
         Some(f64::from(u8::from(last.population == 0))),
         Some(f64::from(last.population)),
@@ -462,6 +470,11 @@ fn cohort_values(
         wiring.map(|w| w.wired_hidden_neurons.mean),
         wiring.map(|w| w.wired_sensors.mean),
         wiring.map(|w| w.driven_effectors.mean),
+        innovations,
+        kept,
+        span_median,
+        span_max,
+        wired_share,
         species.map(|s| s.populations.len() as f64),
         persistent,
         longest,
@@ -571,6 +584,49 @@ fn carnivore_share(predation: &PredationMetrics) -> Option<f64> {
         let [carnivores, herbivores, unfed] = tiers.map(|tier| tier / largest);
         carnivores / (carnivores + herbivores + unfed)
     })
+}
+
+/// Sensor innovations added by mutation, from sampled presence (spec §7.9): how many the
+/// living ever carried, how many they still carry at the end, the median and longest
+/// span from the first sample that saw one to the last, and the share of the final
+/// carriers in which theirs is wired. Founding sensors are no innovation and are left
+/// out. Unavailable unless every sample recorded sensors.
+fn sensor_innovation_persistence(
+    samples: &[RunSample],
+    select: &impl Fn(&RunSample) -> &WorldMetrics,
+) -> [Option<f64>; 5] {
+    let mut spans: BTreeMap<u32, (u64, u64)> = BTreeMap::new();
+    for sample in samples {
+        let Some(sensors) = &select(sample).sensors else {
+            return [None; 5];
+        };
+        for sensor in sensors.iter().filter(|sensor| !sensor.founding) {
+            spans
+                .entry(sensor.innovation)
+                .or_insert((sample.tick, sample.tick))
+                .1 = sample.tick;
+        }
+    }
+    let Some(last) = samples
+        .last()
+        .and_then(|sample| select(sample).sensors.as_ref())
+    else {
+        return [None; 5];
+    };
+    let added = || last.iter().filter(|sensor| !sensor.founding);
+    let carriers: u64 = added().map(|sensor| u64::from(sensor.carriers)).sum();
+    let wired: u64 = added().map(|sensor| u64::from(sensor.wired)).sum();
+    let mut lengths: Vec<u64> = spans.values().map(|&(first, last)| last - first).collect();
+    lengths.sort_unstable();
+    // Nearest rank, as every other distribution here is reported.
+    let median = (!lengths.is_empty()).then(|| lengths[lengths.len().div_ceil(2) - 1] as f64);
+    [
+        Some(spans.len() as f64),
+        Some(added().count() as f64),
+        median,
+        lengths.last().map(|&length| length as f64),
+        (carriers > 0).then(|| wired as f64 / carriers as f64),
+    ]
 }
 
 /// Most of its intake from other agents: spec §8's Phase 3 carnivore.
@@ -908,6 +964,88 @@ mod tests {
                 "carnivore from {start}"
             );
         }
+    }
+
+    #[test]
+    fn sensor_innovations_persist_from_the_first_sample_that_saw_them_to_the_last() {
+        // Innovation 5 lived from tick 0 to 800, 6 from 500 to the end, and 7 was seen
+        // once: spans of 800, 500, and 0. The founding organ is no innovation. At the
+        // end, 6 alone is carried, by three agents, two of them wired.
+        use crate::metrics::SensorInnovation;
+        use sim_core::genome::Modality;
+        let organ = |innovation, founding, carriers, wired| SensorInnovation {
+            innovation,
+            modality: Modality::Chemo,
+            founding,
+            carriers,
+            wired,
+        };
+        let with = |tick, sensors: Vec<SensorInnovation>| {
+            let mut sample = sample(tick, &[1]);
+            sample.evolving.sensors = Some(sensors);
+            sample
+        };
+        let samples = vec![
+            with(0, vec![organ(1, true, 10, 10), organ(5, false, 1, 0)]),
+            with(
+                500,
+                vec![
+                    organ(1, true, 10, 10),
+                    organ(5, false, 2, 1),
+                    organ(6, false, 1, 1),
+                    organ(7, false, 1, 0),
+                ],
+            ),
+            with(
+                800,
+                vec![
+                    organ(1, true, 9, 9),
+                    organ(5, false, 1, 1),
+                    organ(6, false, 2, 2),
+                ],
+            ),
+            with(1_000, vec![organ(1, true, 7, 7), organ(6, false, 3, 2)]),
+        ];
+        assert_eq!(
+            sensor_innovation_persistence(&samples, &|s| &s.evolving),
+            [
+                Some(3.0),
+                Some(1.0),
+                Some(500.0),
+                Some(800.0),
+                Some(2.0 / 3.0)
+            ]
+        );
+        // Nearest rank takes the lower of two middle spans, here 0 and 500.
+        let even = vec![
+            with(0, vec![organ(8, false, 1, 0)]),
+            with(500, vec![organ(8, false, 1, 0), organ(9, false, 1, 0)]),
+        ];
+        assert_eq!(
+            sensor_innovation_persistence(&even, &|s| &s.evolving)[2],
+            Some(0.0)
+        );
+        // A run that added no organ has no span to measure.
+        let mut founding_only = samples.clone();
+        for sample in &mut founding_only {
+            sample
+                .evolving
+                .sensors
+                .as_mut()
+                .unwrap()
+                .retain(|organ| organ.founding);
+        }
+        assert_eq!(
+            sensor_innovation_persistence(&founding_only, &|s| &s.evolving),
+            [Some(0.0), Some(0.0), None, None, None]
+        );
+        // Organs not recorded at every sample cannot establish a span.
+        let mut legacy = samples.clone();
+        legacy[2].evolving.sensors = None;
+        assert_eq!(
+            sensor_innovation_persistence(&legacy, &|s| &s.evolving),
+            [None; 5]
+        );
     }
 
     #[test]

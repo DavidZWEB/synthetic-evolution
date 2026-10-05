@@ -999,6 +999,7 @@ mod tests {
             plants: None,
             bodies: None,
             predation: None,
+            sensors: None,
         }
     }
 

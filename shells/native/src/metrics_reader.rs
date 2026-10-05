@@ -118,6 +118,7 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
                     validate_complexity(metrics)?;
+                    validate_sensors(metrics)?;
                 }
                 if samples
                     .last()
@@ -398,6 +399,28 @@ fn validate_complexity(metrics: &WorldMetrics) -> Result<()> {
     Ok(())
 }
 
+/// Each sensor innovation once, in innovation order, carried by some but not more than
+/// the living, and wired in no more of them than carry it. Older files record none.
+fn validate_sensors(metrics: &WorldMetrics) -> Result<()> {
+    let Some(sensors) = &metrics.sensors else {
+        return Ok(());
+    };
+    let ordered = sensors
+        .windows(2)
+        .all(|pair| pair[0].innovation < pair[1].innovation);
+    let counted = sensors.iter().all(|sensor| {
+        (1..=metrics.population).contains(&sensor.carriers) && sensor.wired <= sensor.carriers
+    });
+    if !(ordered && counted) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "sensor innovations must be unique, ordered, carried by the living, and wired no more than carried",
+        )
+        .into());
+    }
+    Ok(())
+}
+
 /// History capture is fixed for a run: both cohorts share it, and its counts only grow.
 fn validate_history(previous: Option<&RunSample>, sample: &RunSample) -> Result<()> {
     let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
@@ -646,6 +669,50 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         parse_metrics(Cursor::new(jsonl))
+    }
+
+    #[test]
+    fn sensor_records_are_ordered_carried_and_no_more_wired_than_carried() {
+        let mut records = final_records();
+        for cohort in ["evolving", "random_control"] {
+            records[1]["data"][cohort]["population"] = 2.into();
+            records[1]["data"][cohort]["species"]["unclassified_population"] = 2.into();
+            records[1]["data"][cohort]["complexity"] = living_complexity();
+        }
+        assert!(parse_values(&records).is_ok(), "older files record none");
+        let organ = |innovation: u32, carriers: u32, wired: u32| {
+            serde_json::json!({
+                "innovation": innovation, "modality": "Chemo", "founding": false,
+                "carriers": carriers, "wired": wired,
+            })
+        };
+        let with = |sensors: serde_json::Value| {
+            let mut records = records.clone();
+            records[1]["data"]["evolving"]["sensors"] = sensors;
+            parse_values(&records)
+        };
+        assert!(with(serde_json::json!([organ(3, 2, 1), organ(7, 1, 1)])).is_ok());
+        for (case, sensors) in [
+            (
+                "unordered",
+                serde_json::json!([organ(7, 1, 0), organ(3, 1, 0)]),
+            ),
+            (
+                "repeated",
+                serde_json::json!([organ(3, 1, 0), organ(3, 1, 0)]),
+            ),
+            ("carried by nobody", serde_json::json!([organ(3, 0, 0)])),
+            (
+                "carried by more than live",
+                serde_json::json!([organ(3, 3, 0)]),
+            ),
+            (
+                "wired more than carried",
+                serde_json::json!([organ(3, 1, 2)]),
+            ),
+        ] {
+            assert!(with(sensors).is_err(), "{case}");
+        }
     }
 
     #[test]

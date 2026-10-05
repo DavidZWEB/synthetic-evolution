@@ -120,6 +120,57 @@ fn biting_founders_record_swings_hits_kills_and_meat() {
 }
 
 #[test]
+fn added_sensors_are_recorded_with_their_wiring_and_summarized() {
+    // Crowded founders breed cheaply, and half their births add a wired organ, so the
+    // sampled organs and their spans are real additions in both cohorts (spec §7.9).
+    let mut params: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/sustaining.json")).unwrap();
+    params["world"]["founder_spread"] = serde_json::json!(0.05);
+    params["reproduction"]["start_energy"] = serde_json::json!(40.0);
+    params["reproduction"]["threshold"] = serde_json::json!(45.0);
+    params["mutation"]["organs"]["add_sensor_rate"] = serde_json::json!(0.5);
+    params["mutation"]["organs"]["wired_weight_scale"] = serde_json::json!(0.25);
+    let (lines, _) = run_and_diagnose(&params.to_string(), 7, 60, 30, 16);
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    for cohort in ["evolving", "random_control"] {
+        let sensors = last["data"][cohort]["sensors"].as_array().unwrap();
+        assert!(sensors.iter().any(|s| s["founding"] == true), "{cohort}");
+        assert!(
+            sensors
+                .iter()
+                .any(|s| s["founding"] == false && s["wired"].as_u64().unwrap() > 0),
+            "{cohort}: {sensors:?}"
+        );
+    }
+    let metrics = temporary("sensors.jsonl");
+    fs::write(&metrics, lines.join("\n") + "\n").expect("write metrics");
+    let output = summarize(&[&metrics]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for cohort in summary["configurations"][0]["cohorts"].as_array().unwrap() {
+        let mean = |name: &str| {
+            cohort["metrics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|metric| metric["name"] == name)
+                .unwrap()["mean"]
+                .as_f64()
+        };
+        assert!(mean("sensor_innovations").unwrap() > 0.0, "{cohort}");
+        assert!(
+            mean("sensor_innovation_wired_share").unwrap() > 0.0,
+            "{cohort}"
+        );
+    }
+    fs::remove_file(metrics).expect("remove metrics");
+}
+
+#[test]
 fn run_writes_self_describing_jsonl_that_diagnose_reads() {
     let (lines, report) = run_and_diagnose(include_str!("fixtures/sustaining.json"), 7, 10, 5, 1);
 

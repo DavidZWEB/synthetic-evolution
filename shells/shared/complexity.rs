@@ -6,7 +6,7 @@
 //! observation only, not a complexity score or fitness signal.
 
 use serde::{Deserialize, Serialize};
-use sim_core::genome::{self, Activation, Gene};
+use sim_core::genome::{self, Activation, Gene, SensorGene};
 use sim_core::world::World;
 
 /// Nearest-rank order statistics over one count per living agent.
@@ -97,11 +97,14 @@ pub struct WiringMetrics {
     pub driven_effectors: SizeDistribution,
 }
 
-/// Per-genome wiring counts, in `WiringMetrics` order.
-fn wiring_counts(
+/// Per-genome wiring counts, in `WiringMetrics` order. `on_sensor` hears each sensor, in
+/// gene order, with whether one of its target channels reaches an effector: the
+/// per-organ view of `wired_sensors`.
+pub fn wiring_counts(
     genes: &[Gene],
     from_inputs: &mut Vec<bool>,
     to_outputs: &mut Vec<bool>,
+    mut on_sensor: impl FnMut(&SensorGene, bool),
 ) -> [u32; 3] {
     let neurons = genome::neuron_count(genes);
     let index = |id| genome::neuron_index(genes, id).expect("validated reference");
@@ -158,11 +161,11 @@ fn wiring_counts(
     for gene in genes {
         match gene {
             Gene::Sensor(s) => {
-                wired_sensors += u32::from(
-                    s.targets[..s.modality.channels()]
-                        .iter()
-                        .any(|&target| to_outputs[index(target)]),
-                );
+                let wired = s.targets[..s.modality.channels()]
+                    .iter()
+                    .any(|&target| to_outputs[index(target)]);
+                on_sensor(s, wired);
+                wired_sensors += u32::from(wired);
             }
             Gene::Effector(e) => driven_effectors += u32::from(from_inputs[index(e.source)]),
             _ => {}
@@ -238,11 +241,12 @@ pub fn sample_complexity(world: &World) -> ComplexityMetrics {
         neurons.push(neuron_count);
         connections.push(connection_count);
         enabled.push(enabled_count);
-        for (counts, count) in
-            wired
-                .iter_mut()
-                .zip(wiring_counts(genome, &mut from_inputs, &mut to_outputs))
-        {
+        for (counts, count) in wired.iter_mut().zip(wiring_counts(
+            genome,
+            &mut from_inputs,
+            &mut to_outputs,
+            |_, _| {},
+        )) {
             counts.push(count);
         }
     }
@@ -367,10 +371,18 @@ mod tests {
                 ..Default::default()
             })
         };
-        // 0: energy input, 1: wired hidden, 2: dead-end hidden, 3: hidden cut off by a
-        // disabled edge, 4: driven output, 5: undriven output.
-        let mut targets = [InnovationId::NULL; 4];
-        targets[0] = id(0);
+        // 0: energy input, 1: wired hidden, 2: a second organ's dead-end input, 3: hidden
+        // cut off by a disabled edge, 4: driven output, 5: undriven output.
+        let organ = |n, target| {
+            let mut targets = [InnovationId::NULL; 4];
+            targets[0] = id(target);
+            Gene::Sensor(SensorGene {
+                id: id(n),
+                modality: Modality::Interoception,
+                params: [0.0; 4],
+                targets,
+            })
+        };
         let genes = [
             neuron(0, Activation::Sigmoid),
             neuron(1, Activation::Sigmoid),
@@ -378,12 +390,8 @@ mod tests {
             neuron(3, Activation::Sigmoid),
             neuron(4, Activation::Sigmoid),
             neuron(5, Activation::Sigmoid),
-            Gene::Sensor(SensorGene {
-                id: id(10),
-                modality: Modality::Interoception,
-                params: [0.0; 4],
-                targets,
-            }),
+            organ(10, 0),
+            organ(13, 2),
             effector(11, 4),
             effector(12, 5),
             wire(20, 0, 1, true),
@@ -393,7 +401,17 @@ mod tests {
             wire(24, 3, 5, true),
         ];
         let (mut a, mut b) = (Vec::new(), Vec::new());
-        assert_eq!(wiring_counts(&genes, &mut a, &mut b), [1, 1, 1]);
+        let mut organs = Vec::new();
+        assert_eq!(
+            wiring_counts(&genes, &mut a, &mut b, |sensor, wired| organs
+                .push((sensor.id.raw(), wired))),
+            [1, 1, 1]
+        );
+        assert_eq!(
+            organs,
+            [(10, true), (13, false)],
+            "each organ, in gene order"
+        );
     }
 
     #[test]
