@@ -236,10 +236,22 @@ test('representative genomes are opt-in, archived at origin, and reload with WAS
       const tampered = await parseArchive(saved.history[0]);
       const genes = tampered.rows.find((row) => row.data.representative?.genes).data.representative.genes;
       [genes[0], genes[1]] = [genes[1], genes[0]];
-      await loadRun(panel, encodeBundle({ ...saved, history: [encodeArchive(tampered)] }));
-      await page.waitForFunction(() => /representative/.test(
+      const refused = () => page.waitForFunction(() => /representative/.test(
         document.querySelector('.history-panel [role=status]')?.textContent ?? ''));
+      await loadRun(panel, encodeBundle({ ...saved, history: [encodeArchive(tampered)] }));
+      await refused();
 
+      // A segment from before the bite, at a timestep today's combat could not count,
+      // is read as the native reader reads it: with no combat, not today's defaults.
+      const older = await parseArchive(saved.history[0]);
+      delete older.header.data.params.combat;
+      delete older.header.data.params.founder;
+      older.header.data.params.world.dt = 1e-10;
+      await loadRun(panel, encodeBundle({ ...saved, history: [encodeArchive(older)] }));
+      await panel.getByText('Loaded saved run at tick 1, paused.').waitFor();
+
+      await loadRun(panel, encodeBundle({ ...saved, history: [encodeArchive(tampered)] }));
+      await refused();
       await loadRun(panel, saved.bytes);
       await panel.getByText('Loaded saved run at tick 1, paused.').waitFor();
       for (const width of [390, 320]) {

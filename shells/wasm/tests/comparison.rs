@@ -6,7 +6,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use serde_json::{Value, json};
-use wasm::{Sim, compare_representatives};
+use wasm::{Sim, compare_representatives, validate_archive_params, validate_params};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -137,6 +137,31 @@ fn an_archive_from_before_the_bite_reads_at_any_timestep_or_mouth() {
         .unwrap();
         assert_eq!(same["value"], 0.0);
     }
+}
+
+#[wasm_bindgen_test]
+fn loading_a_bundle_reads_its_archives_params_as_their_runs_had_them() {
+    // A saved run's history segment from before the bite, at a timestep today's combat
+    // could not count, is read as the native reader reads it. A configuration made
+    // today is still held to today's rules.
+    let today = validate_params(Some(
+        json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4}}).to_string(),
+    ))
+    .unwrap();
+    let mut older: Value = serde_json::from_str(&today).unwrap();
+    for section in ["combat", "founder"] {
+        older.as_object_mut().unwrap().remove(section);
+    }
+    older["world"]["dt"] = json!(1e-10);
+    let read: Value =
+        serde_json::from_str(&validate_archive_params(older.to_string()).unwrap()).unwrap();
+    assert_eq!(read["combat"]["cooldown_seconds"], 0.0);
+    assert_eq!(read["founder"]["bite"], false);
+    assert!(validate_params(Some(older.to_string())).is_err());
+    // An archive still records founder and combat together, or neither.
+    let mut alone = older.clone();
+    alone["founder"] = json!({"bite": false});
+    assert!(validate_archive_params(alone.to_string()).is_err());
 }
 
 #[wasm_bindgen_test]

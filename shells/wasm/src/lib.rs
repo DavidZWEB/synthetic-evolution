@@ -99,6 +99,16 @@ pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
 }
 
+/// Validates and canonicalizes an archive's params as its run had them, exactly as the
+/// native history reader reads them: a field the archive predates reads as that run's
+/// value, never today's default (spec §7.10). Imports use this; a configuration made
+/// today uses [`validate_params`].
+#[wasm_bindgen]
+pub fn validate_archive_params(params_json: String) -> Result<String, JsError> {
+    let params = parse_archive_params(&params_json)?;
+    serde_json::to_string(&params).map_err(|e| js_error("params", e))
+}
+
 #[derive(Serialize)]
 struct Comparison {
     disjoint: usize,
