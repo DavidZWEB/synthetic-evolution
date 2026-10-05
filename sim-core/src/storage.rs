@@ -243,13 +243,13 @@ impl AllocationRequests {
         // SlotPool: alive, incarnation, free.
         self.buffer::<u8>(agents)?;
         self.buffers::<u32>(agents, 2)?;
-        // Agents: position/velocity/signature, orientation, energy reserve,
-        // energy/health/size/muscle/mouth/sensor load/two diet totals,
+        // Agents: position/velocity/signature, orientation, energy reserve and two
+        // diet totals, energy/health/size/muscle/mouth/sensor load,
         // age/species/parents/grid/brain units/bite cooldown, handles.
         self.buffers::<Vec3>(agents, 3)?;
         self.buffer::<Quat>(agents)?;
-        self.buffer::<f64>(agents)?;
-        self.buffers::<f32>(agents, 8)?;
+        self.buffers::<f64>(agents, 3)?;
+        self.buffers::<f32>(agents, 6)?;
         self.buffers::<u32>(agents, 7)?;
         self.buffers::<Block>(agents, 6)?;
         // Intents: thrust, turn, ingest, reproduce, and the bite's drive, azimuth, and

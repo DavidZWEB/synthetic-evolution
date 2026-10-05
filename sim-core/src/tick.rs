@@ -466,7 +466,7 @@ impl World {
             agents.energy_reserve[i] = biter_reserve;
             agents.energy[j] = victim_energy;
             agents.energy_reserve[j] = victim_reserve;
-            agents.eaten_animals[i] += mouthful.kept as f32;
+            agents.eaten_animals[i] += mouthful.kept;
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits += 1;
         }
@@ -511,9 +511,9 @@ impl World {
             );
             // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
             if meal.carrion {
-                self.agents.eaten_animals[i] += meal.amount as f32;
+                self.agents.eaten_animals[i] += meal.amount;
             } else {
-                self.agents.eaten_plants[i] += meal.amount as f32;
+                self.agents.eaten_plants[i] += meal.amount;
             }
         }
     }
@@ -1369,10 +1369,7 @@ mod tests {
         world.intents_mut().bite[1] = 0.0;
         world.resolve_bites();
         let meat = world.agents().eaten_animals[0];
-        assert_eq!(
-            meat,
-            (20.0 * world.params().combat.assimilation as f64) as f32
-        );
+        assert_eq!(meat, 20.0 * world.params().combat.assimilation as f64);
         world.charge_metabolism();
         world.resolve_deaths();
         let counts = world.bite_counts();

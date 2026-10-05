@@ -60,8 +60,12 @@ pub struct Agents {
     /// Energy this agent has eaten over its life from plants, and from other agents
     /// through bites and corpses, so diet can be measured (spec §7.9). Neither steers
     /// the tick.
-    pub eaten_plants: Vec<f32>,
-    pub eaten_animals: Vec<f32>,
+    ///
+    /// `f64` because they only ever grow: summed in `f32`, finite meals can overflow to
+    /// infinity over a long enough life, and small ones stop registering against a
+    /// large total. A lifetime of `f32::MAX` meals still fits.
+    pub eaten_plants: Vec<f64>,
+    pub eaten_animals: Vec<f64>,
     pub age: Vec<u32>,
     /// Species cluster, or `NULL_ID` when classification is unavailable.
     pub species_id: Vec<u32>,

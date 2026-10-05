@@ -244,8 +244,8 @@ impl World {
             h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
             h.u32(agents.cooldown[i]);
-            h.f32(agents.eaten_plants[i]);
-            h.f32(agents.eaten_animals[i]);
+            h.f64(agents.eaten_plants[i]);
+            h.f64(agents.eaten_animals[i]);
             h.u32(agents.age[i]);
             h.u32(if include_metadata {
                 agents.species_id[i]

@@ -445,8 +445,8 @@ fn species_diets(world: &World) -> BTreeMap<u32, (f64, f64)> {
     for id in world.pool().iter_live() {
         let i = id.index();
         let diet: &mut (f64, f64) = diets.entry(agents.species_id[i]).or_default();
-        diet.0 += f64::from(agents.eaten_plants[i]);
-        diet.1 += f64::from(agents.eaten_animals[i]);
+        diet.0 += agents.eaten_plants[i];
+        diet.1 += agents.eaten_animals[i];
     }
     diets
 }
@@ -464,8 +464,8 @@ fn predation_metrics(world: &World) -> Result<PredationMetrics> {
     };
     for id in world.pool().iter_live() {
         let i = id.index();
-        let plants = f64::from(agents.eaten_plants[i]);
-        let animals = f64::from(agents.eaten_animals[i]);
+        let plants = agents.eaten_plants[i];
+        let animals = agents.eaten_animals[i];
         metrics.eaten_plants += plants;
         metrics.eaten_animals += animals;
         let held = f64::from(agents.energy[i]) + agents.energy_reserve[i];
