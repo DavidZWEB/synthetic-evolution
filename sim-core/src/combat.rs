@@ -134,16 +134,27 @@ pub(crate) fn target(biter: usize, aim: &Aim, targets: &Targets<'_>) -> Option<u
     // Nearest images on the plane lie up to w/√2 apart, so a search capped at the world
     // still finds every target in reach, whatever a retune did to the size ranges.
     let search = (aim.reach + aim.radius + targets.largest).min(targets.world_size);
-    let mut nearest: Option<(f32, u32)> = None;
+    let mut nearest: Option<(f64, u32)> = None;
     targets.hash.for_each_within(
         targets.positions,
         aim.position,
         search,
-        |index, offset, distance_squared| {
+        |index, offset, _| {
             if index as usize == biter {
                 return;
             }
-            let limit = aim.reach + aim.radius + targets.sizes[index as usize];
+            // Squared in f64 from the offset itself. An f32 square overflows at the
+            // largest scales and underflows to zero at the smallest, where a victim far
+            // out of reach, or two at different distances, would compare as equal.
+            let (x, y, z) = (
+                f64::from(offset.x),
+                f64::from(offset.y),
+                f64::from(offset.z),
+            );
+            let distance_squared = x * x + y * y + z * z;
+            let limit = f64::from(aim.reach)
+                + f64::from(aim.radius)
+                + f64::from(targets.sizes[index as usize]);
             if distance_squared > limit * limit {
                 return;
             }
@@ -377,6 +388,26 @@ mod tests {
         assert_eq!(hit_from(&ahead, &[1.0; 2], 0.0, 0.0), Some(1));
         let beside = [at(50.0, 50.0), at(53.0, 50.001)];
         assert_eq!(hit_from(&beside, &[1.0; 2], 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn reach_and_nearness_hold_where_f32_squares_underflow_to_zero() {
+        // Bodies of radius 1e-25 with no reach: a victim 1e-23 away is fifty limits out,
+        // yet both squares were 0 in f32 and it was hit. Two victims at different
+        // distances likewise tied at 0, and the lower slot won. Placed near the origin,
+        // where offsets this small are representable.
+        let at = |x: f32| Vec3::new(1e-20 + x, 1e-20, 0.0);
+        let tiny = [1e-25; 3];
+        let quarter = core::f32::consts::FRAC_PI_4;
+        assert_eq!(
+            hit_reaching(0.0, &[at(0.0), at(1e-23)], &tiny, 0.0, quarter),
+            None
+        );
+        // The farther victim takes the lower slot, so only true distances choose.
+        assert_eq!(
+            hit_reaching(1e-22, &[at(0.0), at(2e-23), at(1e-23)], &tiny, 0.0, quarter),
+            Some(2)
+        );
     }
 
     #[test]
