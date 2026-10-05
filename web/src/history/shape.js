@@ -132,10 +132,12 @@ export function validateParamsShape(value, shape = PARAMS, path = 'params') {
     const keys = Object.keys(shape).filter((key) => !LATER_PARAMS.has(key) || Object.hasOwn(value ?? {}, key));
     object(value, keys, path);
     for (const key of keys) validateParamsShape(value[key], shape[key], `${path}.${key}`);
-    // Today's defaults could describe attack rules a biting run never had.
+    // Every writer records both since the bite, and neither before it. Founders that
+    // could not bite do not make a world biteless, because an imported genome may
+    // carry a bite, and today's defaults could describe attack rules it never had.
     if (shape === PARAMS) {
-      requireThat(value.founder?.bite !== true || Object.hasOwn(value, 'combat'),
-        'params.combat must be recorded when founders bite');
+      requireThat(Object.hasOwn(value, 'founder') === Object.hasOwn(value, 'combat'),
+        'params.founder and params.combat must be recorded together');
     }
   } else if (shape === f) {
     requireThat(typeof value === 'number' && Number.isFinite(value), `${path} must be finite`);

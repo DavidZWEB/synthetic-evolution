@@ -684,13 +684,23 @@ mod tests {
             restored(&biteless_empty_combat).is_err(),
             "empty combat without a bite"
         );
-        wire["data"]["params"]
-            .as_object_mut()
-            .unwrap()
-            .remove("combat");
-        assert!(
-            restored(&wire).is_err(),
-            "unrecorded combat read as today's"
-        );
+        // Recorded together or not at all: biteless founders do not make a world
+        // biteless, because an imported genome may still bite.
+        for (section, bite) in [("combat", true), ("combat", false), ("founder", false)] {
+            let mut alone = wire.clone();
+            alone["data"]["params"]["founder"]["bite"] = serde_json::json!(bite);
+            alone["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+            assert!(restored(&alone).is_err(), "{section} unrecorded alone");
+        }
+        for section in ["combat", "founder"] {
+            wire["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+        }
+        assert!(restored(&wire).is_ok(), "an archive from before the bite");
     }
 }

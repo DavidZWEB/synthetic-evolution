@@ -29,28 +29,25 @@ pub const LATER_PARAMS: &[&str] = &[
     "founder",
 ];
 
-/// A present `founder` section must record `bite`, and a present `combat` section every
-/// combat parameter, because serde would fill a missing one from today's defaults,
-/// which could describe a run that never had them. An archive whose founders bite must
-/// record its combat. One written before the bite may omit both sections. `wire` is
-/// the params object exactly as written.
+/// An archive records `founder` and `combat` together, as every writer since the bite
+/// does, or neither, as every writer before it did. Founders that could not bite do not
+/// make a world biteless, because an imported genome may carry a bite, so only an
+/// archive from before the bite existed reads with no combat. A recorded `founder` must
+/// record `bite`, and a recorded `combat` every combat parameter, because serde would
+/// fill a missing one from today's defaults, which could describe a run that never had
+/// them. `wire` is the params object exactly as written.
 pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'static str> {
-    let bite = match wire.get("founder") {
-        None => None,
-        Some(founder) => Some(
-            founder
-                .get("bite")
-                .and_then(serde_json::Value::as_bool)
-                .ok_or("a recorded founder section must record bite")?,
-        ),
+    let (founder, combat) = match (wire.get("founder"), wire.get("combat")) {
+        (None, None) => return Ok(()),
+        (Some(founder), Some(combat)) => (founder, combat),
+        _ => return Err("an archive records founder and combat params together, or neither"),
     };
-    let Some(combat) = wire.get("combat") else {
-        return if bite == Some(true) {
-            Err("an archive whose founders bite must record its combat parameters")
-        } else {
-            Ok(())
-        };
-    };
+    if !founder
+        .get("bite")
+        .is_some_and(serde_json::Value::is_boolean)
+    {
+        return Err("a recorded founder section must record bite");
+    }
     let recorded = combat.as_object();
     let fields = serde_json::to_value(CombatParams::default()).ok();
     let complete = fields

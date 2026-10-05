@@ -1098,9 +1098,11 @@ mod tests {
     }
 
     #[test]
-    fn a_recorded_bite_section_must_be_complete_even_without_a_bite() {
-        // A run whose founders never bit may omit both sections, but one it wrote is its
-        // own: an empty founder or combat section is refused, not filled with defaults.
+    fn bite_sections_are_recorded_together_and_complete_even_without_a_bite() {
+        // A run from before the bite omits both sections. Since then every writer records
+        // both, and biteless founders do not make a world biteless, because an imported
+        // genome may still bite: one section alone is refused, and so is an empty one,
+        // rather than filled with defaults.
         let records = final_records();
         for path in ["/data/params", "/data/retune/params"] {
             let mut records = records.clone();
@@ -1108,17 +1110,18 @@ mod tests {
                 "at_tick": 0,
                 "params": serde_json::to_value(SimParams::default()).unwrap(),
             });
-            let mut omitted = records.clone();
-            omitted[0]
-                .pointer_mut(path)
-                .unwrap()
-                .as_object_mut()
-                .unwrap()
-                .remove("combat");
-            assert!(
-                parse_values(&omitted).is_ok(),
-                "{path}: biteless and combat-free reads"
-            );
+            let omit = |records: &[serde_json::Value], sections: &[&str]| {
+                let mut records = records.to_vec();
+                let params = records[0].pointer_mut(path).unwrap();
+                for section in sections {
+                    params.as_object_mut().unwrap().remove(*section);
+                }
+                parse_values(&records)
+            };
+            assert!(omit(&records, &["combat", "founder"]).is_ok(), "{path}");
+            for alone in ["combat", "founder"] {
+                assert!(omit(&records, &[alone]).is_err(), "{path}: without {alone}");
+            }
             let partial: [fn(&mut serde_json::Value); 2] = [
                 |params| params["founder"] = serde_json::json!({}),
                 |params| params["combat"] = serde_json::json!({}),

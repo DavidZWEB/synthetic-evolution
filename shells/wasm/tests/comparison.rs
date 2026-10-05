@@ -162,6 +162,15 @@ fn an_archive_whose_founders_bite_must_record_their_combat() {
     let mut empty_founder = biting.clone();
     empty_founder["founder"] = json!({});
     assert!(compare_representatives(&genes, &genes, &empty_founder.to_string()).is_err());
-    biting.as_object_mut().unwrap().remove("combat");
-    assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_err());
+    // Recorded together or not at all: biteless founders do not make a world biteless,
+    // because an imported genome may still bite.
+    for (section, bite) in [("combat", true), ("combat", false), ("founder", false)] {
+        let mut alone = biting.clone();
+        alone["founder"]["bite"] = json!(bite);
+        alone.as_object_mut().unwrap().remove(section);
+        assert!(
+            compare_representatives(&genes, &genes, &alone.to_string()).is_err(),
+            "{section} unrecorded alone"
+        );
+    }
 }

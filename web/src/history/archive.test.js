@@ -76,20 +76,29 @@ test('numeric parameter budgets outside JavaScript precision are rejected, never
   }, /params\.storage\.max_memory_bytes/);
 });
 
-test('a founder bite is true or false, and founders that bite record their combat', async () => {
+test('a founder bite is true or false, and founder and combat params are recorded together', async () => {
   await rejects((archive) => {
     archive.header.data.params.founder = { bite: 1 };
   }, /params\.founder\.bite must be true or false/);
-  await rejects((archive) => {
-    archive.header.data.params.founder = { bite: true };
-  }, /params\.combat must be recorded when founders bite/);
-  const biting = fixtureArchive();
-  biting.header.data.params.founder = { bite: true };
-  biting.header.data.params.combat = {
+  // Biteless founders do not make a world biteless: an imported genome may still bite.
+  for (const bite of [true, false]) {
+    await rejects((archive) => {
+      archive.header.data.params.founder = { bite };
+    }, /params\.founder and params\.combat must be recorded together/);
+  }
+  const combat = {
     gate: 0.5, reach: 4, arc: 0.7853982, attack_cost: 8, attack_damage: 0.25,
     cooldown_seconds: 0.5, health_regen: 0.02, dormant_bias: -1, mouthful: 20, assimilation: 0.8,
   };
+  await rejects((archive) => {
+    archive.header.data.params.combat = combat;
+  }, /params\.founder and params\.combat must be recorded together/);
+  const biting = fixtureArchive();
+  biting.header.data.params.founder = { bite: true };
+  biting.header.data.params.combat = combat;
   await validateArchive(biting);
+  // The fixture predates the bite, recording neither.
+  await validateArchive(fixtureArchive());
 });
 
 test('every required parameter field, including explicit nullable fields, must be present', async () => {
