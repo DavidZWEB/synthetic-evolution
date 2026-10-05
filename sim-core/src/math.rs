@@ -74,6 +74,20 @@ pub fn wrap_pi(angle: f32) -> f32 {
     wrapped - core::f32::consts::PI
 }
 
+/// An organ's azimuth in range, so adding it to a heading turns with the body: an
+/// imported gene may carry any finite azimuth, and at 2^26 an `f32` step is 8, so a
+/// quarter turn of yaw added to it rounds away. One already in `[-π, π]` is returned
+/// exactly, so every founder and drawn azimuth reads as it always did.
+#[inline]
+pub fn reduce_angle(angle: f32) -> f32 {
+    use core::f32::consts::PI;
+    if (-PI..=PI).contains(&angle) {
+        angle
+    } else {
+        wrap_pi(angle)
+    }
+}
+
 /// Orientation as a quaternion, constrained to yaw about Z.
 ///
 /// V1 is a 2D plane and a scalar heading would do. The quaternion is one of the two
@@ -120,6 +134,20 @@ mod tests {
     use super::*;
 
     const EPS: f32 = 1e-5;
+
+    #[test]
+    fn reduced_angles_keep_range_values_exactly_and_bring_huge_ones_in() {
+        use core::f32::consts::{FRAC_PI_2, PI};
+        for angle in [0.0, 0.3, -PI, PI, -0.0] {
+            assert_eq!(reduce_angle(angle).to_bits(), angle.to_bits(), "{angle}");
+        }
+        // At 2^26 a quarter turn added to the raw azimuth rounds away; reduced, it turns.
+        let huge = 67_108_864.0f32;
+        assert_eq!(FRAC_PI_2 + huge, huge);
+        let reduced = reduce_angle(huge);
+        assert!((-PI..=PI).contains(&reduced), "{reduced}");
+        assert!(reduce_angle(-huge).abs() <= PI);
+    }
 
     #[test]
     fn transcendentals_match_known_values() {

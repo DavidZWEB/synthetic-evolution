@@ -423,7 +423,8 @@ impl World {
             let i = swing.biter.index();
             let aim = combat::Aim {
                 position: self.agents.position[i],
-                heading: math::yaw_of(self.agents.orientation[i]) + self.intents.bite_azimuth[i],
+                heading: math::yaw_of(self.agents.orientation[i])
+                    + math::reduce_angle(self.intents.bite_azimuth[i]),
                 reach: self.intents.bite_reach[i],
                 radius: self.agents.size[i],
             };
@@ -1042,6 +1043,45 @@ mod tests {
         params.world.max_agents = agents;
         params.plants.max_plants = 0;
         params
+    }
+
+    #[test]
+    fn an_imported_bite_turns_with_its_body_whatever_its_azimuth() {
+        // An import may carry any finite azimuth. At 2^26 a quarter turn of yaw added to
+        // it rounded away, so the bite kept aiming one way however its biter turned.
+        use core::f32::consts::FRAC_PI_2;
+        let azimuth = 67_108_864.0f32;
+        let aim = crate::math::reduce_angle(azimuth);
+        let toward = |yaw: f32| {
+            let heading = yaw + aim;
+            Vec3::new(
+                100.0 + 5.0 * crate::math::cos(heading),
+                100.0 + 5.0 * crate::math::sin(heading),
+                0.0,
+            )
+        };
+        for (yaw, target, hit) in [
+            (0.0, 0.0, true),
+            (FRAC_PI_2, 0.0, false),
+            (FRAC_PI_2, FRAC_PI_2, true),
+        ] {
+            let mut world = duel(
+                duel_params(2),
+                &[
+                    (Vec3::new(100.0, 100.0, 0.0), yaw, 100.0),
+                    (toward(target), 0.0, 100.0),
+                ],
+            );
+            ask_to_bite(&mut world, 4.0);
+            world.intents_mut().bite[1] = 0.0;
+            world.intents_mut().bite_azimuth[0] = azimuth;
+            world.resolve_bites();
+            assert_eq!(
+                world.agents().health[1] < 1.0,
+                hit,
+                "biter facing {yaw}, target placed for {target}"
+            );
+        }
     }
 
     #[test]
