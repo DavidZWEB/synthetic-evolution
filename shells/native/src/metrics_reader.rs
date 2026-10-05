@@ -115,10 +115,10 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                 })?;
                 validate_history(samples.last(), &sample)?;
                 validate_predation(run, samples.last(), &sample)?;
+                validate_sensors(samples.last(), &sample)?;
                 for metrics in [&sample.evolving, &sample.random_control] {
                     validate_species(run, metrics)?;
                     validate_complexity(metrics)?;
-                    validate_sensors(metrics)?;
                 }
                 if samples
                     .last()
@@ -399,24 +399,45 @@ fn validate_complexity(metrics: &WorldMetrics) -> Result<()> {
     Ok(())
 }
 
-/// Each sensor innovation once, in innovation order, carried by some but not more than
-/// the living, and wired in no more of them than carry it. Older files record none.
-fn validate_sensors(metrics: &WorldMetrics) -> Result<()> {
-    let Some(sensors) = &metrics.sensors else {
-        return Ok(());
-    };
-    let ordered = sensors
-        .windows(2)
-        .all(|pair| pair[0].innovation < pair[1].innovation);
-    let counted = sensors.iter().all(|sensor| {
-        (1..=metrics.population).contains(&sensor.carriers) && sensor.wired <= sensor.carriers
-    });
-    if !(ordered && counted) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "sensor innovations must be unique, ordered, carried by the living, and wired no more than carried",
+/// Whether a block that one build writes for both cohorts at every sample, and older
+/// builds never write, is recorded for both or neither, at every sample or none.
+fn recorded_throughout(
+    previous: Option<&RunSample>,
+    sample: &RunSample,
+    recorded: impl Fn(&WorldMetrics) -> bool,
+) -> bool {
+    let now = recorded(&sample.evolving);
+    recorded(&sample.random_control) == now
+        && previous.is_none_or(|previous| recorded(&previous.evolving) == now)
+}
+
+/// Sensor innovations are recorded throughout or not at all. Each appears once, in
+/// innovation order, carried by some but not more than the living, and wired in no
+/// more of them than carry it. Older files record none.
+fn validate_sensors(previous: Option<&RunSample>, sample: &RunSample) -> Result<()> {
+    let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
+    if !recorded_throughout(previous, sample, |metrics| metrics.sensors.is_some()) {
+        return Err(invalid(
+            "sensor innovations must be recorded for both cohorts at every sample or at none",
         )
         .into());
+    }
+    for metrics in [&sample.evolving, &sample.random_control] {
+        let Some(sensors) = &metrics.sensors else {
+            continue;
+        };
+        let ordered = sensors
+            .windows(2)
+            .all(|pair| pair[0].innovation < pair[1].innovation);
+        let counted = sensors.iter().all(|sensor| {
+            (1..=metrics.population).contains(&sensor.carriers) && sensor.wired <= sensor.carriers
+        });
+        if !(ordered && counted) {
+            return Err(invalid(
+                "sensor innovations must be unique, ordered, carried by the living, and wired no more than carried",
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -478,10 +499,7 @@ fn validate_predation(
 ) -> Result<()> {
     let invalid = |message: &str| io::Error::new(io::ErrorKind::InvalidData, message.to_owned());
     let pair = [sample.evolving.predation, sample.random_control.predation];
-    let recorded = pair[0].is_some();
-    if pair[1].is_some() != recorded
-        || previous.is_some_and(|previous| previous.evolving.predation.is_some() != recorded)
-    {
+    if !recorded_throughout(previous, sample, |metrics| metrics.predation.is_some()) {
         return Err(invalid(
             "predation must be recorded for both cohorts at every sample or at none",
         )
@@ -688,7 +706,9 @@ mod tests {
         };
         let with = |sensors: serde_json::Value| {
             let mut records = records.clone();
-            records[1]["data"]["evolving"]["sensors"] = sensors;
+            for cohort in ["evolving", "random_control"] {
+                records[1]["data"][cohort]["sensors"] = sensors.clone();
+            }
             parse_values(&records)
         };
         assert!(with(serde_json::json!([organ(3, 2, 1), organ(7, 1, 1)])).is_ok());
@@ -713,6 +733,33 @@ mod tests {
         ] {
             assert!(with(sensors).is_err(), "{case}");
         }
+    }
+
+    #[test]
+    fn sensor_records_cover_both_cohorts_at_every_sample_or_none() {
+        // One build records them for both cohorts at every sample, and builds before M4
+        // never do, so only a spliced file could mix the two.
+        let records = |first: serde_json::Value, second: serde_json::Value| {
+            let mut records = history_records([serde_json::Value::Null, serde_json::Value::Null]);
+            for (record, value) in records[1..].iter_mut().zip([first, second]) {
+                for cohort in ["evolving", "random_control"] {
+                    record["data"][cohort]["sensors"] = value.clone();
+                }
+            }
+            records
+        };
+        let (none, empty) = (serde_json::Value::Null, serde_json::json!([]));
+        parse_values(&records(empty.clone(), empty.clone())).expect("recorded throughout");
+        parse_values(&records(none.clone(), none.clone())).expect("a run from before M4");
+        for (first, second) in [(empty.clone(), none.clone()), (none, empty.clone())] {
+            assert!(parse_values(&records(first, second)).is_err());
+        }
+        let mut unpaired = records(empty.clone(), empty);
+        unpaired[2]["data"]["random_control"]["sensors"] = serde_json::Value::Null;
+        assert!(
+            parse_values(&unpaired).is_err(),
+            "one cohort without sensors"
+        );
     }
 
     #[test]
