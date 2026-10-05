@@ -10,11 +10,8 @@
 //! Effectors bind to a neuron **by innovation id**, resolved to a slot once at birth,
 //! exactly as sensors and connections are. [`Effector`] is the compiled form.
 //!
-//! Deliberately not here: what any intent means. Movement drains `thrust` and `turn`;
-//! `ingest` and `reproduce` wait for the plants and the economy at M7. Writing them
-//! now is not pre-building — the brain already has the output neurons, and an effector
-//! whose request nothing reads is how the wiring gets tested before the consequence
-//! exists.
+//! Deliberately not here: what any intent means. Movement drains `thrust` and `turn`,
+//! feeding `ingest`, births `reproduce`, and the swing pass `bite`.
 
 use serde::{Deserialize, Serialize};
 
@@ -41,11 +38,10 @@ pub struct Effector {
 
 /// What every agent's effectors asked for this tick.
 ///
-/// Struct-of-arrays indexed by pool slot, not a queue of events. Phase 1's four
-/// effectors are all self-directed — they move, feed, or reproduce *this* agent — so
-/// one slot each is the whole story and agent-index order is free rather than something
-/// a sort has to restore. An interaction that names another agent (`bite`, `grab` in
-/// Phase 3 and 6) is the case that will need a real queue, and it can have one then.
+/// Struct-of-arrays indexed by pool slot, not a queue of events. Every request is the
+/// asking agent's own — even a bite names no victim until step 7 resolves the swing
+/// (spec §4.2) — so one slot each is the whole story, and agent-index order is free
+/// rather than something a sort has to restore.
 #[derive(Clone, Debug)]
 pub struct Intents {
     /// Forward force, already scaled by [`MovementParams::max_thrust`].
@@ -61,6 +57,15 @@ pub struct Intents {
     ///
     /// [`ReproductionParams::gate`]: crate::params::ReproductionParams::gate
     pub reproduce: Vec<f32>,
+    /// Raw drive, gated by [`CombatParams::gate`] where swings are resolved at step 7
+    /// (spec §4.2).
+    ///
+    /// [`CombatParams::gate`]: crate::params::CombatParams::gate
+    pub bite: Vec<f32>,
+    /// Where the swing points, in radians from the agent's heading, and how far past
+    /// both bodies it reaches: the strongest bite effector's gene params.
+    pub bite_azimuth: Vec<f32>,
+    pub bite_reach: Vec<f32>,
 }
 
 impl Intents {
@@ -71,6 +76,9 @@ impl Intents {
             turn: vec![0.0; n],
             ingest: vec![0.0; n],
             reproduce: vec![0.0; n],
+            bite: vec![0.0; n],
+            bite_azimuth: vec![0.0; n],
+            bite_reach: vec![0.0; n],
         }
     }
 
@@ -82,6 +90,9 @@ impl Intents {
         self.turn.fill(0.0);
         self.ingest.fill(0.0);
         self.reproduce.fill(0.0);
+        self.bite.fill(0.0);
+        self.bite_azimuth.fill(0.0);
+        self.bite_reach.fill(0.0);
     }
 
     /// Drops one agent's requests, for a slot being handed to a new occupant.
@@ -96,6 +107,9 @@ impl Intents {
         self.turn[index] = 0.0;
         self.ingest[index] = 0.0;
         self.reproduce[index] = 0.0;
+        self.bite[index] = 0.0;
+        self.bite_azimuth[index] = 0.0;
+        self.bite_reach[index] = 0.0;
     }
 
     pub fn capacity(&self) -> u32 {
@@ -137,13 +151,15 @@ pub fn effector_count(genes: &[Gene]) -> usize {
 ///
 /// Two output neurons driving the same action sum, for the same reason two sensor
 /// channels sharing an input neuron sum: the alternative is one of them silently
-/// winning based on gene order.
+/// winning based on gene order. A swing can point only one way, so two bites sum their
+/// drives but the strongest aims it, and only an exact tie falls back to gene order.
 pub fn drive(
     effectors: &[Effector],
     neurons: &[Neuron],
     params: &MovementParams,
     intents: &mut AgentIntents<'_>,
 ) {
+    let mut strongest_bite = f32::NEG_INFINITY;
     for effector in effectors {
         // A source that did not resolve is not compiled, so this only guards a slot the
         // arena zeroed and the block length should already exclude.
@@ -162,6 +178,14 @@ pub fn drive(
             Action::Turn => *intents.turn += (output - 0.5) * 2.0 * params.max_turn_rate,
             Action::Ingest => *intents.ingest += output,
             Action::Reproduce => *intents.reproduce += output,
+            Action::Bite => {
+                *intents.bite += output;
+                if output > strongest_bite {
+                    strongest_bite = output;
+                    *intents.bite_azimuth = effector.params[0];
+                    *intents.bite_reach = effector.params[2];
+                }
+            }
         }
     }
 }
@@ -173,6 +197,9 @@ pub struct AgentIntents<'a> {
     pub turn: &'a mut f32,
     pub ingest: &'a mut f32,
     pub reproduce: &'a mut f32,
+    pub bite: &'a mut f32,
+    pub bite_azimuth: &'a mut f32,
+    pub bite_reach: &'a mut f32,
 }
 
 #[cfg(test)]
@@ -223,6 +250,7 @@ mod tests {
         }
 
         let (mut thrust, mut turn, mut ingest, mut reproduce) = (0.0, 0.0, 0.0, 0.0);
+        let (mut bite, mut azimuth, mut reach) = (0.0, 0.0, 0.0);
         drive(
             &compiled,
             &neurons,
@@ -232,9 +260,48 @@ mod tests {
                 turn: &mut turn,
                 ingest: &mut ingest,
                 reproduce: &mut reproduce,
+                bite: &mut bite,
+                bite_azimuth: &mut azimuth,
+                bite_reach: &mut reach,
             },
         );
         (thrust, turn, ingest, reproduce)
+    }
+
+    /// Runs `drive` over bites aimed by `params` whose neurons hold `outputs`, and
+    /// returns the bite drive, azimuth, and reach.
+    fn ask_bites(params: &[[f32; GENE_PARAMS]], outputs: &[f32]) -> (f32, f32, f32) {
+        let mut genes = one_each(&vec![Action::Bite; params.len()]);
+        let bites = genes.iter_mut().filter_map(|gene| match gene {
+            Gene::Effector(effector) => Some(effector),
+            _ => None,
+        });
+        for (effector, &aim) in bites.zip(params) {
+            effector.params = aim;
+        }
+        let mut compiled = vec![Effector::default(); effector_count(&genes)];
+        compile(&genes, &mut compiled);
+        let mut neurons = vec![Neuron::default(); crate::genome::neuron_count(&genes)];
+        for (neuron, &output) in neurons.iter_mut().zip(outputs) {
+            neuron.output = output;
+        }
+        let (mut thrust, mut turn, mut ingest, mut reproduce) = (0.0, 0.0, 0.0, 0.0);
+        let (mut bite, mut azimuth, mut reach) = (0.0, 0.0, 0.0);
+        drive(
+            &compiled,
+            &neurons,
+            &SimParams::default().movement,
+            &mut AgentIntents {
+                thrust: &mut thrust,
+                turn: &mut turn,
+                ingest: &mut ingest,
+                reproduce: &mut reproduce,
+                bite: &mut bite,
+                bite_azimuth: &mut azimuth,
+                bite_reach: &mut reach,
+            },
+        );
+        (bite, azimuth, reach)
     }
 
     #[test]
@@ -280,6 +347,19 @@ mod tests {
     }
 
     #[test]
+    fn bites_sum_their_drives_and_the_strongest_aims() {
+        // A swing points one way, so summing directions would aim it nowhere; an exact
+        // tie is the only place gene order decides.
+        let aims = [[0.1, 0.0, 2.0, 0.0], [-0.2, 0.0, 5.0, 0.0]];
+        let (drive, azimuth, reach) = ask_bites(&aims, &[0.25, 0.5]);
+        assert_eq!((drive, azimuth, reach), (0.75, -0.2, 5.0));
+        let (drive, azimuth, reach) = ask_bites(&aims, &[0.5, 0.25]);
+        assert_eq!((drive, azimuth, reach), (0.75, 0.1, 2.0));
+        let (_, azimuth, reach) = ask_bites(&aims, &[0.375, 0.375]);
+        assert_eq!((azimuth, reach), (0.1, 2.0), "a tie keeps the earlier gene");
+    }
+
+    #[test]
     fn an_effector_whose_neuron_vanished_is_not_compiled() {
         let mut genes = one_each(&[Action::Thrust]);
         for gene in genes.iter_mut() {
@@ -296,9 +376,20 @@ mod tests {
         intents.thrust[1] = 5.0;
         intents.thrust[2] = 7.0;
         intents.reproduce[2] = 1.0;
+        intents.bite[2] = 0.9;
+        intents.bite_azimuth[2] = 0.3;
+        intents.bite_reach[2] = 4.0;
         intents.clear_slot(2);
         assert_eq!(intents.thrust[2], 0.0);
         assert_eq!(intents.reproduce[2], 0.0);
+        assert_eq!(
+            (
+                intents.bite[2],
+                intents.bite_azimuth[2],
+                intents.bite_reach[2]
+            ),
+            (0.0, 0.0, 0.0)
+        );
         assert_eq!(intents.thrust[1], 5.0, "cleared a neighbour's request");
     }
 
@@ -310,9 +401,15 @@ mod tests {
         let mut intents = Intents::with_capacity(4);
         intents.thrust[2] = 5.0;
         intents.reproduce[0] = 1.0;
+        intents.bite[3] = 0.9;
+        intents.bite_azimuth[3] = 0.3;
+        intents.bite_reach[3] = 4.0;
         intents.clear();
         assert!(intents.thrust.iter().all(|&t| t == 0.0));
         assert!(intents.reproduce.iter().all(|&r| r == 0.0));
+        for bite in [&intents.bite, &intents.bite_azimuth, &intents.bite_reach] {
+            assert!(bite.iter().all(|&value| value == 0.0));
+        }
     }
 
     #[test]

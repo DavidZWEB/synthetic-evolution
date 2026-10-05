@@ -82,7 +82,7 @@ fn parse_archive_params(params_json: &str) -> Result<SimParams, JsError> {
     let wire: serde_json::Value =
         serde_json::from_str(params_json).map_err(|e| js_error("bad params", e))?;
     let mut params = SimParams::deserialize(&wire).map_err(|e| js_error("bad params", e))?;
-    later_params::restore(&mut params, &wire);
+    later_params::restore(&mut params, &wire).map_err(|reason| js_error("bad params", reason))?;
     params
         .validate()
         .map_err(|e| js_error("invalid params", e))?;
@@ -96,6 +96,16 @@ fn parse_archive_params(params_json: &str) -> Result<SimParams, JsError> {
 #[wasm_bindgen]
 pub fn validate_params(params_json: Option<String>) -> Result<String, JsError> {
     let params = parse_params(params_json.as_deref())?;
+    serde_json::to_string(&params).map_err(|e| js_error("params", e))
+}
+
+/// Validates and canonicalizes an archive's params as its run had them, exactly as the
+/// native history reader reads them: a field the archive predates reads as that run's
+/// value, never today's default (spec §7.10). Imports use this; a configuration made
+/// today uses [`validate_params`].
+#[wasm_bindgen]
+pub fn validate_archive_params(params_json: String) -> Result<String, JsError> {
+    let params = parse_archive_params(&params_json)?;
     serde_json::to_string(&params).map_err(|e| js_error("params", e))
 }
 

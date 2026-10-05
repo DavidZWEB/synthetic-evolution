@@ -7,7 +7,7 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::arena::AllocationFailure;
-use crate::genome::{self, BodyTrait, Gene, GenomeError, Modality};
+use crate::genome::{self, Action, BodyTrait, Gene, GenomeError, Modality};
 use crate::params::{BodyParams, StorageParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +25,7 @@ pub enum SpawnError {
     PoolFull,
     InvalidGenome(GenomeError),
     SensorParameters(&'static str),
+    EffectorParameters(&'static str),
     BodyTraits(&'static str),
     GenomeLimit {
         kind: &'static str,
@@ -43,6 +44,9 @@ impl core::fmt::Display for SpawnError {
             Self::PoolFull => f.write_str("agent pool is full"),
             Self::InvalidGenome(reason) => write!(f, "invalid genome: {reason:?}"),
             Self::SensorParameters(reason) => write!(f, "invalid sensor parameters: {reason}"),
+            Self::EffectorParameters(reason) => {
+                write!(f, "invalid effector parameters: {reason}")
+            }
             Self::BodyTraits(reason) => write!(f, "invalid body: {reason}"),
             Self::GenomeLimit { kind, count, limit } => {
                 write!(f, "genome has {count} {kind}, exceeding limit {limit}")
@@ -81,6 +85,7 @@ impl SpawnFailureCounts {
             SpawnError::PoolFull => &mut self.pool_full,
             SpawnError::InvalidGenome(_)
             | SpawnError::SensorParameters(_)
+            | SpawnError::EffectorParameters(_)
             | SpawnError::BodyTraits(_) => &mut self.invalid_genome,
             SpawnError::GenomeLimit { .. } => &mut self.genome_limit,
             SpawnError::Arena { reason, .. } => match reason {
@@ -160,6 +165,36 @@ pub(crate) fn validate_limits(genes: &[Gene], limits: &StorageParams) -> Result<
         }
     }
     genome::validate_architecture(genes).map_err(SpawnError::InvalidGenome)
+}
+
+/// A bite aims and reaches by its gene's params, so an import must aim it on the
+/// simulation plane and reach no further than half the world, where the torus still
+/// has one nearest image (spec §2.3, §4.2). Bounded by the world rather than the body
+/// ranges, which a retune may widen, so no retune can strand a living gene.
+pub(crate) fn validate_effector_parameters(
+    genes: &[Gene],
+    world_size: f32,
+) -> Result<(), SpawnError> {
+    for gene in genes {
+        let Gene::Effector(effector) = gene else {
+            continue;
+        };
+        if effector.action != Action::Bite {
+            continue;
+        }
+        let [_azimuth, elevation, reach, _] = effector.params;
+        if elevation != 0.0 {
+            return Err(SpawnError::EffectorParameters(
+                "bite elevation must be zero",
+            ));
+        }
+        if !(0.0..=world_size * 0.5).contains(&reach) {
+            return Err(SpawnError::EffectorParameters(
+                "bite reach must lie within half the world",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Check actual allocated sensing bounds, not retuned founder initialization values.
@@ -249,6 +284,37 @@ mod tests {
             assert!(matches!(validate_limits(&genes, &limits),
                 Err(SpawnError::GenomeLimit { kind: found, .. }) if found == kind));
         }
+    }
+
+    #[test]
+    fn an_imported_bite_must_aim_on_the_plane_within_half_the_world() {
+        // The tiny fixture's one effector, made a bite with the given params.
+        let bite = |params: [f32; 4]| {
+            let mut genes = genome::fixtures::tiny();
+            for gene in &mut genes {
+                if let Gene::Effector(effector) = gene {
+                    effector.action = Action::Bite;
+                    effector.params = params;
+                }
+            }
+            validate_effector_parameters(&genes, 100.0)
+        };
+        assert_eq!(
+            bite([1.5, 0.0, 50.0, 0.0]),
+            Ok(()),
+            "any azimuth, to half the world"
+        );
+        assert_eq!(bite([0.0, 0.0, 0.0, 0.0]), Ok(()), "a reach of nothing");
+        let elevation = Err(SpawnError::EffectorParameters(
+            "bite elevation must be zero",
+        ));
+        assert_eq!(bite([0.0, 0.5, 4.0, 0.0]), elevation);
+        let reach = Err(SpawnError::EffectorParameters(
+            "bite reach must lie within half the world",
+        ));
+        assert_eq!(bite([0.0, 0.0, 50.5, 0.0]), reach);
+        assert_eq!(bite([0.0, 0.0, -1.0, 0.0]), reach);
+        assert_eq!(bite([0.0, 0.0, f32::NAN, 0.0]), reach);
     }
 
     #[test]

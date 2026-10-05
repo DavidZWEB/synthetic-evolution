@@ -200,7 +200,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(serde_json::Value::as_object_mut)
     {
         // Written by the same build as its run, so it omits the same fields.
-        backfill_later_params(retune);
+        backfill_later_params(retune)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
     }
     if value["kind"] == "header"
         && let Some(params) = value
@@ -208,7 +209,8 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
             .and_then(|data| data.get_mut("params"))
             .and_then(serde_json::Value::as_object_mut)
     {
-        backfill_later_params(params);
+        backfill_later_params(params)
+            .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
         for (section, fields) in [
             ("species", &["capacity", "threshold"][..]),
             (
@@ -238,8 +240,14 @@ fn decode_record(line: &str, schema: Option<u32>) -> Result<MetricsRecord> {
 }
 
 /// Fills the params fields a file written before them omits with the values its run
-/// actually had, which today's serde defaults would not.
-fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>) {
+/// actually had, which today's serde defaults would not. Refuses incomplete bite
+/// sections, as the history readers do.
+fn backfill_later_params(
+    params: &mut serde_json::Map<String, serde_json::Value>,
+) -> std::result::Result<(), &'static str> {
+    crate::history_reader::later_params::require_complete_bite_params(&serde_json::Value::Object(
+        params.clone(),
+    ))?;
     // Mutation rates shipped at zero until Phase 2 M8, oscillator addition did
     // not exist before it, and M9's plant ecology fields came later still; a
     // schema-8 file written earlier omits some of them. It ran without them, so
@@ -315,6 +323,22 @@ fn backfill_later_params(params: &mut serde_json::Map<String, serde_json::Value>
                 .or_insert_with(|| serde_json::json!([1.0, 1.0]));
         }
     }
+    // Nor could their founders bite, whatever a later default says, so they had no
+    // combat; a recorded section is complete, as checked above.
+    if let Some(founder) = params
+        .entry("founder")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    {
+        founder
+            .entry("bite")
+            .or_insert_with(|| serde_json::json!(false));
+    }
+    params.entry("combat").or_insert_with(|| {
+        serde_json::to_value(crate::history_reader::later_params::no_combat())
+            .expect("combat params serialize")
+    });
+    Ok(())
 }
 
 /// A recorded retune must be one the run could have applied: within the run, and a
@@ -996,6 +1020,121 @@ mod tests {
     }
 
     #[test]
+    fn founders_written_before_the_bite_read_as_biteless() {
+        // Explicitly, so a later default cannot give an older run a bite it never had,
+        // while a value the file wrote stays its own.
+        let mut params = serde_json::Map::new();
+        backfill_later_params(&mut params).unwrap();
+        assert_eq!(params["founder"]["bite"], false);
+        let combat = serde_json::to_value(sim_core::params::CombatParams::default()).unwrap();
+        let mut written = serde_json::json!({"founder": {"bite": true}, "combat": combat});
+        backfill_later_params(written.as_object_mut().unwrap()).unwrap();
+        assert_eq!(written["founder"]["bite"], true);
+    }
+
+    #[test]
+    fn a_run_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+        // Today's combat defaults are not inert against an older run's params, in its
+        // header or a recorded retune: half a second is 5 billion ticks of 1e-10 s, and
+        // a mouthful of 20 overflows a mouth range reaching 5e18. A run without a bite
+        // reads with none.
+        let edits: [fn(&mut serde_json::Value); 2] = [
+            |params| params["world"]["dt"] = serde_json::json!(1e-10),
+            |params| params["body"]["mouth_range"] = serde_json::json!([1.0, 5e18]),
+        ];
+        let none = crate::history_reader::later_params::no_combat();
+        for edit in edits {
+            let mut records = final_records();
+            records[0]["data"]["retune"] = serde_json::json!({
+                "at_tick": 0,
+                "params": records[0]["data"]["params"].clone(),
+            });
+            for path in ["/data/params", "/data/retune/params"] {
+                let params = records[0].pointer_mut(path).unwrap();
+                for section in ["combat", "founder"] {
+                    params.as_object_mut().unwrap().remove(section);
+                }
+                edit(params);
+            }
+            let data = parse_values(&records).unwrap();
+            assert_eq!(data.header.params.combat, none);
+            assert_eq!(data.header.retune.unwrap().params.combat, none);
+        }
+    }
+
+    #[test]
+    fn a_biting_run_must_record_every_combat_parameter() {
+        // Serde would fill anything missing from today's defaults, which could describe
+        // attack rules the run never had: absent, empty, or partial is refused, in the
+        // header's params and a recorded retune's alike.
+        let mut biting = SimParams::default();
+        biting.founder.bite = true;
+        let mut records = final_records();
+        records[0]["data"]["params"] = serde_json::to_value(&biting).unwrap();
+        records[0]["data"]["retune"] = serde_json::json!({
+            "at_tick": 0,
+            "params": serde_json::to_value(&biting).unwrap(),
+        });
+        assert!(
+            parse_values(&records).is_ok(),
+            "a complete biting run reads"
+        );
+        for path in ["/data/params", "/data/retune/params"] {
+            let unrecorded: [fn(&mut serde_json::Value); 3] = [
+                |params| {
+                    params.as_object_mut().unwrap().remove("combat");
+                },
+                |params| params["combat"] = serde_json::json!({}),
+                |params| {
+                    params["combat"].as_object_mut().unwrap().remove("mouthful");
+                },
+            ];
+            for (case, unrecord) in unrecorded.into_iter().enumerate() {
+                let mut records = records.clone();
+                unrecord(records[0].pointer_mut(path).unwrap());
+                assert!(parse_values(&records).is_err(), "{path}, case {case}");
+            }
+        }
+    }
+
+    #[test]
+    fn bite_sections_are_recorded_together_and_complete_even_without_a_bite() {
+        // A run from before the bite omits both sections. Since then every writer records
+        // both, and biteless founders do not make a world biteless, because an imported
+        // genome may still bite: one section alone is refused, and so is an empty one,
+        // rather than filled with defaults.
+        let records = final_records();
+        for path in ["/data/params", "/data/retune/params"] {
+            let mut records = records.clone();
+            records[0]["data"]["retune"] = serde_json::json!({
+                "at_tick": 0,
+                "params": serde_json::to_value(SimParams::default()).unwrap(),
+            });
+            let omit = |records: &[serde_json::Value], sections: &[&str]| {
+                let mut records = records.to_vec();
+                let params = records[0].pointer_mut(path).unwrap();
+                for section in sections {
+                    params.as_object_mut().unwrap().remove(*section);
+                }
+                parse_values(&records)
+            };
+            assert!(omit(&records, &["combat", "founder"]).is_ok(), "{path}");
+            for alone in ["combat", "founder"] {
+                assert!(omit(&records, &[alone]).is_err(), "{path}: without {alone}");
+            }
+            let partial: [fn(&mut serde_json::Value); 2] = [
+                |params| params["founder"] = serde_json::json!({}),
+                |params| params["combat"] = serde_json::json!({}),
+            ];
+            for (case, break_it) in partial.into_iter().enumerate() {
+                let mut records = records.clone();
+                break_it(records[0].pointer_mut(path).unwrap());
+                assert!(parse_values(&records).is_err(), "{path}, case {case}");
+            }
+        }
+    }
+
+    #[test]
     fn rates_and_counts_older_schema_eight_files_omit_are_zero_and_unknown() {
         let mut records = final_records();
         records[0]["data"]["params"]["mutation"]["structural"]
@@ -1006,10 +1145,12 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("add_sensor_rate");
-        records[0]["data"]["params"]
-            .as_object_mut()
-            .unwrap()
-            .remove("corpses");
+        for section in ["corpses", "combat", "founder"] {
+            records[0]["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+        }
         records[0]["data"]["params"]["plants"]
             .as_object_mut()
             .unwrap()
@@ -1072,6 +1213,7 @@ mod tests {
         assert_eq!(data.header.params.body.size_range, [size, size]);
         assert_eq!(data.header.params.body.muscle_range, [1.0, 1.0]);
         assert_eq!(data.header.params.body.mouth_range, [1.0, 1.0]);
+        assert!(!data.header.params.founder.bite);
         assert_eq!(
             data.samples[0]
                 .evolving

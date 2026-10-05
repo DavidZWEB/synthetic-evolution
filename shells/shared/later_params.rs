@@ -5,7 +5,7 @@
 //! archive's params identically. Not a migration: nothing is rewritten, and a field an
 //! archive wrote keeps its own value.
 
-use sim_core::params::SimParams;
+use sim_core::params::{CombatParams, SimParams};
 
 /// Leaf names an older archive may omit; every other params field must be present.
 pub const LATER_PARAMS: &[&str] = &[
@@ -25,15 +25,77 @@ pub const LATER_PARAMS: &[&str] = &[
     "size_range",
     "muscle_range",
     "mouth_range",
+    "combat",
+    "founder",
 ];
+
+/// An archive records `founder` and `combat` together, as every writer since the bite
+/// does, or neither, as every writer before it did. Founders that could not bite do not
+/// make a world biteless, because an imported genome may carry a bite, so only an
+/// archive from before the bite existed reads with no combat. A recorded `founder` must
+/// record `bite`, and a recorded `combat` every combat parameter, because serde would
+/// fill a missing one from today's defaults, which could describe a run that never had
+/// them. `wire` is the params object exactly as written.
+pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'static str> {
+    let (founder, combat) = match (wire.get("founder"), wire.get("combat")) {
+        (None, None) => return Ok(()),
+        (Some(founder), Some(combat)) => (founder, combat),
+        _ => return Err("an archive records founder and combat params together, or neither"),
+    };
+    if !founder
+        .get("bite")
+        .is_some_and(serde_json::Value::is_boolean)
+    {
+        return Err("a recorded founder section must record bite");
+    }
+    let recorded = combat.as_object();
+    let fields = serde_json::to_value(CombatParams::default()).ok();
+    let complete = fields
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|fields| {
+            fields
+                .keys()
+                .all(|field| recorded.is_some_and(|combat| combat.contains_key(field)))
+        });
+    if complete {
+        Ok(())
+    } else {
+        Err("a recorded combat section must record every combat parameter")
+    }
+}
+
+/// Combat as a run from before the bite had it: founders that could not bite, so every
+/// combat number reads as zero. Today's defaults are not inert even there, because
+/// validation measures them against the run's other params: a half-second cooldown is
+/// uncountable at a tiny enough timestep, and a default mouthful overflows a wide
+/// enough mouth range. Zero is valid against any params.
+pub fn no_combat() -> CombatParams {
+    CombatParams {
+        gate: 0.0,
+        reach: 0.0,
+        arc: 0.0,
+        attack_cost: 0.0,
+        attack_damage: 0.0,
+        cooldown_seconds: 0.0,
+        health_regen: 0.0,
+        dormant_bias: 0.0,
+        mouthful: 0.0,
+        assimilation: 0.0,
+    }
+}
 
 /// Serde fills an omitted later field from today's default; this resets it to what the
 /// archived run actually had. `wire` is the params object exactly as written.
 ///
-/// Most fields read as zero, because a run that predates them ran without them.
-/// Body-trait ranges read as one point at the founders' traits instead: bodies did not
-/// evolve before Phase 3, and a zero range would neither describe that nor validate.
-pub fn restore(params: &mut SimParams, wire: &serde_json::Value) {
+/// Most fields read as zero, because a run that predates them ran without them; an
+/// absent `combat` reads as [`no_combat`]. Body-trait ranges read as one point at the
+/// founders' traits instead: bodies did not evolve before Phase 3, and a zero range
+/// would neither describe that nor validate.
+///
+/// Refuses incomplete bite sections, as [`require_complete_bite_params`] describes.
+pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &'static str> {
+    require_complete_bite_params(wire)?;
     let absent = |path: &str| wire.pointer(path).is_none();
     if absent("/mutation/structural/add_oscillator_rate") {
         params.mutation.structural.add_oscillator_rate = 0.0;
@@ -88,4 +150,12 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) {
     if absent("/body/mouth_range") {
         params.body.mouth_range = [1.0; 2];
     }
+    // Founders could not bite before Phase 3, whatever a later default says.
+    if absent("/founder") {
+        params.founder.bite = false;
+    }
+    if absent("/combat") {
+        params.combat = no_combat();
+    }
+    Ok(())
 }

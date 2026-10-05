@@ -151,6 +151,9 @@ pub struct World {
     /// Agents that asked to reproduce and can, resolved at step 10 after the deaths.
     /// Owned and sized for the same reason.
     pub(crate) breeding: Vec<AgentId>,
+    /// This tick's swings, fixed before any hit lands (spec §4.2). Owned and sized for
+    /// the same reason.
+    pub(crate) swings: Vec<crate::combat::Swing>,
     /// Requests from outside the simulation, waiting for the tick they are stamped for
     /// (spec §2.2b). Kept in submission order, which is what makes two runs fed the same
     /// commands apply them the same way.
@@ -236,6 +239,7 @@ impl World {
             ledger: EnergyLedger::opening(plants.total_energy()),
             dying: Vec::with_capacity(capacity as usize),
             breeding: Vec::with_capacity(capacity as usize),
+            swings: Vec::with_capacity(capacity as usize),
             // Not sized at capacity: commands arrive at human speed, a handful per
             // second at most, and reserving a slot per agent for them would cost more
             // memory than the queue will ever hold.
@@ -348,14 +352,49 @@ impl World {
     /// without a world to hand.
     pub fn set_params(&mut self, params: SimParams) -> Result<(), ParamError> {
         self.check_retune(&params)?;
+        // Cooldowns count ticks, so a new timestep would change the time left on each
+        // running one; keep that time instead (spec §4.2). `check_retune` has proved
+        // every one countable, so nothing here can fail part-way.
+        let (from, to) = (self.params.world.dt, params.world.dt);
+        if from != to {
+            for id in self.pool.iter_live() {
+                let cooldown = &mut self.agents.cooldown[id.index()];
+                *cooldown =
+                    crate::combat::rescale_cooldown(*cooldown, from, to).unwrap_or(u32::MAX);
+            }
+        }
         self.params = params;
         Ok(())
     }
 
     /// Whether [`Self::set_params`] would accept `params`, without applying them, so a
     /// shell can refuse a scheduled retune before a long run rather than at its tick.
+    ///
+    /// Beyond the params' own policy, a new timestep must still count every cooldown in
+    /// whole ticks: each one running now, and the longest a swing can start under the
+    /// current params, since a scheduled retune is checked before the swings that
+    /// precede its tick.
     pub fn check_retune(&self, params: &SimParams) -> Result<(), ParamError> {
-        self.params.check_retune(params, self.hash.cell_size())
+        self.params.check_retune(params, self.hash.cell_size())?;
+        let (from, to) = (self.params.world.dt, params.world.dt);
+        if from == to {
+            return Ok(());
+        }
+        // Rescaling never shortens a longer cooldown, so the longest decides for all.
+        let longest = self
+            .pool
+            .iter_live()
+            .map(|id| self.agents.cooldown[id.index()])
+            .fold(
+                crate::combat::cooldown_ticks(&self.params.combat, from),
+                u32::max,
+            );
+        if crate::combat::rescale_cooldown(longest, from, to).is_none() {
+            return Err(ParamError(
+                "a timestep this short cannot count a bite cooldown in whole ticks",
+            ));
+        }
+        Ok(())
     }
 
     /// Every joule the world currently holds, in plants, agents, corpses, and the

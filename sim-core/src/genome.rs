@@ -80,7 +80,7 @@ impl Modality {
     }
 }
 
-/// Effector actions available in Phase 1. Spec §4.2 lists more.
+/// Effector actions available so far. Spec §4.2 lists more.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../web/src/generated/"))]
@@ -92,6 +92,9 @@ pub enum Action {
     /// Brain-gated, not fired at an energy threshold — the agent decides when, which
     /// is what makes life-history strategy evolvable (spec §4.2).
     Reproduce,
+    /// Swings at the nearest agent ahead. Its params are `[azimuth, elevation, reach,
+    /// _]`, with elevation pinned at 0 as a vision sensor's is (spec §4.2, §9.1).
+    Bite,
 }
 
 /// Body traits carried genetically rather than as fixed agent fields.

@@ -10,9 +10,8 @@
 //! is a method on [`SensingParams`], not a field, because a field could disagree with
 //! the sensor ranges it must cover.
 //!
-//! Deliberately absent: constants for phases that do not exist yet. Predation
-//! (`attack_cost`, `corpse_energy_fraction`) and speciation thresholds arrive with the
-//! systems that read them.
+//! Deliberately absent: constants for phases that do not exist yet. Each arrives with
+//! the system that reads it.
 
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +36,8 @@ pub struct SimParams {
     pub feeding: FeedingParams,
     pub plants: PlantParams,
     pub corpses: CorpseParams,
+    pub combat: CombatParams,
+    pub founder: FounderParams,
     pub chemo: ChemoParams,
 }
 
@@ -125,6 +126,10 @@ pub struct StorageParams {
     pub max_connections: u32,
     pub max_sensors: u32,
     pub max_vision_rays: u32,
+    /// Maximum effectors in one organism.
+    ///
+    /// **5**: a founder carrying the bite (`founder.bite`) drives thrust, turn, ingest,
+    /// reproduce, and bite (spec §4.2), so the limit admits it without a storage edit.
     pub max_effectors: u32,
     /// Portable upper bound on cumulative requested heap bytes for one core construction.
     ///
@@ -147,7 +152,7 @@ impl Default for StorageParams {
             max_connections: 1_024,
             max_sensors: 32,
             max_vision_rays: 32,
-            max_effectors: 4,
+            max_effectors: 5,
             max_memory_bytes: 100_663_296,
         }
     }
@@ -158,6 +163,10 @@ impl Default for StorageParams {
 #[serde(default, deny_unknown_fields)]
 pub struct WorldParams {
     /// Side length of the square world, in world units. Wraps at the edges.
+    ///
+    /// At most 1e18: distances are squared in `f32` wherever agents search, sense, and
+    /// bite, and past that a square across the world overflows to infinity, which every
+    /// comparison against it then gets wrong.
     pub size: f32,
     /// Agent pool capacity. Pre-allocated at startup and never grown — growing WASM
     /// memory detaches every JS view over the snapshot (spec §7.3).
@@ -772,6 +781,87 @@ pub struct CorpseParams {
     pub signature: [f32; 3],
 }
 
+/// The bite: when an agent swings, what a swing costs, and what a hit does (spec §4.2).
+///
+/// Live-retunable. `reach` reaches agents only through their genes: it is written into
+/// a founder's bite gene when the founder is built, so a retune changes later founders.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CombatParams {
+    /// Bite drive above which an agent swings. Non-negative, because an agent without
+    /// a bite drives it at 0.
+    ///
+    /// **0.5 (spec §5.5)**: a sigmoid with no input rests at the gate and does not
+    /// swing, as with the feeding and reproduction gates.
+    pub gate: f32,
+    /// How far past both bodies a founder's bite reaches, written into its bite gene.
+    ///
+    /// **4 (spec §5.5)**, matching `feeding.reach`: a biter must get as close to prey
+    /// as to a plant.
+    pub reach: f32,
+    /// Largest angle, in radians, between the bite direction and a target's centre.
+    ///
+    /// **π/4 (spec §5.5)**: a quarter-turn cone, so biting means facing what you bite.
+    pub arc: f32,
+    /// Energy a swing costs, dissipated whether or not it hits.
+    ///
+    /// **8 (spec §5.5)**, meant to be 20–40% of typical prey energy: the single most
+    /// sensitive ratio in the sim.
+    pub attack_cost: f32,
+    /// Health a hit removes at gape 1 from a victim of the reference size, as a
+    /// fraction of full health. A hit removes `attack_damage · g / s_victim`, clamped to
+    /// `[0, 1]` (spec §4.2).
+    ///
+    /// **0.25 (spec §5.5)**: several bites to kill, so prey can escape.
+    pub attack_damage: f32,
+    /// Seconds after a swing before the same agent can swing again, counted in whole
+    /// ticks. A retune of `world.dt` keeps each running cooldown's remaining time.
+    ///
+    /// **0.5 (spec §5.5)**: a held drive costs `attack_cost` per swing rather than per
+    /// tick, so a biter cannot drain its own tank in a burst.
+    pub cooldown_seconds: f32,
+    /// Health regained per second, only while health is above 0, so a lethal hit
+    /// cannot heal before the deaths it causes are resolved (spec §2.4).
+    ///
+    /// Health is an `f32` healed by a step a tick, so a positive rate must make that
+    /// step at least `f32::EPSILON / 2`, one representable step of a health just short
+    /// of full. Anything smaller rounds away and never heals, so the timestep and rate
+    /// are checked together, as a cooldown is.
+    ///
+    /// **0.02 (spec §5.5)**: a wounded agent recovers within about an idle lifetime,
+    /// so an escape is real.
+    pub health_regen: f32,
+    /// The bias a founder's unwired bite neuron starts at.
+    ///
+    /// **−1 (spec §5.5)**: the neuron rests at σ(−1) ≈ 0.27, below the gate, so no
+    /// founder swings until mutation wires the neuron or moves its bias.
+    pub dormant_bias: f32,
+    /// Energy one hit takes from its victim at gape 1. A hit asks `mouthful · g²`, and
+    /// a victim holding less gives what it has (spec §4.2).
+    ///
+    /// **20 (spec §5.5)**: assimilated at 0.8, it repays a swing twice over, so biting
+    /// can pay from the first hit.
+    pub mouthful: f32,
+    /// Share of a mouthful the biter keeps, in `[0, 1]`; the rest is dissipated.
+    ///
+    /// **0.8 (spec §5.5)**: animals assimilate 60–90% of meat.
+    pub assimilation: f32,
+}
+
+/// What every founder carries beyond the sensing and brain layouts (spec §3.3).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FounderParams {
+    /// Whether founders carry a dormant bite (spec §4.2). Part of the founding
+    /// topology, so fixed for the life of a world. It governs founders only: nothing
+    /// adds or removes effectors yet, so a world without it bites only through genomes
+    /// imported with a bite, which spawn and restore accept.
+    ///
+    /// **Off until calibration (Phase 3 M6)**, so every world runs as it did in Phase
+    /// 2.
+    pub bite: bool,
+}
+
 /// Pheromone field. A 3D grid of depth 1 in V1 (spec §9.1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -835,7 +925,7 @@ impl SimParams {
     ///
     /// **Editable — nearly everything.** The `body` trait ranges (widening only, below),
     /// every field of
-    /// `metabolism`, `movement`, `mutation`, `feeding`, and `reproduction`,
+    /// `metabolism`, `movement`, `mutation`, `feeding`, `reproduction`, and `combat`,
     /// `chemo.decay`, `chemo.diffuse`, `world.dt`, `world.founder_spread`, the `plants`
     /// and `corpses` fields not named below, `sensing` ranges within the limit below,
     /// and the `brain` fields that are not topology (`tau_min`, `tau_max`, the
@@ -854,7 +944,7 @@ impl SimParams {
     /// | `corpses.max_corpses` | the corpse pool and its grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
-    /// | founder sensor counts, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
+    /// | founder sensor counts, `founder.bite`, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
     /// **Frozen, because they would silently do nothing:** `plants.initial_fill`, read
     /// once when the larder is stocked, and `plants.patchiness` and `plants.patch_scale`,
@@ -921,6 +1011,7 @@ impl SimParams {
                 next.sensing.vision_rays != self.sensing.vision_rays
                     || next.sensing.chemo_sensors != self.sensing.chemo_sensors
                     || next.sensing.energy_sensors != self.sensing.energy_sensors
+                    || next.founder != self.founder
                     || next.brain.hidden_neurons != self.brain.hidden_neurons
                     || next.brain.oscillators != self.brain.oscillators
                     || next.brain.connections_per_target != self.brain.connections_per_target,
@@ -987,6 +1078,11 @@ impl SimParams {
         }
         if !(self.world.size > 0.0) || !self.world.size.is_finite() {
             return Err(ParamError("world.size must be finite and positive"));
+        }
+        if self.world.size > 1e18 {
+            return Err(ParamError(
+                "world.size must be at most 1e18, so a squared distance across it stays finite",
+            ));
         }
         if !(self.world.dt > 0.0) || !self.world.dt.is_finite() {
             return Err(ParamError("world.dt must be finite and positive"));
@@ -1287,6 +1383,54 @@ impl SimParams {
                 "corpses.signature must be in [0, 1] per channel",
             ));
         }
+        let combat = &self.combat;
+        // An agent without a bite drives it at 0, so a negative gate would swing it.
+        if !(combat.gate >= 0.0) || !combat.gate.is_finite() {
+            return Err(ParamError("combat.gate must be finite and non-negative"));
+        }
+        if !combat.dormant_bias.is_finite() {
+            return Err(ParamError("combat.dormant_bias must be finite"));
+        }
+        if !(0.0..=core::f32::consts::PI).contains(&combat.arc) {
+            return Err(ParamError("combat.arc must be in [0, π] radians"));
+        }
+        if [
+            combat.reach,
+            combat.attack_cost,
+            combat.health_regen,
+            combat.mouthful,
+        ]
+        .iter()
+        .any(|&value| !(value >= 0.0) || !value.is_finite())
+        {
+            return Err(ParamError(
+                "combat reach, attack cost, health regeneration, and mouthful must be finite and non-negative",
+            ));
+        }
+        if !(0.0..=1.0).contains(&combat.attack_damage)
+            || !(0.0..=1.0).contains(&combat.assimilation)
+        {
+            return Err(ParamError(
+                "combat.attack_damage and combat.assimilation must be in [0, 1]",
+            ));
+        }
+        // A cooldown is counted in whole ticks, so the count must fit one, counted
+        // exactly as a swing counts it.
+        if !(combat.cooldown_seconds >= 0.0)
+            || !combat.cooldown_seconds.is_finite()
+            || crate::combat::countable_cooldown(combat.cooldown_seconds, self.world.dt).is_none()
+        {
+            return Err(ParamError(
+                "combat.cooldown_seconds must be non-negative and countable in ticks",
+            ));
+        }
+        // The step `combat::recover` adds, in the f32 it adds it in.
+        if combat.health_regen > 0.0 && !(combat.health_regen * self.world.dt >= f32::EPSILON / 2.0)
+        {
+            return Err(ParamError(
+                "combat.health_regen must be zero or heal a representable step each tick",
+            ));
+        }
         if self.chemo.cells[0] == 0 || self.chemo.cells[1] == 0 || self.chemo.cells[2] != 1 {
             return Err(ParamError(
                 "chemo.cells must be non-empty in x and y, and depth 1 in V1",
@@ -1384,10 +1528,12 @@ impl SimParams {
                 &self.metabolism,
             ),
             self.feeding.rate * gape * gape,
+            self.combat.mouthful * gape * gape,
+            self.combat.attack_damage * gape / lightest,
         ];
         if worst.iter().any(|value| !value.is_finite()) {
             return Err(ParamError(
-                "body ranges let a body's acceleration, upkeep, or intake overflow",
+                "body ranges let a body's acceleration, upkeep, intake, or bite overflow",
             ));
         }
         // A tick turns by the summed turn drives, adds the acceleration to a velocity
@@ -1413,6 +1559,14 @@ impl SimParams {
         if (self.body.size_range[1] + self.feeding.reach + food_radius) * 2.0 > self.world.size {
             return Err(ParamError(
                 "the largest body's feeding reach exceeds half the world; the hash cannot wrap",
+            ));
+        }
+        // A founder's bite gene takes `combat.reach`, and must reach no further than an
+        // import's may (spec §4.2). A world whose founders do not bite builds no such
+        // gene, as every world before the bite did not.
+        if self.founder.bite && !(self.combat.reach * 2.0 <= self.world.size) {
+            return Err(ParamError(
+                "a founder's bite must reach no further than half the world",
             ));
         }
         Ok(())
@@ -1573,6 +1727,23 @@ impl Default for CorpseParams {
             max_corpses: 2_000,
             radius: 2.0,
             signature: [0.55, 0.22, 0.18],
+        }
+    }
+}
+
+impl Default for CombatParams {
+    fn default() -> Self {
+        Self {
+            gate: 0.5,
+            reach: 4.0,
+            arc: core::f32::consts::FRAC_PI_4,
+            attack_cost: 8.0,
+            attack_damage: 0.25,
+            cooldown_seconds: 0.5,
+            health_regen: 0.02,
+            dormant_bias: -1.0,
+            mouthful: 20.0,
+            assimilation: 0.8,
         }
     }
 }
@@ -1751,6 +1922,8 @@ mod tests {
             next.world.founder_spread = 0.2;
             next.metabolism.k_muscle = 0.02;
             next.metabolism.k_mouth = 0.0;
+            next.combat.attack_cost = 12.0;
+            next.combat.reach = 6.0;
             assert!(current.check_retune(&next, GRID_CELL).is_ok());
         }
 
@@ -1854,10 +2027,11 @@ mod tests {
         fn the_founding_topology_is_frozen() {
             // These counts size the founding template and fan-in scales. Changing them
             // without rebuilding the plan would silently keep the previous topology.
-            let cases: [Case; 3] = [
+            let cases: [Case; 4] = [
                 ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
                 ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
                 ("brain.oscillators", |p| p.brain.oscillators += 1),
+                ("founder.bite", |p| p.founder.bite = true),
             ];
             for (name, mutate) in cases {
                 let (current, mut next) = pair();
@@ -1967,6 +2141,30 @@ mod tests {
         assert!(
             serde_json::from_str::<SimParams>(r#"{"storage":{"gene_per_slot":300}}"#,).is_err()
         );
+    }
+
+    #[test]
+    fn a_world_too_large_to_square_distances_across_is_refused() {
+        // Copilot's scale: a 1e20 world whose biting founders reach 3e19 validated, yet a
+        // squared distance across it overflows f32 and a target in reach was missed.
+        let mut params = SimParams::default();
+        params.world.size = 1e20;
+        params.sensing.vision_range = 1e19;
+        params.sensing.chemo_radius = 1e19;
+        params.plants.patchiness = 0.0;
+        params.founder.bite = true;
+        params.combat.reach = 3e19;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "world.size must be at most 1e18, so a squared distance across it stays finite"
+            ))
+        );
+        params.world.size = 1e18;
+        params.sensing.vision_range = 1e17;
+        params.sensing.chemo_radius = 1e17;
+        params.combat.reach = 3e17;
+        assert_eq!(params.validate(), Ok(()));
     }
 
     #[test]
@@ -2151,7 +2349,7 @@ mod tests {
         let muscle = "body.muscle_range must be positive, finite, and contain 1";
         let mouth = "body.mouth_range must be positive, finite, and contain 1";
         let reach = "the largest body's feeding reach exceeds half the world; the hash cannot wrap";
-        let overflow = "body ranges let a body's acceleration, upkeep, or intake overflow";
+        let overflow = "body ranges let a body's acceleration, upkeep, intake, or bite overflow";
         let movement = "movement limits let a tick's turn, speed, or step overflow";
         let cases: Vec<(&str, BreakIt)> = vec![
             (size, |p| p.body.size_range = [0.0, 6.0]),
@@ -2201,6 +2399,87 @@ mod tests {
         // A one-point range is a trait that cannot evolve, which is allowed.
         let mut params = SimParams::default();
         params.body.muscle_range = [1.0, 1.0];
+        assert_eq!(params.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_founder_reach_binds_only_worlds_whose_founders_bite() {
+        // A small world without the bite, as every world before it was, need not fit a
+        // founder's bite it will never build.
+        let mut params = SimParams::default();
+        params.world.size = 30.0;
+        params.sensing.vision_range = 10.0;
+        params.sensing.chemo_radius = 10.0;
+        params.plants.dispersal_radius = 10.0;
+        params.plants.patch_scale = 10.0;
+        params.combat.reach = 16.0;
+        assert_eq!(params.validate(), Ok(()));
+        params.founder.bite = true;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "a founder's bite must reach no further than half the world"
+            ))
+        );
+        params.combat.reach = 15.0;
+        assert_eq!(params.validate(), Ok(()));
+    }
+
+    #[test]
+    fn combat_params_are_bounded() {
+        // Each break must fail on its own check, not on whichever runs first.
+        type BreakIt = fn(&mut SimParams);
+        let gate = "combat.gate must be finite and non-negative";
+        let bias = "combat.dormant_bias must be finite";
+        let arc = "combat.arc must be in [0, π] radians";
+        let amounts = "combat reach, attack cost, health regeneration, and mouthful must be finite and non-negative";
+        let fractions = "combat.attack_damage and combat.assimilation must be in [0, 1]";
+        let cooldown = "combat.cooldown_seconds must be non-negative and countable in ticks";
+        let reach = "a founder's bite must reach no further than half the world";
+        let overflow = "body ranges let a body's acceleration, upkeep, intake, or bite overflow";
+        let healing = "combat.health_regen must be zero or heal a representable step each tick";
+        let cases: Vec<(&str, BreakIt)> = vec![
+            (gate, |p| p.combat.gate = f32::NAN),
+            (gate, |p| p.combat.gate = -0.1),
+            (bias, |p| p.combat.dormant_bias = f32::INFINITY),
+            (arc, |p| p.combat.arc = 3.2),
+            (arc, |p| p.combat.arc = -0.1),
+            (amounts, |p| p.combat.reach = -1.0),
+            (amounts, |p| p.combat.attack_cost = f32::INFINITY),
+            (amounts, |p| p.combat.health_regen = -0.5),
+            (amounts, |p| p.combat.mouthful = f32::NAN),
+            (fractions, |p| p.combat.attack_damage = 1.5),
+            (fractions, |p| p.combat.assimilation = -0.1),
+            (cooldown, |p| p.combat.cooldown_seconds = -1.0),
+            (cooldown, |p| p.combat.cooldown_seconds = 1e30),
+            // 2³² ticks: past the count, though `u32::MAX as f32` would let it through.
+            (cooldown, |p| {
+                p.world.dt = 1.0;
+                p.combat.cooldown_seconds = 4_294_967_296.0;
+            }),
+            // 2e-8 a tick rounds away against a health near full, so it never heals.
+            (healing, |p| p.world.dt = 1e-6),
+            (healing, |p| p.combat.health_regen = 1e-9),
+            (reach, |p| {
+                p.founder.bite = true;
+                p.combat.reach = 500.5;
+            }),
+            // A hit at the widest gape asks for mouthful · 8².
+            (overflow, |p| p.combat.mouthful = f32::MAX),
+        ];
+        for (message, break_it) in cases {
+            let mut params = SimParams::default();
+            break_it(&mut params);
+            assert_eq!(params.validate(), Err(ParamError(message)));
+        }
+        // Every bound is inclusive.
+        let mut params = SimParams::default();
+        params.combat.gate = 0.0;
+        params.combat.arc = core::f32::consts::PI;
+        params.combat.attack_damage = 1.0;
+        params.combat.assimilation = 0.0;
+        params.combat.cooldown_seconds = 0.0;
+        params.combat.reach = 0.0;
         assert_eq!(params.validate(), Ok(()));
     }
 

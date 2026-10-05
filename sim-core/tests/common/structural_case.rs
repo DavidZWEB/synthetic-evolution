@@ -8,11 +8,12 @@ use sim_core::control::BrainInheritance;
 use sim_core::mutate::structural::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-// Phase 3 M2 refresh: founders carry muscle and mouth genes, and the hash covers both
-// (spec §3.5). M5's coverage-only refresh before it added lifetime birth identities
+// Phase 3 M3 coverage refresh: the hash covers each agent's bite cooldown (spec §4.2).
+// Before it, Phase 3 M2's founders gained muscle and mouth genes and the hash covered
+// both (spec §3.5), and M5's coverage-only refresh added lifetime birth identities
 // (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x52bf_f67e_f2c9_49fd;
-pub const CONTROL_GOLDEN: u64 = 0x5623_198a_a944_33b8;
+pub const EVOLVING_GOLDEN: u64 = 0x52f6_5937_bd17_1a4d;
+pub const CONTROL_GOLDEN: u64 = 0x8366_dd2c_be83_d958;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();

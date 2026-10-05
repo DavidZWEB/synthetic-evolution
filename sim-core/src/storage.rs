@@ -245,20 +245,23 @@ impl AllocationRequests {
         self.buffers::<u32>(agents, 2)?;
         // Agents: position/velocity/signature, orientation, energy reserve,
         // energy/health/size/muscle/mouth/sensor load, age/species/parents/grid/brain
-        // units, handles.
+        // units/bite cooldown, handles.
         self.buffers::<Vec3>(agents, 3)?;
         self.buffer::<Quat>(agents)?;
         self.buffer::<f64>(agents)?;
         self.buffers::<f32>(agents, 6)?;
-        self.buffers::<u32>(agents, 6)?;
+        self.buffers::<u32>(agents, 7)?;
         self.buffers::<Block>(agents, 6)?;
-        // Intents: thrust, turn, ingest, reproduce.
-        self.buffers::<f32>(agents, 4)?;
+        // Intents: thrust, turn, ingest, reproduce, and the bite's drive, azimuth, and
+        // reach.
+        self.buffers::<f32>(agents, 7)?;
         // Fixed-stride parts: one f32 and one free-list index per slot (spec §9.1).
         self.buffer::<f32>(agents)?;
         self.buffer::<u32>(agents)?;
         // Deferred deaths/births. Command queues start empty and request no storage.
-        self.buffers::<AgentId>(agents, 2)
+        self.buffers::<AgentId>(agents, 2)?;
+        // Step 7's fixed swings, at most one per agent.
+        self.buffer::<crate::combat::Swing>(agents)
     }
 
     fn founder_plan(

@@ -84,6 +84,9 @@ pub struct FounderPlan {
     /// [`SimParams`] at instantiation, so changing it at runtime takes effect without
     /// rebuilding the plan.
     fan_in_scale: Vec<f32>,
+    /// The output neuron a founder's bite reads, when founders carry one. Its bias
+    /// starts at `combat.dormant_bias` rather than a draw (spec §4.2).
+    bite: Option<InnovationId>,
 }
 
 impl FounderPlan {
@@ -101,14 +104,17 @@ impl FounderPlan {
             .checked_add(u64::from(params.brain.hidden_neurons))?
             .checked_add(u64::from(params.brain.oscillators))?;
         let sinks = (EFFECTORS.len() as u64).checked_add(u64::from(params.brain.hidden_neurons))?;
-        let neurons = sources.checked_add(EFFECTORS.len() as u64)?;
+        // A founder's bite reads one more output neuron, which no founder wiring reaches.
+        let outputs = (EFFECTORS.len() as u64).checked_add(u64::from(params.founder.bite))?;
+        let neurons = sources.checked_add(outputs)?;
         let fan_in = params
             .brain
             .connections_per_target
             .map_or(sources, |count| u64::from(count).min(sources));
         let connections = fan_in.checked_mul(sinks)?;
         let other_genes = sensors
-            .checked_add((EFFECTORS.len() + BODY_TRAITS.len() + META_TRAITS.len()) as u64)?;
+            .checked_add(outputs)?
+            .checked_add((BODY_TRAITS.len() + META_TRAITS.len()) as u64)?;
         let genes = neurons.checked_add(connections)?.checked_add(other_genes)?;
         Some(FounderCounts {
             sensor_channels: u32::try_from(sensor_channels).ok()?,
@@ -116,7 +122,7 @@ impl FounderPlan {
             genes: u32::try_from(genes).ok()?,
             sensors: u32::try_from(sensors).ok()?,
             synapses: u32::try_from(connections).ok()?,
-            effectors: EFFECTORS.len() as u32,
+            effectors: u32::try_from(outputs).ok()?,
         })
     }
 
@@ -138,6 +144,7 @@ impl FounderPlan {
         ))?;
         let sensor_channels = counts.sensor_channels as usize;
         let neurons = counts.neurons as usize;
+        let outputs = counts.effectors as usize;
         let hidden = params.brain.hidden_neurons as usize;
         let oscillators = params.brain.oscillators as usize;
 
@@ -176,12 +183,16 @@ impl FounderPlan {
             }));
         }
 
-        // Effectors read the output neurons that follow the inputs.
-        for (i, &action) in EFFECTORS.iter().enumerate() {
+        // Effectors read the output neurons that follow the inputs, the bite last.
+        let bite = (outputs > EFFECTORS.len()).then_some(Action::Bite);
+        for (i, action) in EFFECTORS.into_iter().chain(bite).enumerate() {
             genes.push(Gene::Effector(EffectorGene {
                 id: next_id(),
                 action,
-                // V1 uses yaw, but the gene must retain its turn axis (spec §9.1).
+                // V1 uses yaw, but the gene must retain its turn axis (spec §9.1). A
+                // bite's reach is live, so like a sensor's range it is written by
+                // `instantiate`: the template a restore rebuilds from retuned params
+                // must be the one this world was built with.
                 params: if action == Action::Turn {
                     [0.0, 0.0, 1.0, 0.0]
                 } else {
@@ -192,9 +203,10 @@ impl FounderPlan {
         }
 
         // Inputs, hidden neurons and oscillators can source connections; only outputs
-        // and hidden neurons receive them in the founding template (spec §3.3).
+        // and hidden neurons receive them in the founding template (spec §3.3). The
+        // bite's neuron receives none: a founder's bite starts dormant (spec §4.2).
         let input_end = sensor_channels;
-        let output_end = input_end + EFFECTORS.len();
+        let output_end = input_end + outputs;
         let hidden_range = output_end..output_end + hidden;
         let oscillator_range = output_end + hidden..neurons;
 
@@ -202,7 +214,9 @@ impl FounderPlan {
             .chain(hidden_range.clone())
             .chain(oscillator_range)
             .collect();
-        let sinks: Vec<usize> = (input_end..output_end).chain(hidden_range).collect();
+        let sinks: Vec<usize> = (input_end..input_end + EFFECTORS.len())
+            .chain(hidden_range)
+            .collect();
 
         let fan_in = params
             .brain
@@ -272,6 +286,7 @@ impl FounderPlan {
             genes,
             neurons,
             fan_in_scale,
+            bite: bite.map(|_| neuron_ids[output_end - 1]),
         })
     }
 
@@ -351,12 +366,14 @@ impl FounderPlan {
         );
     }
 
+    /// `founding` is a new founder rather than a control's redraw: it also initializes
+    /// sensors, body, meta genes, and the bite, and starts the bite's neuron dormant.
     fn randomize_scalars(
         &self,
         rng: &mut Rng,
         params: &SimParams,
         out: &mut [Gene],
-        include_non_neural: bool,
+        founding: bool,
         fan_in: Option<&[u32]>,
     ) {
         let brain = &params.brain;
@@ -364,7 +381,14 @@ impl FounderPlan {
         let (neurons, rest) = out.split_at_mut(count);
         for gene in neurons.iter_mut() {
             if let Gene::Neuron(n) = gene {
-                n.bias = rng.range(-1.0, 1.0);
+                // Keyed off the template's id, never a value, so draws stay in step. The
+                // random control redraws it with every other bias, as it redraws every
+                // neural scalar (spec §7.8).
+                n.bias = if founding && Some(n.id) == self.bite {
+                    params.combat.dormant_bias
+                } else {
+                    rng.range(-1.0, 1.0)
+                };
                 n.tau = rng.range(brain.tau_min, brain.tau_max);
                 if n.activation == Activation::Oscillator {
                     n.period = rng.range(brain.oscillator_period_min, brain.oscillator_period_max);
@@ -391,13 +415,13 @@ impl FounderPlan {
                     c.weight = rng.range(-scale, scale);
                 }
                 Gene::Sensor(s) => {
-                    if !include_non_neural {
+                    if !founding {
                         continue;
                     }
                     s.params = sensor_parameters(s.modality, &params.sensing, rng);
                 }
                 Gene::Body(b) => {
-                    if !include_non_neural {
+                    if !founding {
                         continue;
                     }
                     b.value = match b.trait_ {
@@ -412,7 +436,7 @@ impl FounderPlan {
                     };
                 }
                 Gene::Meta(m) => {
-                    if !include_non_neural {
+                    if !founding {
                         continue;
                     }
                     m.value = match m.trait_ {
@@ -421,7 +445,13 @@ impl FounderPlan {
                         MetaTrait::CrossoverRate => 0.0,
                     }
                 }
-                Gene::Effector(_) => {}
+                Gene::Effector(e) => {
+                    // Live, as a sensor's range is: a retuned reach reaches later
+                    // founders, not the living.
+                    if founding && e.action == Action::Bite {
+                        e.params = [0.0, 0.0, params.combat.reach, 0.0];
+                    }
+                }
             }
         }
         if fan_in.is_none() {
@@ -522,17 +552,20 @@ mod tests {
             (12, 1, 1, 32, 4),
         ] {
             for fan_in in [None, Some(0), Some(1), Some(2), Some(u32::MAX)] {
-                let mut params = SimParams::default();
-                params.species.capacity = 0;
-                params.storage.max_genes = 4_096;
-                params.storage.max_connections = 4_096;
-                params.sensing.vision_rays = rays;
-                params.sensing.chemo_sensors = chemo;
-                params.sensing.energy_sensors = energy;
-                params.brain.hidden_neurons = hidden;
-                params.brain.oscillators = oscillators;
-                params.brain.connections_per_target = fan_in;
-                assert_counts_and_wiring(&params, 42);
+                for bite in [false, true] {
+                    let mut params = SimParams::default();
+                    params.species.capacity = 0;
+                    params.storage.max_genes = 4_096;
+                    params.storage.max_connections = 4_096;
+                    params.sensing.vision_rays = rays;
+                    params.sensing.chemo_sensors = chemo;
+                    params.sensing.energy_sensors = energy;
+                    params.brain.hidden_neurons = hidden;
+                    params.brain.oscillators = oscillators;
+                    params.brain.connections_per_target = fan_in;
+                    params.founder.bite = bite;
+                    assert_counts_and_wiring(&params, 42);
+                }
             }
         }
     }
@@ -583,16 +616,26 @@ mod tests {
             .concat()
         );
         assert_eq!(counts.effectors as usize, effectors.len());
-        assert_eq!(effectors, EFFECTORS);
+        let bite = params.founder.bite.then_some(Action::Bite);
+        assert_eq!(
+            effectors,
+            EFFECTORS.into_iter().chain(bite).collect::<Vec<_>>()
+        );
         assert_eq!(counts.synapses as usize, pairs.len());
         pairs.sort();
         pairs.dedup();
         assert_eq!(counts.synapses as usize, pairs.len(), "duplicate edge");
 
+        // Wired sinks: the four standing outputs and the hidden layer. A founder's bite
+        // reads the last output, which receives nothing (spec §4.2).
         let inputs = channels.len();
-        let output_end = inputs + EFFECTORS.len();
+        let output_end = inputs + effectors.len();
         let hidden_end = output_end + params.brain.hidden_neurons as usize;
-        let sources = plan.neuron_count() - EFFECTORS.len();
+        let sinks = |slot: usize| {
+            (inputs..inputs + EFFECTORS.len()).contains(&slot)
+                || (output_end..hidden_end).contains(&slot)
+        };
+        let sources = plan.neuron_count() - effectors.len();
         let fan_in = params
             .brain
             .connections_per_target
@@ -604,11 +647,7 @@ mod tests {
                 .count();
             assert_eq!(
                 incoming,
-                if (inputs..hidden_end).contains(&slot) {
-                    fan_in
-                } else {
-                    0
-                },
+                if sinks(slot) { fan_in } else { 0 },
                 "wrong fan-in at neuron {slot}"
             );
         }
@@ -616,7 +655,7 @@ mod tests {
             let source = genome::neuron_index(&genes, from).unwrap();
             let target = genome::neuron_index(&genes, to).unwrap();
             assert!(source < inputs || source >= output_end);
-            assert!((inputs..hidden_end).contains(&target));
+            assert!(sinks(target));
         }
         assert_eq!(plan.fan_in_scale.len(), counts.synapses as usize);
         assert!(
@@ -1014,6 +1053,46 @@ mod tests {
                 assert_eq!(before, after);
             }
         }
+    }
+
+    #[test]
+    fn a_founders_bite_starts_dormant_with_the_live_reach() {
+        // The bite reads its own neuron, biased below the gate and wired to nothing,
+        // so no founder swings until mutation finds it (spec §4.2).
+        let mut params = SimParams::default();
+        params.founder.bite = true;
+        let plan = plan(&params);
+        params.combat.reach = 6.0;
+        let genes = instantiate(&plan, &params, 9);
+        let bite = genes
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Effector(effector) if effector.action == Action::Bite => Some(*effector),
+                _ => None,
+            })
+            .expect("a bite");
+        assert_eq!(bite.params, [0.0, 0.0, 6.0, 0.0], "built at the live reach");
+        let neuron = |genes: &[Gene]| {
+            genes
+                .iter()
+                .find_map(|gene| match gene {
+                    Gene::Neuron(neuron) if neuron.id == bite.source => Some(*neuron),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(neuron(&genes).bias, params.combat.dormant_bias);
+        assert_eq!(neuron(&genes).activation, Activation::Sigmoid);
+        assert!(
+            genes.iter().all(|gene| !matches!(gene,
+                Gene::Connection(c) if c.from == bite.source || c.to == bite.source)),
+            "a founder wired its bite"
+        );
+        // The random control redraws every neural scalar, the bite's bias included.
+        let mut redrawn = genes.clone();
+        let mut fan_in = vec![0; genes.len()];
+        plan.randomize_brain(&mut Rng::from_seed(3), &params, &mut redrawn, &mut fan_in);
+        assert_ne!(neuron(&redrawn).bias, params.combat.dormant_bias);
     }
 
     #[test]

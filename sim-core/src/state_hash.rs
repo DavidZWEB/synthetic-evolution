@@ -9,7 +9,7 @@
 //! So the rule for this module is the opposite of the usual one. Elsewhere a field
 //! nothing reads is dead weight; here a field nothing reads is folded anyway, because
 //! the question is not "does this matter today" but "could a change to it go unnoticed".
-//! `health` and `species_id` have no Phase 1 behaviour and are folded.
+//! `species_id` steers nothing in the tick and is folded all the same.
 //!
 //! Every variable-length run folds its **length first**. Without that, a genome of one
 //! gene followed by a plant could produce the same bytes as no genes followed by a
@@ -239,6 +239,7 @@ impl World {
             h.f32(agents.energy[i]);
             h.f64(agents.energy_reserve[i]);
             h.f32(agents.health[i]);
+            h.u32(agents.cooldown[i]);
             h.u32(agents.age[i]);
             h.u32(if include_metadata {
                 agents.species_id[i]

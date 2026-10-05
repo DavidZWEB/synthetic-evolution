@@ -98,17 +98,24 @@ const PARAMS = {
     energy_fraction: f, decay: f, min_energy: f, max_corpses: u, radius: f,
     signature: ['finite', 3],
   },
+  combat: {
+    gate: f, reach: f, arc: f, attack_cost: f, attack_damage: f, cooldown_seconds: f,
+    health_regen: f, dormant_bias: f, mouthful: f, assimilation: f,
+  },
+  founder: { bite: 'boolean' },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
 
 /**
  * Params fields added after archives were first written. An older archive omits them
- * because it ran without them, which their zero default describes exactly.
+ * because it ran without them, and the archive reader restores each as that run had it
+ * (`shells/shared/later_params.rs`): mostly zero, and no combat at all before the bite.
  */
 const LATER_PARAMS = new Set([
   'add_oscillator_rate', 'grazing_lag', 'patchiness', 'patch_scale', 'death_stock',
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
+  'combat', 'founder',
 ]);
 
 export function integerParam(path) {
@@ -125,8 +132,17 @@ export function validateParamsShape(value, shape = PARAMS, path = 'params') {
     const keys = Object.keys(shape).filter((key) => !LATER_PARAMS.has(key) || Object.hasOwn(value ?? {}, key));
     object(value, keys, path);
     for (const key of keys) validateParamsShape(value[key], shape[key], `${path}.${key}`);
+    // Every writer records both since the bite, and neither before it. Founders that
+    // could not bite do not make a world biteless, because an imported genome may
+    // carry a bite, and today's defaults could describe attack rules it never had.
+    if (shape === PARAMS) {
+      requireThat(Object.hasOwn(value, 'founder') === Object.hasOwn(value, 'combat'),
+        'params.founder and params.combat must be recorded together');
+    }
   } else if (shape === f) {
     requireThat(typeof value === 'number' && Number.isFinite(value), `${path} must be finite`);
+  } else if (shape === 'boolean') {
+    requireThat(typeof value === 'boolean', `${path} must be true or false`);
   } else if (shape !== 'nullable-u32' || value !== null) {
     uint(value, path, shape === 'integer' ? Number.MAX_SAFE_INTEGER : U32_MAX);
   }

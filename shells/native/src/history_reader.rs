@@ -12,7 +12,7 @@ use sim_core::control::RANDOMIZED_AT_BIRTH_PROTOCOL;
 use sim_core::ids::{BirthId, SpeciesId};
 
 #[path = "../../shared/later_params.rs"]
-mod later_params;
+pub(crate) mod later_params;
 use later_params::LATER_PARAMS;
 
 use crate::Result;
@@ -226,7 +226,8 @@ fn validate_cohort(header: &Header, cohort: Cohort) -> Result<()> {
 /// archived run actually had.
 fn restore_later_params(params: &mut sim_core::SimParams, line: &[u8]) -> Result<()> {
     let wire: serde_json::Value = serde_json::from_slice(line)?;
-    later_params::restore(params, &wire["data"]["params"]);
+    later_params::restore(params, &wire["data"]["params"])
+        .map_err(|reason| io::Error::new(io::ErrorKind::InvalidData, reason))?;
     Ok(())
 }
 
@@ -567,6 +568,8 @@ mod tests {
                 assert_ne!(header.params.mutation.body_trait_sigma, 0.0);
                 // Stand in for the nonzero rate calibration will ship.
                 header.params.mutation.body_trait_rate = 0.1;
+                // And for founders that bite, should calibration ship that default.
+                header.params.founder.bite = true;
                 assert_ne!(header.params.plants.patch_scale, 0.0);
                 assert_ne!(header.params.plants.death_seconds, 0.0);
             }
@@ -586,6 +589,8 @@ mod tests {
                 assert_eq!(header.params.body.size_range, [size, size]);
                 assert_eq!(header.params.body.muscle_range, [1.0, 1.0]);
                 assert_eq!(header.params.body.mouth_range, [1.0, 1.0]);
+                assert!(!header.params.founder.bite, "a pre-Phase-3 founder bit");
+                assert_eq!(header.params.combat, later_params::no_combat());
             } else {
                 // A field the archive wrote is its own value, not one to reset.
                 assert_eq!(header.params.metabolism.k_muscle, 0.008);
@@ -593,6 +598,7 @@ mod tests {
                 assert_eq!(header.params.mutation.body_trait_sigma, 0.05);
                 assert_eq!(header.params.body.size_range, [1.5, 6.0]);
                 assert_eq!(header.params.body.muscle_range, [0.25, 4.0]);
+                assert_eq!(header.params.combat.mouthful, 20.0);
             }
             if !present {
                 assert_eq!(header.params.plants.patch_scale, 0.0);
@@ -601,5 +607,100 @@ mod tests {
                 assert_eq!(header.params.plants.dispersal_radius, 0.0);
             }
         }
+    }
+
+    #[test]
+    fn an_archive_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+        // Today's combat defaults are not inert against an older run's params: half a
+        // second is 5 billion ticks of 1e-10 s, and a mouthful of 20 overflows a mouth
+        // range reaching 5e18 that grazing at rate 1 does not. A run without a bite
+        // reads with none.
+        let fixture = include_bytes!("../tests/fixtures/history-v2-root.ndjson");
+        let header = fixture
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let edits: [fn(&mut serde_json::Value); 2] = [
+            |params| params["world"]["dt"] = serde_json::json!(1e-10),
+            |params| {
+                params["feeding"]["rate"] = serde_json::json!(1.0);
+                params["body"]["mouth_range"] = serde_json::json!([1.0, 5e18]);
+            },
+        ];
+        for edit in edits {
+            let mut wire: serde_json::Value = serde_json::from_slice(header).unwrap();
+            edit(&mut wire["data"]["params"]);
+            let mut archive = serde_json::to_vec(&wire).unwrap();
+            archive.push(b'\n');
+            archive.extend_from_slice(&fixture[header.len()..]);
+            let (header, _) = parse_archive(&archive[..]).unwrap();
+            assert_eq!(header.params.combat, later_params::no_combat());
+        }
+    }
+
+    #[test]
+    fn an_archive_whose_founders_bite_must_record_their_combat() {
+        // Filling an absent `combat` from today's defaults could describe attack rules
+        // the run never had.
+        let line = include_bytes!("../tests/fixtures/history-v1.ndjson")
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let mut wire: serde_json::Value = serde_json::from_slice(line).unwrap();
+        wire["data"]["params"]["founder"]["bite"] = serde_json::json!(true);
+        let restored = |wire: &serde_json::Value| {
+            let line = serde_json::to_vec(wire).unwrap();
+            let ArchiveRecord::Header(mut header) = serde_json::from_slice(&line).unwrap() else {
+                panic!("first record is the header");
+            };
+            restore_later_params(&mut header.params, &line)
+        };
+        assert!(restored(&wire).is_ok(), "recorded combat reads");
+        let mut partial = wire.clone();
+        partial["data"]["params"]["combat"]
+            .as_object_mut()
+            .unwrap()
+            .remove("mouthful");
+        assert!(
+            restored(&partial).is_err(),
+            "a missing field read as today's"
+        );
+        let mut empty = wire.clone();
+        empty["data"]["params"]["combat"] = serde_json::json!({});
+        assert!(restored(&empty).is_err(), "empty combat read as today's");
+        // Without a bite, a section the archive wrote must still be complete.
+        let mut biteless = wire.clone();
+        biteless["data"]["params"]["founder"]["bite"] = serde_json::json!(false);
+        assert!(restored(&biteless).is_ok());
+        let mut empty_founder = biteless.clone();
+        empty_founder["data"]["params"]["founder"] = serde_json::json!({});
+        assert!(
+            restored(&empty_founder).is_err(),
+            "an empty founder read as today's"
+        );
+        let mut biteless_empty_combat = biteless.clone();
+        biteless_empty_combat["data"]["params"]["combat"] = serde_json::json!({});
+        assert!(
+            restored(&biteless_empty_combat).is_err(),
+            "empty combat without a bite"
+        );
+        // Recorded together or not at all: biteless founders do not make a world
+        // biteless, because an imported genome may still bite.
+        for (section, bite) in [("combat", true), ("combat", false), ("founder", false)] {
+            let mut alone = wire.clone();
+            alone["data"]["params"]["founder"]["bite"] = serde_json::json!(bite);
+            alone["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+            assert!(restored(&alone).is_err(), "{section} unrecorded alone");
+        }
+        for section in ["combat", "founder"] {
+            wire["data"]["params"]
+                .as_object_mut()
+                .unwrap()
+                .remove(section);
+        }
+        assert!(restored(&wire).is_ok(), "an archive from before the bite");
     }
 }

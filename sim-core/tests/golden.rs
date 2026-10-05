@@ -46,6 +46,14 @@ mod structural_null_case;
 #[path = "common/bodies_case.rs"]
 mod bodies_case;
 
+#[path = "common/combat_case.rs"]
+mod combat_case;
+
+#[test]
+fn bites_match_their_reference_in_every_mode() {
+    combat_case::check_combat_runs();
+}
+
 #[test]
 fn body_trait_mutation_matches_its_reference_in_every_mode() {
     bodies_case::check_body_runs();

@@ -13,6 +13,7 @@ pub mod arena;
 pub mod brain;
 pub mod checkpoint;
 pub mod chemo;
+mod combat;
 pub mod command;
 pub mod control;
 pub mod corpses;

@@ -6,7 +6,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use serde_json::{Value, json};
-use wasm::{Sim, compare_representatives};
+use wasm::{Sim, compare_representatives, validate_archive_params, validate_params};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -71,8 +71,131 @@ fn an_archive_from_before_evolving_bodies_reads_as_the_run_it_recorded() {
     for field in ["body_trait_rate", "body_trait_sigma"] {
         older["mutation"].as_object_mut().unwrap().remove(field);
     }
+    for section in ["combat", "founder"] {
+        older.as_object_mut().unwrap().remove(section);
+    }
     let older = older.to_string();
     let same: Value =
         serde_json::from_str(&compare_representatives(&genes, &genes, &older).unwrap()).unwrap();
     assert_eq!(same["value"], 0.0);
+}
+
+#[wasm_bindgen_test]
+fn a_small_world_from_before_the_bite_reads_without_a_founder_bite() {
+    // Its founders never bit, so a bite reach that no 30-unit world could fit past two
+    // of its largest bodies must not refuse it.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let mut older: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+    older["world"]["size"] = json!(30.0);
+    older["sensing"]["vision_range"] = json!(10.0);
+    older["sensing"]["chemo_radius"] = json!(10.0);
+    older["plants"]["dispersal_radius"] = json!(10.0);
+    older["plants"]["patch_scale"] = json!(10.0);
+    for section in ["combat", "founder"] {
+        older.as_object_mut().unwrap().remove(section);
+    }
+    let older = older.to_string();
+    let same: Value =
+        serde_json::from_str(&compare_representatives(&genes, &genes, &older).unwrap()).unwrap();
+    assert_eq!(same["value"], 0.0);
+}
+
+#[wasm_bindgen_test]
+fn an_archive_from_before_the_bite_reads_at_any_timestep_or_mouth() {
+    // Today's combat defaults are not inert against an older run's params: half a
+    // second is 5 billion ticks of 1e-10 s, and a mouthful of 20 overflows a mouth
+    // range reaching 5e18. A run without a bite reads with none, as the native reader
+    // reads it.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let edits: [fn(&mut Value); 2] = [
+        |params| params["world"]["dt"] = json!(1e-10),
+        |params| params["body"]["mouth_range"] = json!([1.0, 5e18]),
+    ];
+    for edit in edits {
+        let mut older: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+        for section in ["combat", "founder"] {
+            older.as_object_mut().unwrap().remove(section);
+        }
+        edit(&mut older);
+        let same: Value = serde_json::from_str(
+            &compare_representatives(&genes, &genes, &older.to_string()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(same["value"], 0.0);
+    }
+}
+
+#[wasm_bindgen_test]
+fn loading_a_bundle_reads_its_archives_params_as_their_runs_had_them() {
+    // A saved run's history segment from before the bite, at a timestep today's combat
+    // could not count, is read as the native reader reads it. A configuration made
+    // today is still held to today's rules.
+    let today = validate_params(Some(
+        json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4}}).to_string(),
+    ))
+    .unwrap();
+    let mut older: Value = serde_json::from_str(&today).unwrap();
+    for section in ["combat", "founder"] {
+        older.as_object_mut().unwrap().remove(section);
+    }
+    older["world"]["dt"] = json!(1e-10);
+    let read: Value =
+        serde_json::from_str(&validate_archive_params(older.to_string()).unwrap()).unwrap();
+    assert_eq!(read["combat"]["cooldown_seconds"], 0.0);
+    assert_eq!(read["founder"]["bite"], false);
+    assert!(validate_params(Some(older.to_string())).is_err());
+    // An archive still records founder and combat together, or neither.
+    let mut alone = older.clone();
+    alone["founder"] = json!({"bite": false});
+    assert!(validate_archive_params(alone.to_string()).is_err());
+}
+
+#[wasm_bindgen_test]
+fn an_archive_whose_founders_bite_must_record_their_combat() {
+    // Today's defaults could describe attack rules the run never had.
+    let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},
+        "species": {"capacity": 8, "threshold": 0.000001}})
+    .to_string();
+    let mut sim = Sim::new(7, Some(params)).unwrap();
+    sim.enable_history(16, Some(65_536)).unwrap();
+    assert_eq!(sim.seed_founders(1), 1);
+    let drain: Value = serde_json::from_str(&sim.drain_history().unwrap()).unwrap();
+    let genes = drain["records"][0]["data"]["representative"]["genes"].to_string();
+    let mut biting: Value = serde_json::from_str(&sim.params_json().unwrap()).unwrap();
+    biting["founder"]["bite"] = json!(true);
+    assert!(compare_representatives(&genes, &genes, &biting.to_string()).is_ok());
+    let mut empty = biting.clone();
+    empty["combat"] = json!({});
+    assert!(compare_representatives(&genes, &genes, &empty.to_string()).is_err());
+    // Without a bite, a present section must still be complete.
+    empty["founder"]["bite"] = json!(false);
+    assert!(compare_representatives(&genes, &genes, &empty.to_string()).is_err());
+    let mut empty_founder = biting.clone();
+    empty_founder["founder"] = json!({});
+    assert!(compare_representatives(&genes, &genes, &empty_founder.to_string()).is_err());
+    // Recorded together or not at all: biteless founders do not make a world biteless,
+    // because an imported genome may still bite.
+    for (section, bite) in [("combat", true), ("combat", false), ("founder", false)] {
+        let mut alone = biting.clone();
+        alone["founder"]["bite"] = json!(bite);
+        alone.as_object_mut().unwrap().remove(section);
+        assert!(
+            compare_representatives(&genes, &genes, &alone.to_string()).is_err(),
+            "{section} unrecorded alone"
+        );
+    }
 }

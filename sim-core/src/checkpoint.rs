@@ -29,7 +29,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 7;
+pub const CHECKPOINT_FORMAT: u32 = 8;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -107,6 +107,7 @@ struct AgentState {
     energy: f32,
     energy_reserve: f64,
     health: f32,
+    cooldown: u32,
     age: u32,
     species_id: u32,
     signature: Vec3,
@@ -195,6 +196,7 @@ impl World {
                     energy: a.energy[i],
                     energy_reserve: a.energy_reserve[i],
                     health: a.health[i],
+                    cooldown: a.cooldown[i],
                     age: a.age[i],
                     species_id: a.species_id[i],
                     signature: a.signature[i],
@@ -373,6 +375,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         if genome::validate(genes).is_err()
             || spawn::validate_limits(genes, &world.params.storage).is_err()
             || spawn::validate_sensor_parameters(genes, grid_cell, channels).is_err()
+            || spawn::validate_effector_parameters(genes, world.params.world.size).is_err()
         {
             return Err(invalid(
                 "an agent genome is incoherent or exceeds its limits",
@@ -421,12 +424,15 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
             // one would hand dissipation a negative amount on death.
             || !(agent.energy.is_finite() && agent.energy >= 0.0)
             || !(agent.energy_reserve.is_finite() && agent.energy_reserve >= 0.0)
-            || !agent.health.is_finite()
             || !(agent.size.is_finite() && agent.size > 0.0)
         {
             return Err(invalid(
                 "agent physical state must be finite, with non-negative energy",
             ));
+        }
+        // Saved between ticks, after step 10 removed every agent a bite left at 0.
+        if !(agent.health > 0.0 && agent.health <= 1.0) {
+            return Err(invalid("a living agent's health must lie in (0, 1]"));
         }
         if agent.birth_id != BirthId::NULL.raw() && agent.birth_id >= c.next_birth {
             return Err(invalid("an agent birth ID was never issued"));
@@ -492,6 +498,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.energy[i] = agent.energy;
         a.energy_reserve[i] = agent.energy_reserve;
         a.health[i] = agent.health;
+        a.cooldown[i] = agent.cooldown;
         a.age[i] = agent.age;
         a.species_id[i] = agent.species_id;
         a.signature[i] = agent.signature;
@@ -679,7 +686,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 16] = [
+        let cases: [(&str, Corrupt); 19] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -711,6 +718,16 @@ mod tests {
             ("body outside its range", |c| c.agents[0].size = 100.0),
             ("size unlike its gene", |c| c.agents[0].size *= 1.5),
             ("colour unlike its gene", |c| c.agents[0].signature.x = 0.0),
+            ("health at zero", |c| c.agents[0].health = 0.0),
+            ("health above full", |c| c.agents[0].health = 1.5),
+            ("bite aimed off the plane", |c| {
+                for gene in &mut c.agents[0].genome.values {
+                    if let Gene::Effector(effector) = gene {
+                        effector.action = crate::genome::Action::Bite;
+                        effector.params[1] = 0.5;
+                    }
+                }
+            }),
         ];
         for (name, corrupt) in cases {
             let mut c = checkpoint();

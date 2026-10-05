@@ -908,6 +908,33 @@ fn plant_ecology_never_allocates() {
 }
 
 #[test]
+fn swings_hits_and_kills_never_allocate() {
+    // Founders whose bites are awake from the start, packed within reach: swings
+    // rebuild the grid, find targets, wound, take mouthfuls, and kill, all inside the
+    // tick. The first swings kill, so there is no warm-up tick.
+    let mut params = SimParams::default();
+    params.world.max_agents = 64;
+    params.plants.max_plants = 64;
+    params.world.founder_spread = 0.02;
+    params.founder.bite = true;
+    params.combat.dormant_bias = 3.0;
+    params.combat.reach = 8.0;
+    params.combat.attack_damage = 1.0;
+    let mut world = World::new(21, params).expect("valid params");
+    world.seed_founders(48);
+    let founders = world.population();
+    let observed = count_allocations(|| {
+        for _ in 0..240 {
+            world.step();
+        }
+        std::hint::black_box(&world);
+    });
+    assert!(world.corpses().count() > 0, "no bite killed anything");
+    assert!(world.population() < founders);
+    assert_eq!(observed, 0, "biting allocated {observed} times");
+}
+
+#[test]
 fn corpse_creation_decay_and_feeding_never_allocate() {
     // A death leaves a corpse, rebuilding its grid; decomposition frees slots; feeding
     // reads both grids (spec §5.1). All of it runs inside the tick.

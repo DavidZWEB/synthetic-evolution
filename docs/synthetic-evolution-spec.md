@@ -827,7 +827,7 @@ Two of these are disproportionately valuable and cheap:
   2. Hits then apply in agent-index order.
 
   An earlier biter's mouthful therefore cannot drain a later one below `attack_cost` and cancel its swing. Damage accumulates, so order cannot decide who swings or who dies. Mouthfuls are taken in index order, as food is (§2.4): a victim holding less than every biter asks serves earlier slots first, and that is the one place index order shows.
-- **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. No mutation adds or removes effectors yet.
+- **Dormant founders.** Founders carry a bite only when `founder.bite` is set, which is part of the founding topology and fixed for a world's life. The bite starts dormant: it reads its own output neuron, which no founder connection reaches and whose bias starts at `combat.dormant_bias`, below the gate, so no founder swings. Biting appears only once mutation wires that neuron or moves its bias. Real predators arose this way, from grazers putting existing mouthparts to a new use (Hawaiian *Eupithecia* caterpillars descend from flower and seed eaters). Predation is therefore discovered by a lineage, then priced by selection, rather than seeded. No mutation adds or removes effectors yet, so `founder.bite` governs founders only: a world whose founders lack the bite bites only through genomes imported with one.
 
 ---
 
@@ -1453,10 +1453,10 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 7 since
-Phase 3's evolvable bodies added trait ranges, trait upkeep, and trait mutation to the
-params; format 6 had added corpses' params, slots, energies, and free order; earlier
-formats are refused), the originating run's
+manifest records the container and checkpoint formats (checkpoint format 8 since
+Phase 3's bite added combat and founder params; format 7 had added evolvable bodies'
+trait ranges, trait upkeep, and trait mutation, and format 6 corpses' params, slots,
+energies, and free order; earlier formats are refused), the originating run's
 provenance (kept unchanged across resumes), the build that wrote the bundle, the
 save tick, one cohort or both in canonical order with each checkpoint's state hash
 and length, and an ordered list of **history segments**. Each segment starts at a

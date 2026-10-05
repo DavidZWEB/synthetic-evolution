@@ -256,7 +256,7 @@
       const { checkpoints, texts } = sectionsOf(bytes, decoded);
       const segments = await validateSegments(manifest, texts, (text) => parseArchive(
         text,
-        (params) => JSON.parse(wasm.validate_params(JSON.stringify(params))),
+        (params) => JSON.parse(wasm.validate_archive_params(JSON.stringify(params))),
         (genes, params) => wasm.validate_representative(JSON.stringify(genes), JSON.stringify(params)),
       ));
       const store = await getHistoryStore();

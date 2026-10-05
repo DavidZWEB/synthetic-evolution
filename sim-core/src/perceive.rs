@@ -187,7 +187,7 @@ fn vision_ray(
 
     // Ray direction: the agent's facing, turned by the gene's azimuth. Elevation is
     // pinned to the plane for all of V1 (spec §4.1).
-    let heading = math::yaw_of(agent.orientation) + azimuth;
+    let heading = math::yaw_of(agent.orientation) + math::reduce_angle(azimuth);
     let ray = Ray {
         origin: agent.position,
         direction: Vec3::new(math::cos(heading), math::sin(heading), 0.0),
@@ -805,6 +805,41 @@ mod tests {
             neurons[1].input,
             neurons[2].input
         );
+    }
+
+    #[test]
+    fn an_imported_eye_turns_with_its_body_whatever_its_azimuth() {
+        // An import may carry any finite azimuth. At 2^26 a quarter turn of yaw added to
+        // it rounded away, so the eye kept looking one way however its agent turned.
+        // Targets are placed from the azimuth's own sine and cosine, turned by the yaw,
+        // so the eye must keep the direction the gene encodes as well as turn.
+        use core::f32::consts::FRAC_PI_2;
+        let azimuth = 67_108_864.0f32;
+        let (sin, cos) = (math::sin(azimuth), math::cos(azimuth));
+        let genes = one_sensor(Modality::VisionRay, [azimuth, 0.0, 60.0, 0.5]);
+        let sensors = compile_sensors(&genes);
+        let sees = |yaw: f32, target: f32| {
+            let (sy, cy) = (math::sin(target), math::cos(target));
+            let fixture = Fixture::new(vec![
+                Vec3::new(500.0, 500.0, 0.0),
+                Vec3::new(
+                    500.0 + 20.0 * (cos * cy - sin * sy),
+                    500.0 + 20.0 * (sin * cy + cos * sy),
+                    0.0,
+                ),
+            ]);
+            let mut neurons = neurons_for(&genes);
+            perceive(
+                &sensors,
+                &fixture.agent(0, yaw),
+                &fixture.view(),
+                &mut neurons,
+            );
+            neurons[0].input > 0.0
+        };
+        assert!(sees(0.0, 0.0));
+        assert!(!sees(FRAC_PI_2, 0.0), "the eye did not turn with its body");
+        assert!(sees(FRAC_PI_2, FRAC_PI_2));
     }
 
     #[test]

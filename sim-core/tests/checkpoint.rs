@@ -210,6 +210,26 @@ fn retuned_worlds_keep_their_original_grid() {
 }
 
 #[test]
+fn a_retuned_bite_reach_survives_a_checkpoint() {
+    // The reach reaches founders only through instantiation, so the founding template
+    // a restore rebuilds from the retuned params is the one the world was built with.
+    let mut biting = params();
+    biting.storage.max_effectors = 5;
+    biting.founder.bite = true;
+    let mut world = World::new(5, biting).unwrap();
+    world.seed_founders(6);
+    let mut longer = world.params().clone();
+    longer.combat.reach = 6.0;
+    world.set_params(longer).unwrap();
+    let mut restored = World::from_checkpoint(&world.checkpoint(), LIMITS).unwrap();
+    for _ in 0..100 {
+        world.step();
+        restored.step();
+    }
+    assert_eq!(restored.state_hash(), world.state_hash());
+}
+
+#[test]
 fn empty_and_fresh_worlds_round_trip() {
     for founders in [0, 3] {
         let mut world = World::new(5, params()).unwrap();
