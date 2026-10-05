@@ -788,7 +788,7 @@
     }}
     onspecies={() => setSpeciesOpen(!showSpecies)}
     speciesOpen={showSpecies}
-    speciesViewActive={colorMode !== 'signature' || selectedSpecies !== null}
+    colorViewActive={colorMode !== 'signature' || selectedSpecies !== null}
     {captureStatus}
     {transitioning}
   />
