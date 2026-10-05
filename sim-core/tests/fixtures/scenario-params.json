@@ -41,7 +41,9 @@
     "vision_rays": 0,
     "chemo_sensors": 1,
     "energy_sensors": 0,
-    "chemo_radius": 40.0
+    "chemo_radius": 40.0,
+    "vision_gain": 1.0,
+    "chemo_gain": 1.0
   },
   "brain": {
     "hidden_neurons": 0,
@@ -78,7 +80,8 @@
       "vision_weight": 1.0,
       "chemo_weight": 1.0,
       "energy_weight": 1.0,
-      "neuron_bias": 0.0
+      "neuron_bias": 0.0,
+      "wired_weight_scale": 0.0
     },
     "weight_perturb_rate": 0.025,
     "weight_perturb_sigma": 0.15,
@@ -133,5 +136,20 @@
       0.98
     ],
     "diffuse": 0.1
+  },
+  "combat": {
+    "gate": 0.5,
+    "reach": 4.0,
+    "arc": 0.7853982,
+    "attack_cost": 8.0,
+    "attack_damage": 0.25,
+    "cooldown_seconds": 0.5,
+    "health_regen": 0.02,
+    "dormant_bias": -1.0,
+    "mouthful": 20.0,
+    "assimilation": 0.8
+  },
+  "founder": {
+    "bite": false
   }
 }
