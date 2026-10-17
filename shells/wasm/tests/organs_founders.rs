@@ -139,13 +139,13 @@ fn founder_shapes_round_trip_and_share_one_reproducible_template() {
                 1
             );
         }
-        // Size, three colour channels, and since Phase 3 muscle and mouth (spec §3.5).
+        // Size, three colour channels, and since Phase 3 muscle, mouth, and gut (spec §3.5).
         assert_eq!(
             genes
                 .iter()
                 .filter(|gene| matches!(gene, Gene::Body(_)))
                 .count(),
-            6
+            7
         );
         assert_eq!(
             genes

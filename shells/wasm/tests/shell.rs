@@ -528,7 +528,8 @@ fn arena_refusals_observe_seeding_and_natural_births_without_hiding_undersupply(
     assert_eq!(seeded["spawn_failures"]["arena_capacity"], 1);
     assert_eq!(seeded["spawn_failures"]["pool_full"], 0);
     assert_eq!(seeded["arena_usage"][0]["capacity"], capacity);
-    assert_eq!(seeded["arena_usage"][0]["free_elements"], 0);
+    // Full, but for the gene a rounded-up slot leaves spare.
+    assert!(seeded["arena_usage"][0]["free_elements"].as_u64().unwrap() <= 1);
     assert_eq!(seeded["arena_usage"][0]["live_blocks"], 1);
     sim.step_many(2);
     let stepped = storage(&sim);
@@ -662,10 +663,10 @@ fn inspecting_an_agent_returns_its_genome_and_live_activations() {
         "every activation is zero, so this would pass on an empty brain"
     );
     let genome = v["genome"].as_array().expect("genome");
-    // 25 through Phase 2; Phase 3 adds the muscle and mouth genes (spec §3.5).
+    // 25 through Phase 2; Phase 3 adds the muscle, mouth, and gut genes (spec §3.5).
     assert_eq!(
         genome.len(),
-        27,
+        28,
         "slot 0 is still a shipped minimal founder"
     );
     assert!(
@@ -737,8 +738,9 @@ fn structural_births_keep_extreme_scalar_biases_finite() {
     sim_core::genome::validate(&genome(&sim, 1)).unwrap();
 }
 
-/// `params` with `genes_per_slot` set to half its founder's genes, so two slots hold
-/// exactly one founder and a second is refused (spec section 2.2a).
+/// `params` with `genes_per_slot` set to half its founder's genes, rounded up, so two
+/// slots hold one founder with at most a gene to spare and a second is refused (spec
+/// section 2.2a).
 fn half_founder_slot(params: &str) -> String {
     let mut value: serde_json::Value = serde_json::from_str(params).unwrap();
     let parsed: sim_core::SimParams = serde_json::from_value(value.clone()).unwrap();
@@ -746,12 +748,7 @@ fn half_founder_slot(params: &str) -> String {
         .unwrap()
         .founder_plan()
         .len();
-    assert_eq!(
-        founder % 2,
-        0,
-        "an odd founder cannot fill two slots exactly"
-    );
-    value["storage"]["genes_per_slot"] = (founder / 2).into();
+    value["storage"]["genes_per_slot"] = founder.div_ceil(2).into();
     value.to_string()
 }
 

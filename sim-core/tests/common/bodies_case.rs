@@ -1,11 +1,20 @@
 //! Shared native/WASM body-trait scenario (spec §3.5).
 //!
-//! Births step size, muscle, mouth, and colour in every heredity mode, and the tick
+//! Births step size, muscle, mouth, gut, and colour in every heredity mode, and the tick
 //! moves, feeds, and charges the bodies that result. The step is large so a short run
 //! reaches both ends of the ranges: a mechanism case, not evidence of adaptation.
 
 use sim_core::World;
+use sim_core::checkpoint::CheckpointLimits;
 use sim_core::control::BrainInheritance;
+
+/// Halfway, with mutated guts, muscles, and mouths alive: a restore must read each from
+/// its genome and continue to the uninterrupted run's state.
+const SAVE_TICK: u32 = 150;
+const LIMITS: CheckpointLimits = CheckpointLimits {
+    max_bytes: 64 << 20,
+    max_core_bytes: 96 << 20,
+};
 
 pub const MODES: [BrainInheritance; 3] = [
     BrainInheritance::Evolving,
@@ -14,9 +23,9 @@ pub const MODES: [BrainInheritance; 3] = [
 ];
 /// `state_hash` after `TICKS`, per mode.
 pub const GOLDEN: [u64; 3] = [
-    0x00a2_4ca0_ef22_5e0b,
-    0x9ed2_60c1_439d_5e47,
-    0x44b9_ab49_0fb8_fdb6,
+    0xadc0_ab92_5226_a0c3,
+    0x2233_11b8_f4aa_3257,
+    0x38a5_5d6c_a64e_2363,
 ];
 const TICKS: u32 = 300;
 
@@ -41,14 +50,31 @@ fn run(mode: BrainInheritance) -> u64 {
     p.feeding.reach = 20.0;
     p.mutation.body_trait_rate = 1.0;
     p.mutation.body_trait_sigma = 0.5;
+    p.mutation.gut_sigma = 0.5;
     let body = p.body.clone();
-    let mut world = World::new_with_brain_inheritance(5, p, mode).unwrap();
+    // Seed 10 since founders carry the gut gene: its draws moved every later step, and
+    // under seed 5 no evolving mouth reached its floor within the run.
+    let mut world = World::new_with_brain_inheritance(10, p, mode).unwrap();
     world.seed_founders(12);
     // Traits change only at birth, so reaching both ends of every range takes many
     // mutated births.
-    let mut extremes = [false; 6];
-    for _ in 0..TICKS {
+    let mut extremes = [false; 8];
+    let mut resumed: Option<World> = None;
+    for tick in 1..=TICKS {
         world.step();
+        if let Some(resumed) = &mut resumed {
+            resumed.step();
+        }
+        if tick == SAVE_TICK {
+            assert!(
+                world
+                    .pool()
+                    .iter_live()
+                    .any(|id| world.agents().gut[id.index()] < 1.0),
+                "{mode:?}: the checkpoint holds no shortened gut"
+            );
+            resumed = Some(World::from_checkpoint(&world.checkpoint(), LIMITS).unwrap());
+        }
         let agents = world.agents();
         for id in world.pool().iter_live() {
             let i = id.index();
@@ -56,6 +82,7 @@ fn run(mode: BrainInheritance) -> u64 {
                 (agents.size[i], body.size_range),
                 (agents.muscle[i], body.muscle_range),
                 (agents.mouth[i], body.mouth_range),
+                (agents.gut[i], [0.0, 1.0]),
             ]
             .into_iter()
             .enumerate()
@@ -69,9 +96,15 @@ fn run(mode: BrainInheritance) -> u64 {
             }
         }
     }
-    assert_eq!(extremes, [true; 6], "{mode:?}: a range was never reached");
+    assert_eq!(extremes, [true; 8], "{mode:?}: a range was never reached");
     assert!((world.total_energy() - world.ledger().expected_stock()).abs() < 1e-6);
-    world.state_hash()
+    let hash = world.state_hash();
+    assert_eq!(
+        resumed.unwrap().state_hash(),
+        hash,
+        "{mode:?}: restored with mutated bodies but ended elsewhere"
+    );
+    hash
 }
 
 pub fn check_body_runs() {

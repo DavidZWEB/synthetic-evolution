@@ -17,9 +17,9 @@ pub const MODES: [BrainInheritance; 3] = [
 ];
 /// `state_hash` after `TICKS`, per mode.
 pub const GOLDEN: [u64; 3] = [
-    0xe0e5_ec62_b488_b3bd,
-    0x763f_3240_d599_a478,
-    0x2a1e_a166_a00e_eebf,
+    0xad22_7d10_74e4_ea15,
+    0x4010_2f48_ca5c_2ca3,
+    0xfd68_2790_a206_a280,
 ];
 const TICKS: u32 = 240;
 /// The checkpoint is taken at the first tick from here on after a swing.

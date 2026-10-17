@@ -157,6 +157,8 @@ fn a_child_keeps_parent_scalars_on_shared_genes_and_the_donor_structure() {
                     BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => {
                         (trait_gene.value + 0.25) % 1.0
                     }
+                    // A gut cannot exceed the full gut of 1.
+                    BodyTrait::Gut => trait_gene.value - 0.25,
                     _ => trait_gene.value + 0.25,
                 }
             }
@@ -228,7 +230,7 @@ fn a_lone_parent_is_its_own_donor_and_reduces_to_the_evolving_child() {
 #[test]
 fn parents_and_donors_carrying_different_body_traits_breed_both_ways() {
     // Founders carry every body and meta trait, but a spawned genome need not: one
-    // written before muscle and mouth existed carries neither. Each child takes its
+    // written before muscle, mouth, and gut existed carries none of them. Each child takes its
     // donor's structure and whichever traits its own parent carries (spec §7.8).
     let mut world =
         World::new_with_brain_inheritance(42, breeder_params(), BrainInheritance::StructuralNull)
@@ -240,7 +242,7 @@ fn parents_and_donors_carrying_different_body_traits_breed_both_ways() {
         .copied()
         .filter(|gene| {
             !matches!(gene, Gene::Body(body)
-                if matches!(body.trait_, BodyTrait::Muscle | BodyTrait::Mouth))
+                if matches!(body.trait_, BodyTrait::Muscle | BodyTrait::Mouth | BodyTrait::Gut))
         })
         .collect();
     let other = spawn_with(&mut world, &older, 1.0);

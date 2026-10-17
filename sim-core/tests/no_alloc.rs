@@ -711,6 +711,47 @@ fn handled_meals_never_allocate_in_the_tick() {
 }
 
 #[test]
+fn gut_births_and_digestion_never_allocate_in_the_tick() {
+    // The whole tick in every heredity mode while births step guts and grazers with
+    // short guts waste part of each plant, all inside the counted window.
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
+    ] {
+        let mut params = SimParams::default();
+        params.world.max_agents = 64;
+        params.world.size = 200.0;
+        params.world.founder_spread = 0.08;
+        params.plants.max_plants = 256;
+        params.feeding.gate = 0.0;
+        params.mutation.body_trait_rate = 1.0;
+        params.mutation.gut_sigma = 0.5;
+        params.digestion.plant_curve = 0.5;
+        params.reproduction.start_energy = 40.0;
+        params.reproduction.threshold = 60.0;
+        params.reproduction.gate = 0.0;
+        params.reproduction.maturity_ticks = 0;
+        let mut world = World::new_with_brain_inheritance(23, params, mode).expect("valid params");
+        world.seed_founders(48);
+        world.step();
+        let mut shortened = false;
+        let observed = count_allocations(|| {
+            for _ in 0..240 {
+                world.step();
+                shortened |= world.agents().gut.iter().any(|&gut| gut < 1.0);
+            }
+            std::hint::black_box(&world);
+        });
+        assert!(shortened, "{mode:?}: no gut shortened");
+        assert_eq!(
+            observed, 0,
+            "{mode:?}: guts or digestion allocated {observed} times"
+        );
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;

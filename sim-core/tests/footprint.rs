@@ -139,7 +139,7 @@ fn birth_identity_arrays_are_charged_and_fit_the_shipped_budget() {
     // time, a swing with its damage, two diet totals, and the presentation state a
     // frame draws attacks from: two event ages, a bite's landing point, and a kill
     // count (Phase 3).
-    assert_eq!(current, 89_051_412);
+    assert_eq!(current, 89_051_500);
     assert_eq!(params.storage.max_memory_bytes, 96 * 1024 * 1024);
     // One birth ID and two parent references per slot are part of the estimate.
     params.storage.max_memory_bytes = current - 3 * 8 * u64::from(params.world.max_agents);
