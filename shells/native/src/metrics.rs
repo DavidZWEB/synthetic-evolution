@@ -109,7 +109,8 @@ pub struct SpeciesTraits {
     /// How far the most forward eye looks off the heading, over members with an eye;
     /// absent when none has one.
     pub eye_offset: Option<f64>,
-    /// Age in ticks: with births and deaths balanced, a proxy for generation time.
+    /// Age in ticks. Descriptive only: parents survive reproduction, so this is not
+    /// a generation time (spec §7.9).
     pub age: f64,
     /// Genome length in genes.
     pub genes: f64,
