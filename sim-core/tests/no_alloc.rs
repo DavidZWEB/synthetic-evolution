@@ -667,6 +667,50 @@ fn cryptic_bites_waking_in_births_never_allocate_in_the_tick() {
 }
 
 #[test]
+fn handled_meals_never_allocate_in_the_tick() {
+    // The whole tick with handling on, in every heredity mode: hits set timers, step 9
+    // counts them down, and feeding skips plants for busy mouths, all inside the
+    // counted window.
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
+    ] {
+        let mut params = SimParams::default();
+        params.world.max_agents = 64;
+        params.world.size = 200.0;
+        params.world.founder_spread = 0.08;
+        params.plants.max_plants = 256;
+        params.feeding.gate = 0.0;
+        params.storage.max_effectors = 5;
+        params.founder.bite = true;
+        params.combat.dormant_bias = 3.0;
+        params.combat.reach = 8.0;
+        params.combat.handling_seconds = 0.5;
+        params.reproduction.start_energy = 40.0;
+        params.reproduction.threshold = 60.0;
+        params.reproduction.gate = 0.0;
+        params.reproduction.maturity_ticks = 0;
+        let mut world = World::new_with_brain_inheritance(23, params, mode).expect("valid params");
+        world.seed_founders(48);
+        world.step();
+        let mut handled = false;
+        let observed = count_allocations(|| {
+            for _ in 0..240 {
+                world.step();
+                handled |= world.agents().handling.iter().any(|&ticks| ticks > 0);
+            }
+            std::hint::black_box(&world);
+        });
+        assert!(handled, "{mode:?}: no meal was handled");
+        assert_eq!(
+            observed, 0,
+            "{mode:?}: handled meals allocated {observed} times"
+        );
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;

@@ -205,6 +205,40 @@ fn cryptic_bites_waking_through_mutation_conserve_energy() {
     );
 }
 
+#[test]
+fn handling_time_conserves_energy() {
+    // Biters among plants with handling on: a busy mouth skips plants and takes carrion
+    // instead, and the ledger still balances (spec §4.2, §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 300;
+    params.world.size = 400.0;
+    params.world.founder_spread = 0.1;
+    params.plants.max_plants = 800;
+    params.feeding.gate = 0.0;
+    params.founder.bite = true;
+    params.combat.dormant_bias = 3.0;
+    params.combat.reach = 8.0;
+    params.combat.attack_damage = 0.5;
+    params.combat.handling_seconds = 0.5;
+    let mut world = World::new(19, params).expect("valid params");
+    world.seed_founders(200);
+    let mut handled = false;
+    for t in 0..3_000 {
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+        let handling = &world.agents().handling;
+        handled |= world.pool().iter_live().any(|id| handling[id.index()] > 0);
+    }
+    assert!(
+        handled && world.bite_counts().kills > 0,
+        "no hit was handled and killed; the test proved nothing"
+    );
+}
+
 /// Whether `genes` carries a sensor that arrived wired: its addition gives the wire the
 /// next innovation after the sensor's own (spec §3.3). Exact only where no neural
 /// operator adds connections, since one right after an unwired addition takes that
