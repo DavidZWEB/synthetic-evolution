@@ -100,7 +100,7 @@ const PARAMS = {
   },
   combat: {
     gate: f, reach: f, arc: f, attack_cost: f, attack_damage: f, cooldown_seconds: f,
-    health_regen: f, dormant_bias: f, mouthful: f, assimilation: f,
+    health_regen: f, dormant_bias: f, mouthful: f, assimilation: f, handling_seconds: f,
   },
   founder: { bite: 'boolean', bite_wired: 'boolean', bite_cryptic: 'boolean' },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
@@ -116,7 +116,7 @@ const LATER_PARAMS = new Set([
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
   'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain', 'bite_wired',
-  'bite_cryptic',
+  'bite_cryptic', 'handling_seconds',
 ]);
 
 export function integerParam(path) {

@@ -57,6 +57,9 @@ pub struct Agents {
     pub health: Vec<f32>,
     /// Ticks until this agent can swing again, counted down in step 9 (spec §4.2).
     pub cooldown: Vec<u32>,
+    /// Ticks this agent's mouth stays busy with prey after a hit, when it cannot graze;
+    /// counted down in step 9 (spec §4.2).
+    pub handling: Vec<u32>,
     /// Energy this agent has eaten over its life from plants, and from other agents
     /// through bites and corpses, so diet can be measured (spec §7.9). Neither steers
     /// the tick.
@@ -184,6 +187,7 @@ impl Agents {
             energy_reserve: vec![0.0; n],
             health: vec![0.0; n],
             cooldown: vec![0; n],
+            handling: vec![0; n],
             eaten_plants: vec![0.0; n],
             eaten_animals: vec![0.0; n],
             swing_age: vec![u8::MAX; n],
@@ -230,6 +234,7 @@ impl Agents {
         self.energy_reserve[i] = 0.0;
         self.health[i] = 1.0;
         self.cooldown[i] = 0;
+        self.handling[i] = 0;
         self.eaten_plants[i] = 0.0;
         self.eaten_animals[i] = 0.0;
         self.swing_age[i] = u8::MAX;
@@ -279,6 +284,7 @@ impl Agents {
         self.energy_reserve[i] = 0.0;
         self.health[i] = 0.0;
         self.cooldown[i] = 0;
+        self.handling[i] = 0;
     }
 }
 

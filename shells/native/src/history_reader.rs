@@ -649,6 +649,29 @@ mod tests {
     }
 
     #[test]
+    fn an_archive_from_before_handling_time_reads_it_as_zero() {
+        // Combat recorded before handling time existed is complete without it, and the
+        // run it describes let biters graze between hits, whatever a later default says.
+        let line = include_bytes!("../tests/fixtures/history-v1.ndjson")
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let mut wire: serde_json::Value = serde_json::from_slice(line).unwrap();
+        wire["data"]["params"]["founder"]["bite"] = serde_json::json!(true);
+        wire["data"]["params"]["combat"]
+            .as_object_mut()
+            .unwrap()
+            .remove("handling_seconds");
+        let line = serde_json::to_vec(&wire).unwrap();
+        let ArchiveRecord::Header(mut header) = serde_json::from_slice(&line).unwrap() else {
+            panic!("first record is the header");
+        };
+        header.params.combat.handling_seconds = 10.0;
+        assert!(restore_later_params(&mut header.params, &line).is_ok());
+        assert_eq!(header.params.combat.handling_seconds, 0.0);
+    }
+
+    #[test]
     fn an_archive_whose_founders_bite_must_record_their_combat() {
         // Filling an absent `combat` from today's defaults could describe attack rules
         // the run never had.

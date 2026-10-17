@@ -52,6 +52,9 @@ mod combat_case;
 #[path = "common/wiring_case.rs"]
 mod wiring_case;
 
+#[path = "common/handling_case.rs"]
+mod handling_case;
+
 #[test]
 fn wired_sensors_and_knockouts_match_their_reference_in_every_mode() {
     wiring_case::check_wiring_runs();
@@ -60,6 +63,11 @@ fn wired_sensors_and_knockouts_match_their_reference_in_every_mode() {
 #[test]
 fn bites_match_their_reference_in_every_mode() {
     combat_case::check_combat_runs();
+}
+
+#[test]
+fn handling_time_matches_its_reference_in_every_mode() {
+    handling_case::check_handling_runs();
 }
 
 #[test]

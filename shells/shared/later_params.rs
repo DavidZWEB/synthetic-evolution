@@ -32,15 +32,21 @@ pub const LATER_PARAMS: &[&str] = &[
     "chemo_gain",
     "bite_wired",
     "bite_cryptic",
+    "handling_seconds",
 ];
 
 /// An archive records `founder` and `combat` together, as every writer since the bite
 /// does, or neither, as every writer before it did. Founders that could not bite do not
 /// make a world biteless, because an imported genome may carry a bite, so only an
 /// archive from before the bite existed reads with no combat. A recorded `founder` must
-/// record `bite`, and a recorded `combat` every combat parameter, because serde would
-/// fill a missing one from today's defaults, which could describe a run that never had
-/// them. `wire` is the params object exactly as written.
+/// record `bite`, and a recorded `combat` every combat parameter the bite shipped with,
+/// because serde would fill a missing one from today's defaults, which could describe a
+/// run that never had them. Combat parameters added since ([`LATER_COMBAT_PARAMS`]) may
+/// be absent; [`restore`] reads each as the run had it. `wire` is the params object
+/// exactly as written.
+/// Combat parameters added after the bite, which an archive's `combat` section may omit.
+pub const LATER_COMBAT_PARAMS: &[&str] = &["handling_seconds"];
+
 pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'static str> {
     let (founder, combat) = match (wire.get("founder"), wire.get("combat")) {
         (None, None) => return Ok(()),
@@ -61,6 +67,7 @@ pub fn require_complete_bite_params(wire: &serde_json::Value) -> Result<(), &'st
         .is_some_and(|fields| {
             fields
                 .keys()
+                .filter(|field| !LATER_COMBAT_PARAMS.contains(&field.as_str()))
                 .all(|field| recorded.is_some_and(|combat| combat.contains_key(field)))
         });
     if complete {
@@ -87,6 +94,7 @@ pub fn no_combat() -> CombatParams {
         dormant_bias: 0.0,
         mouthful: 0.0,
         assimilation: 0.0,
+        handling_seconds: 0.0,
     }
 }
 
@@ -168,6 +176,10 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     }
     if absent("/combat") {
         params.combat = no_combat();
+    }
+    // Biters grazed between hits until handling time existed.
+    if absent("/combat/handling_seconds") {
+        params.combat.handling_seconds = 0.0;
     }
     // Phase 2 added sensors unwired, and every sense reported at full strength
     // before its knockout switch existed.

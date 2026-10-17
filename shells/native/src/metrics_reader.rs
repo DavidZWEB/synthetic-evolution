@@ -351,6 +351,13 @@ fn backfill_later_params(
         serde_json::to_value(crate::history_reader::later_params::no_combat())
             .expect("combat params serialize")
     });
+    // Biters grazed between hits until handling time existed, whatever a later default
+    // says.
+    if let Some(combat) = params.get_mut("combat").and_then(|c| c.as_object_mut()) {
+        combat
+            .entry("handling_seconds")
+            .or_insert_with(|| serde_json::json!(0.0));
+    }
     // Every sense reported at full strength before its knockout switch existed.
     if let Some(sensing) = params
         .entry("sensing")

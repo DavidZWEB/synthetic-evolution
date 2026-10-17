@@ -305,7 +305,7 @@ impl World {
         }
     }
 
-    /// Regenerates living health and counts down bite cooldowns. Step 9 of the tick,
+    /// Regenerates living health and counts down bite cooldowns and handling. Step 9 of the tick,
     /// after the charge that notes who a bite killed (spec §2.4, §4.2).
     pub fn recover_from_bites(&mut self) {
         let combat = &self.params.combat;
@@ -318,6 +318,7 @@ impl World {
                 combat,
                 dt,
             );
+            self.agents.handling[i] = self.agents.handling[i].saturating_sub(1);
         }
     }
 
@@ -448,6 +449,7 @@ impl World {
         }
 
         let reference = self.params.body.size;
+        let handling = combat::handling_ticks(combat, self.params.world.dt);
         let agents = &mut self.agents;
         // Mouthfuls in agent-index order: a victim holding less than every biter asks
         // serves earlier slots first, as food does (spec §4.2).
@@ -478,6 +480,9 @@ impl World {
             agents.energy_reserve[j] = victim_reserve;
             agents.eaten_animals[i] += mouthful.kept;
             agents.hurt_age[j] = 0;
+            // The prey occupies the biter's mouth: no grazing until it is handled
+            // (spec §4.2). A later hit never shortens a longer wait.
+            agents.handling[i] = agents.handling[i].max(handling);
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits = self.bites.hits.saturating_add(1);
         }
@@ -524,6 +529,8 @@ impl World {
                 &mut feeding::Larder {
                     plants: &mut self.plants,
                     plant_reach: body + plant_radius,
+                    // A mouth busy with prey can take carrion, not plants (spec §4.2).
+                    plants_allowed: self.agents.handling[i] == 0,
                     corpses: &mut self.corpses,
                     corpse_reach: body + corpse_radius,
                 },
@@ -1077,6 +1084,31 @@ mod tests {
     }
 
     #[test]
+    fn a_biter_handling_its_prey_cannot_graze_until_the_handling_time_runs_out() {
+        // Holling's handling time: a hit occupies the biter's mouth for
+        // `handling_seconds`, counted down in step 9, and a miss or a victim's mouth is
+        // untouched (spec §4.2).
+        let mut params = duel_params(2);
+        params.combat.handling_seconds = 0.05; // three ticks at 60 per second
+        let mut world = duel(
+            params,
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        assert_eq!(world.agents().handling[0], 3);
+        assert_eq!(world.agents().handling[1], 0, "the victim's mouth is free");
+        for left in [2, 1, 0, 0] {
+            world.recover_from_bites();
+            assert_eq!(world.agents().handling[0], left);
+        }
+    }
+
+    #[test]
     fn an_imported_bite_turns_with_its_body_whatever_its_azimuth() {
         // An import may carry any finite azimuth. At 2^26 a quarter turn of yaw added to
         // it rounded away, so the bite kept aiming one way however its biter turned.
@@ -1472,6 +1504,48 @@ mod tests {
         assert_eq!(world.set_params(tiny), refusal);
         assert_eq!(world.params().world.dt, 1.0 / 60.0, "the params moved");
         assert_eq!(world.agents().cooldown[0], 29, "the cooldown moved");
+    }
+
+    #[test]
+    fn a_running_handling_time_keeps_its_time_across_a_timestep_retune() {
+        // Handling counts ticks as a cooldown does, so a new timestep rescales what is
+        // left and the mouth stays busy for the same time (spec §4.2). A timestep that
+        // cannot count it is refused, not truncated.
+        let mut params = duel_params(2);
+        params.combat.handling_seconds = 0.5; // 30 ticks at 60 per second
+        params.combat.cooldown_seconds = 0.0;
+        let mut world = duel(
+            params,
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        world.recover_from_bites();
+        assert_eq!(world.agents().handling[0], 29);
+        let mut finer = world.params().clone();
+        finer.world.dt = 1.0 / 120.0;
+        world.set_params(finer).unwrap();
+        assert_eq!(
+            world.agents().handling[0],
+            58,
+            "the same time at twice the rate"
+        );
+        let mut tiny = world.params().clone();
+        tiny.world.dt = 1e-10;
+        tiny.combat.handling_seconds = 0.0;
+        // No timestep this fine can count regeneration either, so none.
+        tiny.combat.health_regen = 0.0;
+        assert_eq!(tiny.validate(), Ok(()));
+        let refusal = Err(crate::params::ParamError(
+            "a timestep this short cannot count a handling time in whole ticks",
+        ));
+        assert_eq!(world.check_retune(&tiny), refusal);
+        assert_eq!(world.set_params(tiny), refusal);
+        assert_eq!(world.agents().handling[0], 58, "the handling time moved");
     }
 
     #[test]

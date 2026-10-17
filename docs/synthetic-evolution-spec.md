@@ -222,7 +222,7 @@ Order of operations within one `step()`. This is normative — changing it chang
  7. Interaction   → bites (damage, mouthful), ingest (plants and corpses), grab
  8. Plants/fields → grow, plant deaths and reseeds, deposit, diffuse, decay
  9. Metabolism    → charge costs, update energy, regenerate living health, count down
-                    bite cooldowns, decay corpses
+                    bite cooldowns and handling, decay corpses
 10. Births/deaths → resolve deferred, in agent-index order; deaths leave corpses
 11. tick += 1
 ```
@@ -829,6 +829,7 @@ Two of these are disproportionately valuable and cheap:
 - **The hit.** A swing hits the nearest other living agent whose centre lies within `reach` plus both radii and within `combat.arc` radians of the bite direction.
   - Damage is `combat.attack_damage · g / s_victim`, clamped to `[0, 1]`, where `g` is the biter's gape and `s_victim` the victim's relative size (§3.5). A bigger mouth wounds faster, and a big enough victim is nearly immune.
   - A hit also takes a mouthful: up to `combat.mouthful · g²` of energy leaves the victim, and the biter keeps `combat.assimilation` of it. The rest is dissipated. This is the omnivory bridge real predators crossed: biting pays from the first hit, not only after a kill, and kills still leave corpses for anyone to scavenge.
+- **Handling.** A hit occupies the biter's mouth for `combat.handling_seconds`, counted in whole ticks and counted down in step 9. Until it runs out the biter cannot graze, though it can still eat carrion. A later hit never shortens a longer wait, and a retune of `world.dt` keeps each running wait's remaining time, as it does a cooldown's. This is Holling's handling time (Holling 1959): what limits every predator's intake, and what makes hunting and grazing compete for one mouth (Stephens & Krebs 1986). A specialist predator loses nothing by it, while a patch omnivore that bites between meals of plants loses its grazing. Without it, the Phase 3 research found predators settling at 30–45% meat whatever else changed. Intraguild-predation theory predicts exactly that (Holt & Polis 1997): an omnivore's numbers are held up by both foods, so its guild grows on plants until each predator finds little prey. With 10 s, biting and grazing became nearly exclusive across a life, diets split into grazers and hunters, and a carnivorous guild persisted to the end of the run in every seed. At the default of 0, biting and grazing interleave freely.
 - **Health** is a fraction in `[0, 1]`, full at birth. It regenerates at `combat.health_regen` per second, but only while above 0, so lethal damage cannot heal before step 10. An agent whose health reaches 0 dies in step 10, as a starved one does.
 - **Order.** Swings resolve in two passes.
   1. Every swing is fixed first: eligibility and target come from the state at the start of step 7, and every cost is paid.
@@ -918,6 +919,7 @@ the absolutes are the **relationships**, which are stated alongside.
 | `attack_cost` | 8 | **20–40% of typical prey energy** — the single most sensitive ratio in the sim |
 | `attack_damage` | 0.25 of full health | Several bites to kill, so prey can escape |
 | `combat_cooldown_seconds` | 0.5 | A biter cannot drain its own tank in a burst; a held drive costs `attack_cost` per swing |
+| `combat_handling_seconds` | 0 | Long against the cooldown, or predators stay patch omnivores; 10 s made biting and grazing nearly exclusive across a life in the Phase 3 research |
 | `combat_health_regen` | 0.02 /second | A wounded agent recovers within about an idle lifetime, so an escape is real |
 | `combat_gate` | 0.5 | A sigmoid with no input rests at the gate and does not swing |
 | `combat_reach` | 4 | Matches `feeding_reach`: a biter must get as close to prey as to a plant |
@@ -1466,8 +1468,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 13 since
-Phase 3's calibration added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
+manifest records the container and checkpoint formats (checkpoint format 14 since
+Phase 3's calibration added `combat.handling_seconds` and each agent's handling time; format 13 had added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
 landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
 sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's
