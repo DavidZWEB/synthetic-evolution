@@ -1333,6 +1333,76 @@ mod tests {
     }
 
     #[test]
+    fn cryptic_founders_are_silent_until_one_weight_wakes_them() {
+        // Every source reaches the bite at weight 0, so the bite still rests below the
+        // gate and no founder swings, however long it lives. Give one of those links a
+        // weight and the same founder bites: one mutation from waking (spec §4.2).
+        use crate::genome::{Action, Activation, Gene};
+        let mut params = SimParams::default();
+        params.world.max_agents = 32;
+        params.plants.max_plants = 64;
+        params.founder.bite = true;
+        params.founder.bite_cryptic = true;
+        // No neural mutation, so any newborn is as silent as its parent.
+        let mut silent = params.clone();
+        silent.mutation.weight_perturb_rate = 0.0;
+        silent.mutation.weight_reset_rate = 0.0;
+        silent.mutation.neuron_perturb_rate = 0.0;
+        silent.mutation.structural.add_connection_rate = 0.0;
+        silent.mutation.structural.add_neuron_rate = 0.0;
+        let mut world = World::new(5, silent).unwrap();
+        world.seed_founders(32);
+        for _ in 0..600 {
+            world.step();
+            assert!(
+                world.agents().cooldown.iter().all(|&ticks| ticks == 0),
+                "a cryptic founder swung"
+            );
+        }
+
+        let plan = world.founder_plan().clone();
+        let mut genes = vec![Gene::default(); plan.len()];
+        plan.instantiate(&mut crate::rng::Rng::from_seed(9), &params, &mut genes);
+        let bite = genes
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Effector(e) if e.action == Action::Bite => Some(e.source),
+                _ => None,
+            })
+            .unwrap();
+        let clock = genes
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Neuron(n) if n.activation == Activation::Oscillator => Some(n.id),
+                _ => None,
+            })
+            .unwrap();
+        for gene in &mut genes {
+            if let Gene::Connection(c) = gene
+                && c.from == clock
+                && c.to == bite
+            {
+                c.weight = 10.0;
+            }
+        }
+        let mut world = World::new(5, params).unwrap();
+        let spec = crate::agents::SpawnSpec {
+            position: Vec3::new(100.0, 100.0, 0.0),
+            yaw: 0.0,
+            energy: 100.0,
+            size: 3.0,
+            signature: Vec3::new(0.5, 0.5, 0.5),
+            parent_a: crate::ids::AgentId::NULL,
+        };
+        let woken = world.spawn(&spec, &genes).unwrap().index();
+        let swung = (0..600).any(|_| {
+            world.step();
+            world.agents().swing_age[woken] == 0
+        });
+        assert!(swung, "one weighted link did not wake the bite");
+    }
+
+    #[test]
     fn a_retuned_timestep_keeps_a_running_cooldown_s_time() {
         // A swing at 60 ticks a second leaves half a second of cooldown; halving the
         // timestep mid-cooldown must leave the same time, not the same tick count.

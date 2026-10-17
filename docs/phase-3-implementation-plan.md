@@ -29,7 +29,7 @@ the sim, with multi-seed evidence alongside; mechanical tests cannot certify it.
 | M3 The bite | Done: the dormant bite, the two-pass swing, health, kills, and diet and kill telemetry |
 | M4 Protecting innovation | Done: wired sensor addition, sensor-innovation telemetry, and the vision and chemo knockout switches |
 | M5 Seeing predation | Done: combat in the 72-byte frame, attack animations, combat in the inspector, and the diet colour mode |
-| M6 Calibration | Not started |
+| M6 Calibration | In progress: the research sweep is done (reference branch `research/phase-3-carnivory`); what worked lands one change at a time, starting with cryptic bite wiring |
 | M7 Acceptance | Not started |
 
 ## Why the design looks like this

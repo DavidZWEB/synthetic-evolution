@@ -887,6 +887,18 @@ pub struct FounderParams {
     ///
     /// **Off**: founders' bites start dormant, as the design intends.
     pub bite_wired: bool,
+    /// Whether a dormant bite's neuron reads every founding source through a connection
+    /// of weight 0, rather than reading nothing (spec §4.2). The bite stays silent, so
+    /// no founder swings, but a single weight mutation can now wake it. Without these
+    /// links only slow routes remain: an added connection landing on the bite's neuron,
+    /// or bias mutation carrying its bias past the gate. The weights are written, not
+    /// drawn, so every other founder gene and the random stream are unchanged. Requires
+    /// `bite`, excludes `bite_wired`, and is founding topology, so fixed for the life of
+    /// a world.
+    ///
+    /// **Off**: founders' bites read nothing until mutation wires them or moves their
+    /// bias.
+    pub bite_cryptic: bool,
 }
 
 /// Pheromone field. A 3D grid of depth 1 in V1 (spec §9.1).
@@ -971,7 +983,7 @@ impl SimParams {
     /// | `corpses.max_corpses` | the corpse pool and its grid |
     /// | `chemo.cells` | the field's cell arrays |
     /// | `chemo.decay.len()` | the number of allocated field channels |
-    /// | founder sensor counts, `founder.bite`, `founder.bite_wired`, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
+    /// | founder sensor counts, `founder.bite`, `founder.bite_wired`, `founder.bite_cryptic`, `brain.hidden_neurons`, `brain.oscillators`, `brain.connections_per_target` | the founding template and its fan-in scales |
     ///
     /// **Frozen, because they would silently do nothing:** `plants.initial_fill`, read
     /// once when the larder is stocked, and `plants.patchiness` and `plants.patch_scale`,
@@ -1605,6 +1617,16 @@ impl SimParams {
         if self.founder.bite_wired && !self.founder.bite {
             return Err(ParamError("founder.bite_wired requires founder.bite"));
         }
+        if self.founder.bite_cryptic && !self.founder.bite {
+            return Err(ParamError("founder.bite_cryptic requires founder.bite"));
+        }
+        // A wired bite already reads the founding network with drawn weights; silent
+        // links on top would be a second, contradictory wiring of the same neuron.
+        if self.founder.bite_cryptic && self.founder.bite_wired {
+            return Err(ParamError(
+                "founder.bite_cryptic and founder.bite_wired are alternatives",
+            ));
+        }
         if self.founder.bite && !(self.combat.reach * 2.0 <= self.world.size) {
             return Err(ParamError(
                 "a founder's bite must reach no further than half the world",
@@ -2070,7 +2092,7 @@ mod tests {
         fn the_founding_topology_is_frozen() {
             // These counts size the founding template and fan-in scales. Changing them
             // without rebuilding the plan would silently keep the previous topology.
-            let cases: [Case; 5] = [
+            let cases: [Case; 6] = [
                 ("sensing.vision_rays", |p| p.sensing.vision_rays += 1),
                 ("brain.hidden_neurons", |p| p.brain.hidden_neurons += 1),
                 ("brain.oscillators", |p| p.brain.oscillators += 1),
@@ -2078,6 +2100,10 @@ mod tests {
                 ("founder.bite_wired", |p| {
                     p.founder.bite = true;
                     p.founder.bite_wired = true;
+                }),
+                ("founder.bite_cryptic", |p| {
+                    p.founder.bite = true;
+                    p.founder.bite_cryptic = true;
                 }),
             ];
             for (name, mutate) in cases {
