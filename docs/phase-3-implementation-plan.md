@@ -323,5 +323,7 @@ A human decides whether a carnivorous lineage established.
 - carrion scent, and corpse nutrients feeding plants;
 - armour or body-plan defences (Phase 5);
 - signalling (Phase 4);
+- health interoception, rays that report what they hit, costs retuned to evolved brain
+  sizes, removable oscillators, and generation-aware measures (Phase 3.5);
 - crossover, and NEAT's explicit fitness sharing, which needs a fitness score;
 - the M6 fallbacks unless calibration calls for them.
