@@ -559,10 +559,27 @@ fn validate_predation(
             )
             .into());
         }
+        let by_victim = [predation.same_species_hits, predation.plant_eater_hits];
+        if by_victim
+            .iter()
+            .flatten()
+            .any(|&hits| hits > predation.hits)
+        {
+            return Err(invalid("hits counted by victim must each be at most the hits").into());
+        }
+        let living = [sample.evolving.population, sample.random_control.population][cohort];
+        if predation
+            .diet_histogram
+            .is_some_and(|bins| bins.iter().map(|&n| u64::from(n)).sum::<u64>() > u64::from(living))
+        {
+            return Err(invalid("the diet histogram counts more agents than are alive").into());
+        }
         if let Some(before) = before.and_then(|before| before[cohort])
             && (predation.swings < before.swings
                 || predation.hits < before.hits
-                || predation.kills < before.kills)
+                || predation.kills < before.kills
+                || predation.same_species_hits < before.same_species_hits
+                || predation.plant_eater_hits < before.plant_eater_hits)
         {
             return Err(invalid("cumulative bite counts must never decrease").into());
         }
@@ -926,9 +943,49 @@ mod tests {
                 "accepted {predation:?}"
             );
         }
-        let mut unpaired = predation_records([first.clone(), later]);
+        let mut unpaired = predation_records([first.clone(), later.clone()]);
         unpaired[2]["data"]["random_control"]["predation"] = serde_json::Value::Null;
         assert!(parse_values(&unpaired).is_err(), "one cohort without diets");
+
+        // Hits by victim are shares of all hits, and cumulative like them.
+        let by_victim = |diet: &serde_json::Value, same: u64, plant: u64| {
+            let mut diet = diet.clone();
+            diet["same_species_hits"] = same.into();
+            diet["plant_eater_hits"] = plant.into();
+            diet
+        };
+        parse_values(&predation_records([
+            by_victim(&first, 1, 2),
+            by_victim(&later, 2, 3),
+        ]))
+        .expect("growing hits by victim");
+        for predation in [
+            [by_victim(&first, 1, 2), by_victim(&later, 4, 3)],
+            [by_victim(&first, 1, 2), by_victim(&later, 2, 4)],
+            [by_victim(&first, 1, 2), by_victim(&later, 0, 3)],
+            [by_victim(&first, 1, 2), by_victim(&later, 2, 1)],
+        ] {
+            assert!(
+                parse_values(&predation_records(predation.clone())).is_err(),
+                "accepted {predation:?}"
+            );
+        }
+
+        // The histogram bins the fed living, so it counts at most the population.
+        let records = predation_records([first.clone(), later.clone()]);
+        let living = records[2]["data"]["evolving"]["population"]
+            .as_u64()
+            .unwrap();
+        let binned = |count: u64| {
+            let mut diet = later.clone();
+            diet["diet_histogram"] = serde_json::json!([count, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            diet
+        };
+        parse_values(&predation_records([first.clone(), binned(living)])).expect("all fed");
+        assert!(
+            parse_values(&predation_records([first, binned(living + 1)])).is_err(),
+            "binned more agents than live"
+        );
     }
 
     #[test]

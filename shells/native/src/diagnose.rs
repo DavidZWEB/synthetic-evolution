@@ -1095,6 +1095,7 @@ mod tests {
                 species_id: SpeciesId::new(7),
                 population: 2,
                 meat_share: None,
+                traits: None,
             }],
             unclassified_population: 1,
             events: Some(SpeciesEventCounts::default()),
@@ -1229,6 +1230,7 @@ mod tests {
                         species_id: SpeciesId::new(2),
                         population: 3,
                         meat_share: None,
+                        traits: None,
                     }],
                     unclassified_population: 0,
                     events: Some(SpeciesEventCounts {
