@@ -727,14 +727,14 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 - **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
 - **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. Every living body lies inside the ranges, which validation proves keep the strongest, lightest, and widest-mouthed body's acceleration, upkeep, and intake finite: a spawned or restored body outside them is refused, and a retune may widen a range but not narrow it. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
 
+The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
+
 **PLANNED (Phase 3.5): a body trait evolves only if founders carry it.** No operator adds
 or removes body genes, so a trait reaches a lineage only through the founding genome. Every
 later body trait is therefore carried by every founder, at the neutral value that
 reproduces the world without it, rather than gated behind a founder flag. In the Phase 3
 research, a trait that founders carried only when a flag was set never appeared in any
 run.
-
-The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
 
 **Bodies are multi-part and genome-derived from Phase 5** (§8), before the volumetric-3D step. The `partOffset`/`partCount` indirection in §2.2 exists to receive this.
 
@@ -815,9 +815,9 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 
 **DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1 and lie in [0, 1], so a switch can silence or dim a sense but never push an organ past the range it reports in; interoception has none. A live retune to 0 silences that sense in every existing agent, while each organ still pays its upkeep. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
 
-**PLANNED (Phase 3.5): sensing a threat, and telling things apart.** Phase 3's prey cannot
-tell that they are being hunted, so predators never have to pursue them, and the research
-runs found nothing rewarding perception: predators ambushed at plant patches and survived
+**PLANNED (Phase 3.5): sensing a threat, and telling things apart.** Phase 3's prey have no
+direct cue that they are being hunted, so predators never have to pursue them, and the
+research runs found nothing rewarding perception: predators ambushed at plant patches and survived
 the loss of either sense. Two gaps close here:
 
 - **Health interoception.** Interoception reports only energy. Its `which` param (energy,
@@ -912,12 +912,12 @@ cost = base
 
 Charging for brain and sensor complexity is what makes the "why not just add everything" strategy lose. Without it genomes grow monotonically and the sim slows to a crawl over a few hours.
 
-**PLANNED (Phase 3.5): costs that select.** §5.5 prices brains for 200 units, but evolved
-brains hold 30–45, where the charge is 3–4% of base and ten more units cost 1%. At that
-price structure is neither paid for nor punished. In the Phase 3 research runs, brain size
-tracked a lineage's generation count, and by a rough estimate growth per generation was
-no higher in predators than in grazers. `k_brain` and `k_sensor` are retuned against the brains that
-actually evolve, until unwired structure is shed. The check is growth per generation in
+**PLANNED (Phase 3.5): costs that select.** §5.5 prices brains for 200 units. In the
+Phase 3 research runs, evolved brains held 30–45 units. At that size the charge is about
+3–5% of base, and ten more units cost 1%, so structure is neither paid for nor punished.
+Brain size tracked a lineage's generation count, and by a rough estimate growth per
+generation was no higher in predators than in grazers. `k_brain` and `k_sensor` are
+retuned against the brains that actually evolve, until unwired structure is shed. The check is growth per generation in
 the evolving cohort against the structural null (§7.9). This is tuning under the
 golden-hash rule, not a new mechanism.
 
@@ -1614,8 +1614,8 @@ predators. This phase makes hunting and fleeing depend on information first. It 
 - measurement that does not mislead: persistence in generations and by descent, carrion
   apart from kills, wiring by weight, and clocks counted apart (§7.9).
 
-Items marked **PLANNED (Phase 3.5)** are approved direction. Their details are settled in
-the phase's design step and recorded as **DECIDED**, as Phase 3's were. *Success:
+Items marked **PLANNED** are approved direction. Their details are settled in
+the named phase's design step and recorded as **DECIDED**, as Phase 3's were. *Success:
 perception pays once there is something to hunt or flee. Knocking out a sense measurably
 costs the lineages that carry it, evolving lineages keep and wire senses the structural
 null sheds, and brain growth per generation exceeds the null's. A human watching sees
