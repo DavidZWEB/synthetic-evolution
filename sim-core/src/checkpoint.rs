@@ -30,7 +30,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 16;
+pub const CHECKPOINT_FORMAT: u32 = 17;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -657,9 +657,15 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
     {
         return Err(invalid("energy ledger must be finite"));
     }
-    // Every kill followed a hit and every hit a swing, as the shells' telemetry assumes.
+    // Every kill followed a hit and every hit a swing, as the shells' telemetry assumes,
+    // and each kind of hit is a share of all of them.
     if c.bites.kills > c.bites.hits || c.bites.hits > c.bites.swings {
         return Err(invalid("bite counts require kills <= hits <= swings"));
+    }
+    if c.bites.same_species_hits > c.bites.hits || c.bites.plant_eater_hits > c.bites.hits {
+        return Err(invalid(
+            "same-species and plant-eater hits must each be at most the hits",
+        ));
     }
 
     world.rng = c.rng;
@@ -728,7 +734,7 @@ mod tests {
     fn semantic_corruption_is_refused_before_the_hash_check() {
         assert!(World::from_checkpoint(&encode(&checkpoint()), UNLIMITED).is_ok());
         type Corrupt = fn(&mut Checkpoint);
-        let cases: [(&str, Corrupt); 24] = [
+        let cases: [(&str, Corrupt); 26] = [
             ("overlapping genomes", |c| {
                 c.agents[1].genome.block = c.agents[0].genome.block;
             }),
@@ -766,6 +772,12 @@ mod tests {
             ("a kill without a hit", |c| c.bites.kills = c.bites.hits + 1),
             ("a hit without a swing", |c| {
                 c.bites.hits = c.bites.swings + 1
+            }),
+            ("more cannibal hits than hits", |c| {
+                c.bites.same_species_hits = c.bites.hits + 1
+            }),
+            ("more hits on plant-eaters than hits", |c| {
+                c.bites.plant_eater_hits = c.bites.hits + 1
             }),
             ("a bite landing half missed", |c| {
                 c.agents[0].bite_at = [f32::NAN, 1.0]

@@ -16,9 +16,9 @@ pub const MODES: [BrainInheritance; 3] = [
 ];
 /// `state_hash` after `TICKS`, per mode.
 pub const GOLDEN: [u64; 3] = [
-    0x0c4b_465d_da48_d8c5,
-    0x2ce5_d3ff_0a81_8080,
-    0x943b_9966_a26d_0264,
+    0xfc00_c9ef_a7b0_e363,
+    0x760a_6056_d62b_dcdd,
+    0x6055_2179_818e_f6fa,
 ];
 const TICKS: u32 = 135;
 /// The checkpoint is taken at the first tick from here on with a mouth still busy.
