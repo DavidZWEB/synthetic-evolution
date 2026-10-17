@@ -87,6 +87,9 @@ pub struct FounderPlan {
     /// The output neuron a founder's bite reads, when founders carry a dormant one. Its
     /// bias starts at `combat.dormant_bias` rather than a draw (spec §4.2).
     bite: Option<InnovationId>,
+    /// Whether the dormant bite's neuron reads every source at weight 0 rather than
+    /// nothing (spec §4.2). Those weights are written without a draw.
+    cryptic: bool,
 }
 
 impl FounderPlan {
@@ -114,7 +117,13 @@ impl FounderPlan {
             .brain
             .connections_per_target
             .map_or(sources, |count| u64::from(count).min(sources));
-        let connections = fan_in.checked_mul(sinks)?;
+        // A cryptic bite adds one silent link from every source (spec §4.2).
+        let cryptic = if params.founder.bite && params.founder.bite_cryptic {
+            sources
+        } else {
+            0
+        };
+        let connections = fan_in.checked_mul(sinks)?.checked_add(cryptic)?;
         let other_genes = sensors
             .checked_add(outputs)?
             .checked_add((BODY_TRAITS.len() + META_TRAITS.len()) as u64)?;
@@ -259,6 +268,22 @@ impl FounderPlan {
             }
         }
 
+        // A cryptic bite reads every source, after every other connection so the drawn
+        // ones keep their ids and their place in the stream (spec §4.2).
+        let cryptic = params.founder.bite && params.founder.bite_cryptic;
+        if cryptic {
+            let bite_neuron = neuron_ids[output_end - 1];
+            for &from in &sources {
+                genes.push(Gene::Connection(ConnectionGene {
+                    id: next_id(),
+                    from: neuron_ids[from],
+                    to: bite_neuron,
+                    weight: 0.0,
+                    enabled: true,
+                }));
+            }
+        }
+
         for trait_ in BODY_TRAITS {
             genes.push(Gene::Body(BodyGene { trait_, value: 0.0 }));
         }
@@ -295,6 +320,7 @@ impl FounderPlan {
             bite: bite
                 .filter(|_| !wired_bite)
                 .map(|_| neuron_ids[output_end - 1]),
+            cryptic,
         })
     }
 
@@ -421,7 +447,13 @@ impl FounderPlan {
                     };
                     let scale = brain.weight_init_scale * normalized;
                     connection += 1;
-                    c.weight = rng.range(-scale, scale);
+                    // Keyed off the template, never a value: a cryptic bite's wiring
+                    // starts silent and consumes no draw (spec §4.2).
+                    c.weight = if founding && self.cryptic && Some(c.to) == self.bite {
+                        0.0
+                    } else {
+                        rng.range(-scale, scale)
+                    };
                 }
                 Gene::Sensor(s) => {
                     if !founding {
@@ -561,7 +593,12 @@ mod tests {
             (12, 1, 1, 32, 4),
         ] {
             for fan_in in [None, Some(0), Some(1), Some(2), Some(u32::MAX)] {
-                for (bite, bite_wired) in [(false, false), (true, false), (true, true)] {
+                for (bite, bite_wired, bite_cryptic) in [
+                    (false, false, false),
+                    (true, false, false),
+                    (true, true, false),
+                    (true, false, true),
+                ] {
                     let mut params = SimParams::default();
                     params.species.capacity = 0;
                     params.storage.max_genes = 4_096;
@@ -574,6 +611,7 @@ mod tests {
                     params.brain.connections_per_target = fan_in;
                     params.founder.bite = bite;
                     params.founder.bite_wired = bite_wired;
+                    params.founder.bite_cryptic = bite_cryptic;
                     assert_counts_and_wiring(&params, 42);
                 }
             }
@@ -637,7 +675,8 @@ mod tests {
         assert_eq!(counts.synapses as usize, pairs.len(), "duplicate edge");
 
         // Wired sinks: the four standing outputs and the hidden layer. A founder's bite
-        // reads the last output, which receives nothing unless it is wired (spec §4.2).
+        // reads the last output, which receives nothing unless it is wired, or one silent
+        // link from every source when it is cryptic (spec §4.2).
         let inputs = channels.len();
         let output_end = inputs + effectors.len();
         let hidden_end = output_end + params.brain.hidden_neurons as usize;
@@ -647,6 +686,8 @@ mod tests {
                 || (output_end..hidden_end).contains(&slot)
         };
         let sources = plan.neuron_count() - effectors.len();
+        let cryptic_bite =
+            |slot: usize| params.founder.bite_cryptic && slot == inputs + EFFECTORS.len();
         let fan_in = params
             .brain
             .connections_per_target
@@ -656,24 +697,36 @@ mod tests {
                 .iter()
                 .filter(|(_, to)| Some(*to) == neuron.innovation())
                 .count();
-            assert_eq!(
-                incoming,
-                if sinks(slot) { fan_in } else { 0 },
-                "wrong fan-in at neuron {slot}"
-            );
+            let expected = if sinks(slot) {
+                fan_in
+            } else if cryptic_bite(slot) {
+                sources
+            } else {
+                0
+            };
+            assert_eq!(incoming, expected, "wrong fan-in at neuron {slot}");
         }
         for (from, to) in pairs {
             let source = genome::neuron_index(&genes, from).unwrap();
             let target = genome::neuron_index(&genes, to).unwrap();
             assert!(source < inputs || source >= output_end);
-            assert!(sinks(target));
+            assert!(sinks(target) || cryptic_bite(target));
         }
         assert_eq!(plan.fan_in_scale.len(), counts.synapses as usize);
-        assert!(
-            plan.fan_in_scale
-                .iter()
-                .all(|&scale| scale == 1.0 / math::sqrt(fan_in as f32))
-        );
+        // Each connection is scaled by its target's fan-in: the cryptic bite's neuron
+        // hears every source, every other sink `fan_in` of them.
+        let targets = genes.iter().filter_map(|gene| match gene {
+            Gene::Connection(c) => Some(genome::neuron_index(&genes, c.to).unwrap()),
+            _ => None,
+        });
+        for (&scale, target) in plan.fan_in_scale.iter().zip(targets) {
+            let heard = if cryptic_bite(target) {
+                sources
+            } else {
+                fan_in
+            };
+            assert_eq!(scale, 1.0 / math::sqrt(heard as f32));
+        }
     }
 
     proptest::proptest! {
@@ -1104,6 +1157,71 @@ mod tests {
         let mut fan_in = vec![0; genes.len()];
         plan.randomize_brain(&mut Rng::from_seed(3), &params, &mut redrawn, &mut fan_in);
         assert_ne!(neuron(&redrawn).bias, params.combat.dormant_bias);
+    }
+
+    #[test]
+    fn a_cryptic_bite_reads_every_source_silently_and_draws_nothing() {
+        // Every source reaches the dormant bite at weight 0 with the dormant bias, and
+        // the drawn genes are exactly a dormant world's: the cryptic wiring takes no
+        // draw and sorts after every drawn connection (spec §4.2).
+        let mut params = SimParams::default();
+        params.sensing.vision_rays = 1;
+        params.founder.bite = true;
+        let dormant = instantiate(&plan(&params), &params, 9);
+        params.founder.bite_cryptic = true;
+        let cryptic = instantiate(&plan(&params), &params, 9);
+        let bite = cryptic
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Effector(effector) if effector.action == Action::Bite => {
+                    Some(effector.source)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let wires: Vec<&ConnectionGene> = cryptic
+            .iter()
+            .filter_map(|gene| match gene {
+                Gene::Connection(c) if c.to == bite => Some(c),
+                _ => None,
+            })
+            .collect();
+        let neurons = genome::neuron_count(&cryptic);
+        let outputs = EFFECTORS.len() + 1;
+        assert_eq!(wires.len(), neurons - outputs, "one wire from every source");
+        assert!(wires.iter().all(|c| c.weight == 0.0 && c.enabled));
+        let bias = cryptic
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Neuron(neuron) if neuron.id == bite => Some(neuron.bias),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(bias, params.combat.dormant_bias);
+        let drawn: Vec<&Gene> = cryptic
+            .iter()
+            .filter(|gene| !matches!(gene, Gene::Connection(c) if c.to == bite))
+            .collect();
+        assert_eq!(drawn, dormant.iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_cryptic_bite_needs_a_dormant_bite() {
+        let mut params = SimParams::default();
+        params.founder.bite_cryptic = true;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError("founder.bite_cryptic requires founder.bite"))
+        );
+        params.founder.bite = true;
+        assert_eq!(params.validate(), Ok(()));
+        params.founder.bite_wired = true;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "founder.bite_cryptic and founder.bite_wired are alternatives"
+            ))
+        );
     }
 
     #[test]
