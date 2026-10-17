@@ -125,7 +125,10 @@ pub(crate) fn validate_body(
             BodyTrait::Size => body.size_range,
             BodyTrait::Muscle => body.muscle_range,
             BodyTrait::Mouth => body.mouth_range,
-            BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => [0.0, 1.0],
+            BodyTrait::SignatureR
+            | BodyTrait::SignatureG
+            | BodyTrait::SignatureB
+            | BodyTrait::Gut => [0.0, 1.0],
         };
         if !inside(gene.value, range) {
             return Err(SpawnError::BodyTraits("a body trait is outside its range"));

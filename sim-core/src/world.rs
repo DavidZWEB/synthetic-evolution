@@ -1018,14 +1018,22 @@ mod tests {
             (BodyTrait::Muscle, 5.0, "a body trait is outside its range"),
             (BodyTrait::Mouth, 0.1, "a body trait is outside its range"),
             (BodyTrait::SignatureG, 1.5, "signature is outside [0, 1]"),
+            (BodyTrait::Gut, 1.5, "a body trait is outside its range"),
         ] {
             let mut altered = genes.clone();
+            let mut found = false;
             for gene in &mut altered {
                 if let Gene::Body(body) = gene
                     && body.trait_ == trait_
                 {
                     body.value = value;
+                    found = true;
                 }
+            }
+            // A trait the founder does not carry is added, in canonical gene order.
+            if !found {
+                altered.push(Gene::Body(crate::genome::BodyGene { trait_, value }));
+                altered.sort_by_key(Gene::sort_key);
             }
             assert_eq!(
                 w.spawn(&spec, &altered),

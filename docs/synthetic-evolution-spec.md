@@ -720,6 +720,16 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 - **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
 - **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. Every living body lies inside the ranges, which validation proves keep the strongest, lightest, and widest-mouthed body's acceleration, upkeep, and intake finite: a spawned or restored body outside them is refused, and a retune may widen a range but not narrow it. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
 
+**DECIDED (Phase 3 M6): the gut.** A fourth evolvable body trait after size, muscle, and mouth, the `Gut` gene is a fraction `γ` in `[0, 1]`: how much plant-digesting gut a body carries.
+
+- **Plants.** A gut keeps `γ^digestion.plant_curve` of the plant energy it eats, and all of it at the full gut of 1. The rest is dissipated (§5.1), and the diet counts only what was kept. Below a curve of 1, extraction shows the diminishing returns of a longer retention time (Penry & Jumars 1987), so a partly shortened gut loses little.
+- **Meat.** Meat needs no fermentation, so every gut keeps all of a bite's assimilated share and all of carrion.
+- **Upkeep** is `k_gut · (γ − 1)` (§5.2): zero for the full herbivore gut, and a discount for a shorter one. Gut is expensive tissue (Aiello & Wheeler 1995), so a lineage that stops eating plants saves by shedding it.
+- **Mutation.** The gut steps by addition with its own scale, `mutation.gut_sigma`, at `body_trait_rate`, clamped to `[0, 1]`. Guts track a diet shift within tens of generations (Herrel et al. 2008), faster than the body's other proportions.
+- **A genome without the gene** has the full gut, and a full gut computes exactly what no gut did.
+
+The trade-off is what makes a lineage that eats mostly meat better off specializing than staying an omnivore, and what lets herbivores out-compete it on plants. Those are the conditions for an intraguild predator and its prey to coexist (Holt & Polis 1997). In the Phase 3 research's final configuration (seven seeds, 300k ticks each), a carnivorous guild held unbroken for at least half the run in 5 seeds with the gut and 2 without it. Its predators' guts fell to medians of 0.71–0.90, against the grazers' 0.93–0.96.
+
 The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
 
 **Bodies are multi-part and genome-derived from Phase 5** (§8), before the volumetric-3D step. The `partOffset`/`partCount` indirection in §2.2 exists to receive this.
@@ -851,7 +861,7 @@ sunlight → autotrophs → herbivores → carnivores
               └──── decomposition ◀──── corpses
 ```
 
-Energy enters at a fixed global rate and leaves only through dissipation: metabolism, and from Phase 3 the cost of a bite, the part of a mouthful the biter does not assimilate, the share of a dying agent's energy it does not leave as a corpse, a corpse share refused by a full pool, and decomposition. Every one is recorded in the ledger. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
+Energy enters at a fixed global rate and leaves only through dissipation: metabolism, and from Phase 3 the cost of a bite, the part of a mouthful the biter does not assimilate, the share of a plant meal a gut does not assimilate (§3.5), the share of a dying agent's energy it does not leave as a corpse, a corpse share refused by a full pool, and decomposition. Every one is recorded in the ledger. This is what forces genuine competition; unbounded energy input produces a boring world where every strategy works. The rate is a ceiling, not a guarantee: each plant is offered an equal share, a full plant refuses it, and a grazed plant takes only part of it (below), so the ledger records what plants actually absorbed.
 
 Autotrophs (plants) should be simple non-brained entities that grow where nutrients are, get eaten, and reseed. They are the substrate, not agents.
 
@@ -874,6 +884,7 @@ cost = base
      + k_size   * size²
      + k_muscle * (muscle² − 1)               ← Phase 3: speed costs upkeep at rest
      + k_mouth  * (mouth² − 1)                ← Phase 3: a big mouth costs to carry
+     + k_gut    * (gut − 1)                   ← Phase 3: a short gut is cheaper tissue
      + k_brain  * (neurons + connections)     ← keeps brains from bloating
      + k_sensor * Σ sensor costs              ← eyes are expensive
      + k_move   * |force|²                    ← force includes muscle
@@ -928,6 +939,9 @@ the absolutes are the **relationships**, which are stated alongside.
 | `combat_mouthful` | 20 per hit at gape 1 | Assimilated (×0.8 = 16), it repays a swing twice over, so biting can pay from the first hit |
 | `combat_assimilation` | 0.8 | Animals assimilate 60–90% of meat; the rest is dissipated |
 | `k_muscle`, `k_mouth` | 0.008 each | Doubling either trait adds about 40% to a founder's idle upkeep |
+| `k_gut` | 0.01 | A gut of 0 saves a fifth of base upkeep |
+| `digestion_plant_curve` | 1 | Linear; below 1 a partly shortened gut loses little |
+| `gut_sigma` | 0.05 | The gut's own additive step, faster than the body's other proportions once calibrated |
 | `body_trait_rate`, `body_trait_sigma` | 0.1, 0.05 | A trait drifts a few percent per mutation: visible over thousands of births, not per generation |
 | `body_size_range` | [1.5, 6] | Half to double the founder radius: room for a size refuge, and still far below the 60-unit grid cell |
 | `body_muscle_range`, `body_mouth_range` | [0.25, 4] each | Quarter to quadruple. At the floor each trait saves `k · 0.9375 = 0.0075` of upkeep, so even the smallest, weakest body still pays a positive cost |
@@ -1468,8 +1482,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 14 since
-Phase 3's calibration added `combat.handling_seconds` and each agent's handling time; format 13 had added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
+manifest records the container and checkpoint formats (checkpoint format 15 since
+Phase 3's calibration added the gut's params; format 14 had added `combat.handling_seconds` and each agent's handling time; format 13 had added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
 landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
 sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's

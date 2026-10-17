@@ -30,7 +30,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 14;
+pub const CHECKPOINT_FORMAT: u32 = 15;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -549,6 +549,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.sensor_load[i] = genome::sensor_load(genes);
         a.muscle[i] = genome::body_trait(genes, BodyTrait::Muscle).unwrap_or(1.0);
         a.mouth[i] = genome::body_trait(genes, BodyTrait::Mouth).unwrap_or(1.0);
+        a.gut[i] = genome::body_trait(genes, BodyTrait::Gut).unwrap_or(1.0);
         a.genome[i] = agent.genome.block;
         a.brain[i] = agent.brain.block;
         a.synapses[i] = agent.synapses;

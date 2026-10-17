@@ -94,6 +94,9 @@ pub struct Agents {
     /// Gape relative to the body, read from the genome at birth (spec §3.5). Intake
     /// and the bite scale with it.
     pub mouth: Vec<f32>,
+    /// Plant-digesting gut in `[0, 1]`, read from the genome at birth (spec §3.5): the
+    /// share of plant energy kept is `digestion.plant` of it, and upkeep falls with it.
+    pub gut: Vec<f32>,
     /// Legacy parent slots, not persistent ancestry IDs. Use `parent_birth_a/b` for
     /// lifetime references; `parent_b` stays `NULL_ID` during asexual reproduction.
     ///
@@ -200,6 +203,7 @@ impl Agents {
             size: vec![0.0; n],
             muscle: vec![1.0; n],
             mouth: vec![1.0; n],
+            gut: vec![1.0; n],
             parent_a: vec![NULL_ID; n],
             parent_b: vec![NULL_ID; n],
             birth_id: vec![BirthId::NULL; n],
@@ -258,6 +262,7 @@ impl Agents {
         self.sensor_load[i] = 0.0;
         self.muscle[i] = 1.0;
         self.mouth[i] = 1.0;
+        self.gut[i] = 1.0;
         self.brain[i] = handles.brain;
         self.synapses[i] = handles.synapses;
         self.sensors[i] = handles.sensors;

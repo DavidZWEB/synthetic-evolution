@@ -34,6 +34,7 @@ pub struct SimParams {
     pub distance: DistanceParams,
     pub species: SpeciesParams,
     pub feeding: FeedingParams,
+    pub digestion: DigestionParams,
     pub plants: PlantParams,
     pub corpses: CorpseParams,
     pub combat: CombatParams,
@@ -206,6 +207,12 @@ pub struct BodyParams {
     ///
     /// **[0.25, 4] (spec §5.5)**, as for muscle.
     pub mouth_range: [f32; 2],
+    /// The gut founders carry, in `[0, 1]` (spec §3.5). A live retune changes later
+    /// founders only.
+    ///
+    /// **1**: the full herbivore gut, which assimilates every plant and costs no more
+    /// than a body without the gene.
+    pub gut: f32,
 }
 
 /// Per-tick energy costs. Spec §5.2.
@@ -282,6 +289,13 @@ pub struct MetabolismParams {
     /// **0.008 (spec §5.5)**: doubling the mouth quadruples intake per tick but adds
     /// about 40% to idle upkeep, so a big mouth pays only where food is there to take.
     pub k_mouth: f32,
+    /// Upkeep per unit of `gut − 1`: zero for the full herbivore gut, a discount for a
+    /// shorter one (spec §5.2). Gut is expensive tissue (Aiello & Wheeler 1995), so a
+    /// lineage that stops eating plants saves by shedding it.
+    ///
+    /// **0.01**: a gut of 0 saves a fifth of base upkeep. Only a genome carrying a gut
+    /// below 1 pays anything different.
+    pub k_gut: f32,
 }
 
 /// Locomotion limits.
@@ -486,6 +500,13 @@ pub struct MutationParams {
     /// **0.05 (spec §5.5)**: a trait drifts a few percent per mutation, which shows
     /// over thousands of births rather than in one generation.
     pub body_trait_sigma: f32,
+    /// The gut's own additive step, taken at `body_trait_rate` (spec §3.5). Separate
+    /// because guts track a diet shift within tens of generations: an island lizard
+    /// population that turned to plants grew cecal valves in about thirty (Herrel et al.
+    /// 2008), far faster than the body's other proportions drift.
+    ///
+    /// **0.05**, the body's own step, until calibration says otherwise.
+    pub gut_sigma: f32,
 }
 
 /// Per-offspring structural edits, disabled by default while preserving the accepted
@@ -798,6 +819,48 @@ pub struct CorpseParams {
     pub radius: f32,
     /// The colour a `vision_ray` reports when it hits a corpse.
     pub signature: [f32; 3],
+}
+
+/// What a gut keeps of the food it eats (spec §3.5, §5.1).
+///
+/// A gut `γ` assimilates `γ^plant_curve` of plant energy, and all of it at the full
+/// herbivore gut of 1; what it does not assimilate is dissipated. Meat needs no
+/// fermentation, so every gut keeps all of a bite's assimilated share and of carrion.
+/// Herbivores pay for fermentation with long, expensive guts (§5.2), so a lineage that
+/// eats mostly meat is better off shortening its gut, and herbivores outcompete it on
+/// plants: the condition for an intraguild predator and its prey to coexist (Holt &
+/// Polis 1997).
+///
+/// Live: a retune applies to every gut from its next meal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DigestionParams {
+    /// Exponent of plant assimilation in the gut. Below 1, extraction shows the
+    /// diminishing returns of a longer retention time (Penry & Jumars 1987), so a partly
+    /// shortened gut loses little and an omnivore can trade it down by degrees.
+    ///
+    /// **1**: linear.
+    pub plant_curve: f32,
+}
+
+impl Default for DigestionParams {
+    fn default() -> Self {
+        Self { plant_curve: 1.0 }
+    }
+}
+
+impl DigestionParams {
+    /// The share of plant energy a gut `gut` assimilates.
+    #[inline]
+    pub fn plant(&self, gut: f32) -> f32 {
+        // A full gut keeps everything whatever the curve, without a `powf` that could
+        // round 1 away from 1.
+        if gut >= 1.0 {
+            1.0
+        } else {
+            crate::math::pow(gut, self.plant_curve)
+        }
+    }
 }
 
 /// The bite: when an agent swings, what a swing costs, and what a hit does (spec §4.2).
@@ -1254,6 +1317,7 @@ impl SimParams {
             self.mutation.bias_perturb_sigma,
             self.mutation.tau_perturb_factor,
             self.mutation.body_trait_sigma,
+            self.mutation.gut_sigma,
         ]
         .iter()
         .any(|&value| !(value >= 0.0) || !value.is_finite())
@@ -1534,6 +1598,7 @@ impl SimParams {
             self.metabolism.k_move,
             self.metabolism.k_muscle,
             self.metabolism.k_mouth,
+            self.metabolism.k_gut,
         ]
         .iter()
         .any(|&cost| !(cost >= 0.0) || !cost.is_finite())
@@ -1585,6 +1650,8 @@ impl SimParams {
                 body.size_range[1],
                 body.muscle_range[1],
                 body.mouth_range[1],
+                // The full gut is the dearest: shorter guts are discounts.
+                1.0,
                 self.storage
                     .max_neurons
                     .saturating_add(self.storage.max_connections),
@@ -1637,6 +1704,14 @@ impl SimParams {
         }
         // A wired bite already reads the founding network with drawn weights; silent
         // links on top would be a second, contradictory wiring of the same neuron.
+        if !(0.0..=1.0).contains(&self.body.gut) {
+            return Err(ParamError("body.gut must lie in [0, 1]"));
+        }
+        if !(self.digestion.plant_curve > 0.0) || !self.digestion.plant_curve.is_finite() {
+            return Err(ParamError(
+                "digestion.plant_curve must be finite and positive",
+            ));
+        }
         if self.founder.bite_cryptic && self.founder.bite_wired {
             return Err(ParamError(
                 "founder.bite_cryptic and founder.bite_wired are alternatives",
@@ -1669,6 +1744,7 @@ impl Default for BodyParams {
             size_range: [1.5, 6.0],
             muscle_range: [0.25, 4.0],
             mouth_range: [0.25, 4.0],
+            gut: 1.0,
         }
     }
 }
@@ -1683,6 +1759,7 @@ impl Default for MetabolismParams {
             k_move: 0.5,
             k_muscle: 0.008,
             k_mouth: 0.008,
+            k_gut: 0.01,
         }
     }
 }
@@ -1773,6 +1850,7 @@ impl Default for MutationParams {
             tau_perturb_factor: 0.1,
             body_trait_rate: 0.0,
             body_trait_sigma: 0.05,
+            gut_sigma: 0.05,
         }
     }
 }
@@ -2102,6 +2180,18 @@ mod tests {
             let mut next = current.clone();
             next.chemo.decay.pop();
             assert!(current.check_retune(&next, GRID_CELL).is_err());
+        }
+
+        #[test]
+        fn a_gut_keeps_its_curve_of_plants_and_all_at_full() {
+            // `γ^curve`, with diminishing returns below a curve of 1, and exactly 1 for
+            // the full gut whatever the curve (spec §3.5).
+            let d = DigestionParams { plant_curve: 0.5 };
+            assert_eq!(d.plant(1.0), 1.0);
+            assert_eq!(d.plant(0.0), 0.0);
+            assert!((d.plant(0.25) - 0.5).abs() < 1e-6, "diminishing returns");
+            let linear = DigestionParams::default();
+            assert_eq!(linear.plant(0.5), 0.5);
         }
 
         #[test]

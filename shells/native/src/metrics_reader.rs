@@ -289,11 +289,11 @@ fn backfill_later_params(
         ),
         // Pre-Phase-3 runs left no corpses, and had no pool for its ceiling to pay for.
         (&["corpses"][..], &["energy_fraction", "max_corpses"][..]),
-        // Nor did their bodies pay upkeep for muscle or mouth, or evolve.
-        (&["metabolism"][..], &["k_muscle", "k_mouth"][..]),
+        // Nor did their bodies pay upkeep for muscle, mouth, or gut, or evolve.
+        (&["metabolism"][..], &["k_muscle", "k_mouth", "k_gut"][..]),
         (
             &["mutation"][..],
-            &["body_trait_rate", "body_trait_sigma"][..],
+            &["body_trait_rate", "body_trait_sigma", "gut_sigma"][..],
         ),
     ] {
         let mut object = Some(&mut *params);
@@ -329,7 +329,13 @@ fn backfill_later_params(
             body.entry(field)
                 .or_insert_with(|| serde_json::json!([1.0, 1.0]));
         }
+        // Founders carried the full gut, the only one there was.
+        body.entry("gut").or_insert_with(|| serde_json::json!(1.0));
     }
+    // And every gut digested plants whole.
+    params
+        .entry("digestion")
+        .or_insert_with(|| serde_json::json!({"plant_curve": 1.0}));
     // Nor could their founders bite, whatever a later default says, so they had no
     // combat; a recorded section is complete, as checked above.
     if let Some(founder) = params
