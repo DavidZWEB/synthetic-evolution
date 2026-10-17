@@ -55,6 +55,9 @@ mod wiring_case;
 #[path = "common/handling_case.rs"]
 mod handling_case;
 
+#[path = "common/cryptic_case.rs"]
+mod cryptic_case;
+
 #[test]
 fn wired_sensors_and_knockouts_match_their_reference_in_every_mode() {
     wiring_case::check_wiring_runs();
@@ -68,6 +71,11 @@ fn bites_match_their_reference_in_every_mode() {
 #[test]
 fn handling_time_matches_its_reference_in_every_mode() {
     handling_case::check_handling_runs();
+}
+
+#[test]
+fn cryptic_bites_match_their_reference_in_every_mode() {
+    cryptic_case::check_cryptic_runs();
 }
 
 #[test]

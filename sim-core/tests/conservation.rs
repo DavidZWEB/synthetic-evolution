@@ -168,6 +168,43 @@ fn biting_conserves_energy() {
     );
 }
 
+#[test]
+fn cryptic_bites_waking_through_mutation_conserve_energy() {
+    // Founders' bites are silent; descendants wake them through weight mutation on the
+    // cryptic links, then swing, wound, feed, and kill. The ledger balances throughout
+    // (spec §4.2, §5.1).
+    let mut params = SimParams::default();
+    params.world.max_agents = 300;
+    params.world.size = 400.0;
+    params.world.founder_spread = 0.1;
+    params.plants.max_plants = 800;
+    params.feeding.gate = 0.0;
+    params.founder.bite = true;
+    params.founder.bite_cryptic = true;
+    params.combat.reach = 8.0;
+    params.combat.attack_damage = 0.5;
+    params.mutation.weight_reset_rate = 0.3;
+    params.reproduction.start_energy = 40.0;
+    params.reproduction.threshold = 60.0;
+    params.reproduction.gate = 0.0;
+    params.reproduction.maturity_ticks = 0;
+    let mut world = World::new(19, params).expect("valid params");
+    world.seed_founders(200);
+    for t in 0..3_000 {
+        world.step();
+        assert!(
+            relative_drift(&world) < 1e-4,
+            "tick {t}: drifted {:.6}",
+            world.energy_drift()
+        );
+    }
+    let bites = world.bite_counts();
+    assert!(
+        bites.hits > 0 && bites.kills > 0,
+        "no woken bite hit and killed; the test proved nothing: {bites:?}"
+    );
+}
+
 /// Whether `genes` carries a sensor that arrived wired: its addition gives the wire the
 /// next innovation after the sensor's own (spec §3.3). Exact only where no neural
 /// operator adds connections, since one right after an unwired addition takes that
