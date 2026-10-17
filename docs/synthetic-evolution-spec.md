@@ -1383,14 +1383,20 @@ One JSON line per sample interval: population by species, trophic biomass by tie
 **PLANNED (Phase 3.5): measurements Phase 3 showed were misleading.**
 
 - **Persistence in generations and by descent.** Fixed species representatives (§3.4)
-  are left behind at the rate a lineage changes per tick. Phase 3's predators lived 3–12×
-  shorter lives than grazers, so their species ids turned over every 40–130k ticks while the
-  grazers' founder species lasted whole runs. `summarize` will also report:
-  - persistence by descent: a chain of carnivorous species, each originating from one
-    that was carnivorous at the previous sample, through no ancestor ever sampled as a
-    plant-eater;
-  - each species' mean age, a proxy for generation time, so persistence can be read in
-    generations.
+  are left behind at the rate a lineage changes per tick. Phase 3's predators turned over
+  several times faster than grazers (their mean living age was 3–12× shorter), so their
+  species ids turned over every 40–130k ticks while the grazers' founder species lasted
+  whole runs. `summarize` will also report:
+  - persistence by descent: a chain of carnivorous species, each descending through the
+    species-origin records from one that was carnivorous at the previous sample. The walk
+    may pass through intermediate species that arose and vanished between samples, but
+    not through any species ever sampled as a plant-eater;
+  - generations counted from births, not from living age. Parents survive reproduction
+    and a successful forager can live indefinitely (§5.6), so the same mean living age
+    can come from very different turnover. A birth-based measure, such as each agent's
+    generation depth from the founders, lets persistence and brain growth be read per
+    generation. Its estimator is settled in Phase 3.5's design, and mean living age stays
+    descriptive.
 - **Carrion apart from kills.** Diet totals record a bite's kept share and carrion
   separately, so predation and scavenging can be told apart.
 - **Wiring by weight, and clocks apart.** A connection counts toward a path only when its
