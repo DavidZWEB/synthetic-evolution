@@ -65,6 +65,9 @@ mod handling_case;
 #[path = "../../../sim-core/tests/common/cryptic_case.rs"]
 mod cryptic_case;
 
+#[path = "../../../sim-core/tests/common/drift_case.rs"]
+mod drift_case;
+
 #[wasm_bindgen_test]
 fn wired_sensors_and_knockouts_agree_with_native_in_every_mode() {
     wiring_case::check_wiring_runs();
@@ -83,6 +86,11 @@ fn handling_time_agrees_with_native_in_every_mode() {
 #[wasm_bindgen_test]
 fn cryptic_bites_agree_with_native_in_every_mode() {
     cryptic_case::check_cryptic_runs();
+}
+
+#[wasm_bindgen_test]
+fn eye_drift_agrees_with_native_in_every_mode() {
+    drift_case::check_drift_runs();
 }
 
 #[wasm_bindgen_test]

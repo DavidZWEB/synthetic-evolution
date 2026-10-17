@@ -83,7 +83,8 @@ const PARAMS = {
     },
     organs: {
       remove_sensor_rate: f, add_sensor_rate: f, vision_weight: f, chemo_weight: f,
-      energy_weight: f, neuron_bias: f, wired_weight_scale: f,
+      energy_weight: f, neuron_bias: f, wired_weight_scale: f, eye_drift_rate: f,
+      eye_drift_sigma: f,
     },
     weight_perturb_rate: f, weight_perturb_sigma: f, weight_reset_rate: f, weight_limit: f,
     neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f, body_trait_rate: f,
@@ -121,6 +122,7 @@ const LATER_PARAMS = new Set([
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
   'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain', 'bite_wired',
   'bite_cryptic', 'handling_seconds', 'digestion', 'k_gut', 'gut_sigma', 'gut',
+  'eye_drift_rate', 'eye_drift_sigma',
 ]);
 
 export function integerParam(path) {

@@ -812,6 +812,10 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 
 **DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1 and lie in [0, 1], so a switch can silence or dim a sense but never push an organ past the range it reports in; interoception has none. A live retune to 0 silences that sense in every existing agent, while each organ still pays its upkeep. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
 
+**DECIDED (Phase 3 M6): eyes turn.** At each birth, every eye the genome carries turns with probability `mutation.organs.eye_drift_rate`, by a normal step of `eye_drift_sigma` radians, wrapped onto the circle. The step runs at the end of the organ pass, in gene order, so a zero rate draws nothing and a world without drift consumes the random stream it always did. Without it, an eye looks wherever its founder's draw pointed it, forever, and a lineage cannot face its prey.
+
+Eye placement is a classic divergence between hunters and hunted, forward for one and to the sides for the other. In the Phase 3 research's final configuration (seven seeds, 300k ticks each), removing drift delayed biting in 5 seeds and left a carnivorous lineage spanning half the run in 1 seed rather than 4. One run per seed cannot fully separate that from chaotic divergence.
+
 **Every directional param is stored as an `(azimuth, elevation)` pair, with `elevation` clamped to 0 and its mutation operator disabled in V1.** The field exists in the gene, occupies its slot in the serialized genome, and simply doesn't vary. Going 3D is then a matter of unclamping it. If you store a single scalar angle instead, every saved world and every evolved population you've accumulated becomes unloadable the day you switch — and by then you will have runs you care about.
 
 ### 4.2 Effectors
@@ -943,6 +947,7 @@ the absolutes are the **relationships**, which are stated alongside.
 | `k_gut` | 0.01 | A gut of 0 saves a fifth of base upkeep |
 | `digestion_plant_curve` | 1 | Linear; below 1 a partly shortened gut loses little |
 | `gut_sigma` | 0.05 | The gut's own additive step, faster than the body's other proportions once calibrated |
+| `eye_drift_rate`, `eye_drift_sigma` | 0, 0.1 rad | Off until calibration; a few degrees a step, so an eye turns over many births |
 | `body_trait_rate`, `body_trait_sigma` | 0.1, 0.05 | A trait drifts a few percent per mutation: visible over thousands of births, not per generation |
 | `body_size_range` | [1.5, 6] | Half to double the founder radius: room for a size refuge, and still far below the 60-unit grid cell |
 | `body_muscle_range`, `body_mouth_range` | [0.25, 4] each | Quarter to quadruple. At the floor each trait saves `k · 0.9375 = 0.0075` of upkeep, so even the smallest, weakest body still pays a positive cost |
@@ -1483,8 +1488,8 @@ native and WASM, so saved runs transfer in both directions.
 8-byte magic `SEVRUN\0\0`, a little-endian `u32` container version (1), a `u32`
 manifest length, a strict JSON manifest (at most 1 MiB, unknown fields rejected),
 then each cohort's core checkpoint followed by each included history archive. The
-manifest records the container and checkpoint formats (checkpoint format 15 since
-Phase 3's calibration added the gut's params; format 14 had added `combat.handling_seconds` and each agent's handling time; format 13 had added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
+manifest records the container and checkpoint formats (checkpoint format 16 since
+Phase 3's calibration added eye drift's params; format 15 had added the gut's params; format 14 had added `combat.handling_seconds` and each agent's handling time; format 13 had added `founder.bite_cryptic`; format 12 had added `founder.bite_wired`; format 11 had added each agent's swing and hurt ages, where its latest bite
 landed, and its kills; format 10 had added `mutation.organs.wired_weight_scale` and the
 sensing gains for wired sensors and knockout switches; format 9 had added each agent's lifetime intake from plants and
 from other agents and the world's swing, hit, and kill counts; format 8 had added the bite's

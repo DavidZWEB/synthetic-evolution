@@ -266,13 +266,15 @@ fn backfill_later_params(
                 "add_oscillator_rate",
             ][..],
         ),
-        // Phase 2 also added sensors unwired.
+        // Phase 2 also added sensors unwired, and no eye turned before eye drift.
         (
             &["mutation", "organs"][..],
             &[
                 "remove_sensor_rate",
                 "add_sensor_rate",
                 "wired_weight_scale",
+                "eye_drift_rate",
+                "eye_drift_sigma",
             ][..],
         ),
         (

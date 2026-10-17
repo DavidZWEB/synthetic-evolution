@@ -752,6 +752,51 @@ fn gut_births_and_digestion_never_allocate_in_the_tick() {
 }
 
 #[test]
+fn eye_drift_in_births_never_allocates_in_the_tick() {
+    // The whole tick in every heredity mode while every birth may turn every eye, all
+    // inside the counted window.
+    for mode in [
+        BrainInheritance::Evolving,
+        BrainInheritance::RandomizedAtBirth,
+        BrainInheritance::StructuralNull,
+    ] {
+        let mut params = SimParams::default();
+        params.world.max_agents = 64;
+        params.world.size = 200.0;
+        params.world.founder_spread = 0.08;
+        params.plants.max_plants = 256;
+        params.feeding.gate = 0.0;
+        params.sensing.vision_rays = 1;
+        params.mutation.organs.eye_drift_rate = 1.0;
+        params.mutation.organs.eye_drift_sigma = 0.3;
+        params.reproduction.start_energy = 40.0;
+        params.reproduction.threshold = 60.0;
+        params.reproduction.gate = 0.0;
+        params.reproduction.maturity_ticks = 0;
+        let mut world = World::new_with_brain_inheritance(23, params, mode).expect("valid params");
+        world.seed_founders(48);
+        world.step();
+        let observed = count_allocations(|| {
+            for _ in 0..240 {
+                world.step();
+            }
+            std::hint::black_box(&world);
+        });
+        assert!(
+            world
+                .pool()
+                .iter_live()
+                .any(|id| world.agents().age[id.index()] < 240),
+            "{mode:?}: no birth in the window"
+        );
+        assert_eq!(
+            observed, 0,
+            "{mode:?}: eye drift allocated {observed} times"
+        );
+    }
+}
+
+#[test]
 fn invalid_founder_params_do_not_allocate_a_plan() {
     let mut params = SimParams::default();
     params.brain.hidden_neurons = 200;
