@@ -91,6 +91,46 @@ pub struct SpeciesPopulation {
     /// file written before diets were recorded.
     #[serde(default)]
     pub meat_share: Option<f64>,
+    /// Mean traits of the living members, for telling a predator's body from its
+    /// prey's. Absent in files written before they were recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traits: Option<SpeciesTraits>,
+}
+
+/// Mean body and behaviour of one species' living members.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SpeciesTraits {
+    pub gut: f64,
+    #[serde(default)]
+    pub jaw: f64,
+    pub size: f64,
+    pub mouth: f64,
+    pub muscle: f64,
+    /// Kills credited per member over its life so far.
+    pub kills: f64,
+    /// How far the most forward eye looks off the heading, over members with an eye.
+    pub eye_offset: Option<f64>,
+    /// Mean age in ticks, a proxy for generation time.
+    #[serde(default)]
+    pub age: f64,
+    /// Mean genome length in genes.
+    #[serde(default)]
+    pub genes: f64,
+    /// Mean neuron genes, enabled connections, and hidden neurons on a working path.
+    #[serde(default)]
+    pub neurons: f64,
+    #[serde(default)]
+    pub connections: f64,
+    #[serde(default)]
+    pub wired_hidden: f64,
+    /// Mean vision-ray sensors carried, and those with a path to an effector.
+    #[serde(default)]
+    pub eyes: f64,
+    #[serde(default)]
+    pub wired_eyes: f64,
+    /// Mean sensors of any modality with a path to an effector.
+    #[serde(default)]
+    pub wired_sensors: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -201,6 +241,12 @@ pub struct PredationMetrics {
     pub swings: u64,
     pub hits: u64,
     pub kills: u64,
+    /// Hits on the biter's own species. Absent from runs before it was recorded.
+    #[serde(default)]
+    pub same_species_hits: u64,
+    /// Hits on victims that had eaten mostly plants. Absent before it was recorded.
+    #[serde(default)]
+    pub plant_eater_hits: u64,
     /// Corpses on the ground, and the energy they hold.
     pub corpses: u32,
     pub corpse_energy: f64,
@@ -215,6 +261,11 @@ pub struct PredationMetrics {
     pub carnivore_biomass: f64,
     pub herbivore_biomass: f64,
     pub unfed_biomass: f64,
+    /// Fed living agents by the meat share of their lifetime intake, in ten equal bins
+    /// from all plants to all meat: two humps are specialists, one hump generalists.
+    /// Absent from runs before it was recorded.
+    #[serde(default)]
+    pub diet_histogram: [u32; 10],
 }
 
 /// Each evolvable body trait across living agents, at one sample.
@@ -225,6 +276,16 @@ pub struct BodyMetrics {
     /// Multiples of the reference, as `body.muscle_range` bounds them.
     pub muscle: TraitDistribution,
     pub mouth: TraitDistribution,
+    /// The plant-digesting gut, a share in [0, 1]. Absent from runs before the gene.
+    #[serde(default)]
+    pub gut: TraitDistribution,
+    /// Jaw form in [0, 1], grazer to killer. Absent from runs before the gene.
+    #[serde(default)]
+    pub jaw: TraitDistribution,
+    /// How far each sighted agent's most forward eye looks off its heading, in
+    /// radians, over agents with an eye. Absent from runs before eyes could turn.
+    #[serde(default)]
+    pub eye_offset: TraitDistribution,
 }
 
 /// Nearest-rank order statistics over one value per living agent, as
@@ -398,6 +459,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
     }
 
     let diets = species_diets(world)?;
+    let traits = species_traits(world);
     let ledger = world.ledger();
     let plant_energy = finite(world.plants().total_energy(), "plant energy")?;
     let total_energy = finite(world.total_energy(), "total energy")?;
@@ -435,6 +497,7 @@ pub fn sample_world(world: &World) -> Result<WorldMetrics> {
                     meat_share: diets
                         .get(&species_id.raw())
                         .and_then(|&diet| meat_share(diet)),
+                    traits: traits.get(&species_id.raw()).copied(),
                 })
                 .collect(),
             unclassified_population: world.unclassified_population(),
@@ -502,6 +565,105 @@ pub(crate) fn meat_share((plants, animals): (f64, f64)) -> Option<f64> {
 
 /// Each classified species' living members' lifetime intake, from plants and from
 /// other agents.
+/// Per-species mean traits of the living, keyed by raw species id.
+fn species_traits(world: &World) -> BTreeMap<u32, SpeciesTraits> {
+    #[derive(Default)]
+    struct Sums {
+        gut: f64,
+        jaw: f64,
+        size: f64,
+        mouth: f64,
+        muscle: f64,
+        kills: f64,
+        members: f64,
+        eyes: f64,
+        sighted: f64,
+        age: f64,
+        genes: f64,
+        neurons: f64,
+        connections: f64,
+        wired_hidden: f64,
+        eye_count: f64,
+        wired_eyes: f64,
+        wired_sensors: f64,
+    }
+    let agents = world.agents();
+    let mut sums: BTreeMap<u32, Sums> = BTreeMap::new();
+    let (mut from_inputs, mut to_outputs) = (Vec::new(), Vec::new());
+    for id in world.pool().iter_live() {
+        let i = id.index();
+        let sum = sums.entry(agents.species_id[i]).or_default();
+        sum.gut += f64::from(agents.gut[i]);
+        sum.jaw += f64::from(agents.jaw[i]);
+        sum.size += f64::from(agents.size[i]);
+        sum.mouth += f64::from(agents.mouth[i]);
+        sum.muscle += f64::from(agents.muscle[i]);
+        sum.kills += f64::from(agents.kills[i]);
+        sum.members += 1.0;
+        sum.age += f64::from(agents.age[i]);
+        sum.genes += world.genome(id).len() as f64;
+        let genes = world.genome(id);
+        sum.neurons += sim_core::genome::neuron_count(genes) as f64;
+        sum.connections += genes
+            .iter()
+            .filter(|gene| matches!(gene, Gene::Connection(c) if c.enabled))
+            .count() as f64;
+        let (mut eye_count, mut wired_eyes) = (0.0, 0.0);
+        let [hidden, wired, _] =
+            complexity::wiring_counts(genes, &mut from_inputs, &mut to_outputs, |sensor, on| {
+                if sensor.modality == sim_core::genome::Modality::VisionRay {
+                    eye_count += 1.0;
+                    wired_eyes += f64::from(u8::from(on));
+                }
+            });
+        sum.wired_hidden += f64::from(hidden);
+        sum.wired_sensors += f64::from(wired);
+        sum.eye_count += eye_count;
+        sum.wired_eyes += wired_eyes;
+        let eye = world
+            .genome(id)
+            .iter()
+            .filter_map(|gene| match gene {
+                sim_core::genome::Gene::Sensor(sensor)
+                    if sensor.modality == sim_core::genome::Modality::VisionRay =>
+                {
+                    Some(f64::from(
+                        sim_core::math::reduce_angle(sensor.params[0]).abs(),
+                    ))
+                }
+                _ => None,
+            })
+            .reduce(f64::min);
+        if let Some(eye) = eye {
+            sum.eyes += eye;
+            sum.sighted += 1.0;
+        }
+    }
+    sums.into_iter()
+        .map(|(species, sum)| {
+            let n = sum.members;
+            let traits = SpeciesTraits {
+                gut: sum.gut / n,
+                jaw: sum.jaw / n,
+                size: sum.size / n,
+                mouth: sum.mouth / n,
+                muscle: sum.muscle / n,
+                kills: sum.kills / n,
+                eye_offset: (sum.sighted > 0.0).then(|| sum.eyes / sum.sighted),
+                age: sum.age / n,
+                genes: sum.genes / n,
+                neurons: sum.neurons / n,
+                connections: sum.connections / n,
+                wired_hidden: sum.wired_hidden / n,
+                eyes: sum.eye_count / n,
+                wired_eyes: sum.wired_eyes / n,
+                wired_sensors: sum.wired_sensors / n,
+            };
+            (species, traits)
+        })
+        .collect()
+}
+
 fn species_diets(world: &World) -> Result<BTreeMap<u32, (f64, f64)>> {
     let agents = world.agents();
     let mut diets = BTreeMap::new();
@@ -524,6 +686,8 @@ fn predation_metrics(world: &World) -> Result<PredationMetrics> {
     let mut metrics = PredationMetrics {
         swings: counts.swings,
         hits: counts.hits,
+        same_species_hits: counts.same_species_hits,
+        plant_eater_hits: counts.plant_eater_hits,
         kills: counts.kills,
         corpses: world.corpses().count() as u32,
         corpse_energy: finite(world.corpses().total_energy(), "corpse energy")?,
@@ -536,6 +700,9 @@ fn predation_metrics(world: &World) -> Result<PredationMetrics> {
         metrics.eaten_plants += plants;
         metrics.eaten_animals += animals;
         let held = f64::from(agents.energy[i]) + agents.energy_reserve[i];
+        if let Some(share) = meat_share((plants, animals)) {
+            metrics.diet_histogram[((share * 10.0) as usize).min(9)] += 1;
+        }
         // Most of its food from other agents: what spec §7.9 calls a carnivore.
         if plants + animals == 0.0 {
             metrics.unfed_biomass += held;
@@ -562,10 +729,33 @@ fn body_metrics(world: &World) -> BodyMetrics {
             .collect();
         TraitDistribution::from_values(&mut live)
     };
+    let mut offsets: Vec<f64> = world
+        .pool()
+        .iter_live()
+        .filter_map(|id| {
+            world
+                .genome(id)
+                .iter()
+                .filter_map(|gene| match gene {
+                    sim_core::genome::Gene::Sensor(sensor)
+                        if sensor.modality == sim_core::genome::Modality::VisionRay =>
+                    {
+                        Some(f64::from(
+                            sim_core::math::reduce_angle(sensor.params[0]).abs(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .reduce(f64::min)
+        })
+        .collect();
     BodyMetrics {
         size: trait_of(&agents.size),
         muscle: trait_of(&agents.muscle),
         mouth: trait_of(&agents.mouth),
+        gut: trait_of(&agents.gut),
+        jaw: trait_of(&agents.jaw),
+        eye_offset: TraitDistribution::from_values(&mut offsets),
     }
 }
 
@@ -1085,21 +1275,19 @@ mod tests {
         let third = world.spawn_founder(Vec3::ZERO).unwrap();
         let third_species = world.agents().species_id[third.index()];
         let metrics = sample_world(&world).unwrap().species.unwrap();
+        let ids: Vec<(SpeciesId, u32, Option<f64>)> = metrics
+            .populations
+            .iter()
+            .map(|e| (e.species_id, e.population, e.meat_share))
+            .collect();
         assert_eq!(
-            metrics.populations,
+            ids,
             vec![
-                SpeciesPopulation {
-                    species_id: SpeciesId::new(second_species),
-                    population: 1,
-                    meat_share: None,
-                },
-                SpeciesPopulation {
-                    species_id: SpeciesId::new(third_species),
-                    population: 1,
-                    meat_share: None,
-                },
+                (SpeciesId::new(second_species), 1, None),
+                (SpeciesId::new(third_species), 1, None),
             ]
         );
+        assert!(metrics.populations.iter().all(|e| e.traits.is_some()));
         assert!(third_species > second_species);
         assert_eq!(metrics.unclassified_population, 0);
     }

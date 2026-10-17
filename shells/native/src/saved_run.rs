@@ -238,7 +238,85 @@ pub fn resume(args: ResumeArgs) -> Result<()> {
         )?;
         archive = Some((writer, capture));
     }
-    for _ in 0..args.ticks {
+    if let Some(path) = &args.metrics {
+        if worlds.len() != 2 {
+            return Err(invalid("native metrics need a paired saved run").into());
+        }
+        if let Some(retune) = &args.retune {
+            let json = fs::read_to_string(retune)?;
+            for (_, world) in worlds.iter_mut() {
+                let mut merged = serde_json::to_value(world.params())?;
+                crate::run::overlay(&mut merged, serde_json::from_str(&json)?);
+                world.set_params(serde_json::from_value(merged)?)?;
+            }
+        }
+        let provenance = &loaded.manifest.provenance;
+        let header = RunHeader {
+            schema_version: crate::metrics::SCHEMA_VERSION,
+            sim_version: env!("CARGO_PKG_VERSION").to_owned(),
+            source_revision: env!("SYNTHETIC_EVOLUTION_REVISION").to_owned(),
+            phase: u32::from(provenance.phase),
+            seed: provenance.seed.0.to_string(),
+            ticks: start + args.ticks,
+            founders: provenance.founders,
+            sample_every: args.sample_every,
+            params: worlds[0].1.params().clone(),
+            control: provenance.control.clone(),
+            retune: None,
+        };
+        let mut output = crate::output::open_output(path, "metrics")?;
+        crate::run::write_record(
+            &mut output,
+            &crate::metrics::MetricsRecord::Header(Box::new(header)),
+        )?;
+        let mut failures = [sim_core::spawn::SpawnFailureCounts::default(); 2];
+        let mut edits = [sim_core::mutate::StructuralMutationCounts::default(); 2];
+        let mut species = [sim_core::species::SpeciesEventCounts::default(); 2];
+        let end = start + args.ticks;
+        for _ in 0..args.ticks {
+            for (index, (_, world)) in worlds.iter_mut().enumerate() {
+                let cohort = archive
+                    .as_mut()
+                    .map(|(_, capture)| &mut capture.cohorts[index]);
+                crate::run::step(
+                    world,
+                    Some(&mut failures[index]),
+                    Some(&mut edits[index]),
+                    Some(&mut species[index]),
+                    cohort,
+                );
+            }
+            if let Some((_, capture)) = &archive {
+                capture.check()?;
+            }
+            let tick = worlds[0].1.tick_count();
+            if tick % args.sample_every == 0 || tick == end {
+                if let Some((writer, capture)) = &mut archive {
+                    writer.drain(capture)?;
+                }
+                let sample = crate::metrics::sample_pair(
+                    &worlds[0].1,
+                    &worlds[1].1,
+                    Some(failures),
+                    Some(edits),
+                    Some(species),
+                    archive.as_ref().map(|(writer, _)| writer.availability()),
+                    tick == end,
+                )?;
+                crate::run::write_record(
+                    &mut output,
+                    &crate::metrics::MetricsRecord::Sample(Box::new(sample)),
+                )?;
+            }
+        }
+        output.flush()?;
+    }
+    let ticks = if args.metrics.is_some() {
+        0
+    } else {
+        args.ticks
+    };
+    for _ in 0..ticks {
         match &mut archive {
             Some((writer, capture)) => {
                 for ((_, world), cohort) in worlds.iter_mut().zip(&mut capture.cohorts) {

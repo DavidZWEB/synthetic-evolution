@@ -25,6 +25,7 @@ const payload = (index, incarnation, tick = 4) =>
     health: 1,
     muscle: 1,
     mouth: 1,
+    gut: 1,
     eaten_plants: 0,
     eaten_animals: 0,
     kills: 0,

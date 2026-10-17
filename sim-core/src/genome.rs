@@ -116,6 +116,14 @@ pub enum BodyTrait {
     /// Gape relative to the body: intake and the bite scale with it (spec §3.5). A
     /// genome without it has mouth 1.
     Mouth,
+    /// Plant-digesting gut, a fraction in `[0, 1]`: how much of a plant's energy the
+    /// agent assimilates, against the upkeep the tissue costs and the meat it digests
+    /// less well (spec §3.5, §5.2). A genome without it has the full herbivore gut, 1.
+    Gut,
+    /// Jaw form, a fraction in `[0, 1]` from a grazer's cropping mouth (0) to a killer's
+    /// (1): it strengthens the bite and weakens grazing (spec §3.5, §4.2). A genome
+    /// without it has the grazer's jaw, 0.
+    Jaw,
 }
 
 /// Traits governing the genome's own evolution. Present and inherited in Phase 1; no

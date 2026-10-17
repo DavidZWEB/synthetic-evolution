@@ -274,7 +274,7 @@ fn load_retune(args: &RunArgs, base: &SimParams) -> Result<Option<Retune>> {
 
 /// Replaces `base`'s fields with `top`'s, recursing into objects; arrays and scalars
 /// are replaced whole.
-fn overlay(base: &mut serde_json::Value, top: serde_json::Value) {
+pub(crate) fn overlay(base: &mut serde_json::Value, top: serde_json::Value) {
     match (base, top) {
         (serde_json::Value::Object(base), serde_json::Value::Object(top)) => {
             for (key, value) in top {
@@ -349,7 +349,7 @@ fn seed(
     Ok(())
 }
 
-fn step(
+pub(crate) fn step(
     world: &mut World,
     mut counts: Option<&mut SpawnFailureCounts>,
     mut edits: Option<&mut StructuralMutationCounts>,
@@ -386,7 +386,7 @@ fn step(
     }
 }
 
-fn write_record(writer: &mut impl Write, record: &MetricsRecord) -> Result<()> {
+pub(crate) fn write_record(writer: &mut impl Write, record: &MetricsRecord) -> Result<()> {
     serde_json::to_writer(&mut *writer, record)?;
     writer.write_all(b"\n")?;
     Ok(())

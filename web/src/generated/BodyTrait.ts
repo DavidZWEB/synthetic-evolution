@@ -3,4 +3,4 @@
 /**
  * Body traits carried genetically rather than as fixed agent fields.
  */
-export type BodyTrait = "Size" | "SignatureR" | "SignatureG" | "SignatureB" | "Muscle" | "Mouth";
+export type BodyTrait = "Size" | "SignatureR" | "SignatureG" | "SignatureB" | "Muscle" | "Mouth" | "Gut" | "Jaw";

@@ -244,14 +244,14 @@ impl AllocationRequests {
         self.buffer::<u8>(agents)?;
         self.buffers::<u32>(agents, 2)?;
         // Agents: position/velocity/signature, orientation, energy reserve and two
-        // diet totals, energy/health/size/muscle/mouth/sensor load/bite landing x and y,
-        // age/species/parents/grid/brain units/bite cooldown/kills, swing and hurt ages,
-        // handles.
+        // diet totals, energy/health/size/muscle/mouth/live and set-point gut/recent
+        // diet/sensor load/bite landing x and y, age/species/parents/grid/brain
+        // units/bite cooldown/kills, swing and hurt ages, handles.
         self.buffers::<Vec3>(agents, 3)?;
         self.buffer::<Quat>(agents)?;
         self.buffers::<f64>(agents, 3)?;
-        self.buffers::<f32>(agents, 8)?;
-        self.buffers::<u32>(agents, 8)?;
+        self.buffers::<f32>(agents, 12)?;
+        self.buffers::<u32>(agents, 9)?;
         self.buffers::<u8>(agents, 2)?;
         self.buffers::<Block>(agents, 6)?;
         // Intents: thrust, turn, ingest, reproduce, and the bite's drive, azimuth, and

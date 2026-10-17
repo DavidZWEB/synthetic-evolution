@@ -67,6 +67,10 @@
       <div><dt>muscle</dt><dd>{inspection.muscle.toFixed(2)}</dd></div>
       <div><dt>mouth</dt><dd>{inspection.mouth.toFixed(2)}</dd></div>
       <div>
+        <dt title="Plant-digesting gut: 1 ferments plants fully, 0 cannot digest them">gut</dt>
+        <dd>{inspection.gut.toFixed(2)}</dd>
+      </div>
+      <div>
         <dt title="Lifetime intake; bites and carrion count as meat">diet</dt>
         <dd>{dietLabel(inspection.eaten_plants, inspection.eaten_animals)}</dd>
       </div>

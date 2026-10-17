@@ -34,6 +34,7 @@ pub struct SimParams {
     pub distance: DistanceParams,
     pub species: SpeciesParams,
     pub feeding: FeedingParams,
+    pub digestion: DigestionParams,
     pub plants: PlantParams,
     pub corpses: CorpseParams,
     pub combat: CombatParams,
@@ -206,6 +207,18 @@ pub struct BodyParams {
     ///
     /// **[0.25, 4] (spec §5.5)**, as for muscle.
     pub mouth_range: [f32; 2],
+    /// The gut founders carry when `founder.gut` is set, a fraction in `[0, 1]`
+    /// (spec §3.5). Like a bite's reach it is read when a founder is made, so a retune
+    /// reaches later founders, not the living.
+    ///
+    /// **1, the full herbivore gut**: the world starts with grazers, as the Ediacaran
+    /// mat grazers came before predators.
+    pub gut: f32,
+    /// The jaw founders carry when `founder.jaw` is set, a fraction in `[0, 1]`
+    /// (spec §3.5); read when a founder is made.
+    ///
+    /// **0, the grazer's jaw.**
+    pub jaw: f32,
 }
 
 /// Per-tick energy costs. Spec §5.2.
@@ -282,6 +295,13 @@ pub struct MetabolismParams {
     /// **0.008 (spec §5.5)**: doubling the mouth quadruples intake per tick but adds
     /// about 40% to idle upkeep, so a big mouth pays only where food is there to take.
     pub k_mouth: f32,
+    /// Upkeep per unit of `gut − 1`: zero for the full herbivore gut, a discount for a
+    /// shorter one (spec §5.2). Gut is expensive tissue (Aiello & Wheeler 1995), so a
+    /// lineage that stops eating plants saves by shedding it.
+    ///
+    /// **0.01**: a carnivore's gut of 0 saves a fifth of base upkeep. Only a genome that
+    /// carries a gut gene can pay less than a Phase 2 body does.
+    pub k_gut: f32,
 }
 
 /// Locomotion limits.
@@ -307,6 +327,12 @@ pub struct SensingParams {
     pub vision_range: f32,
     /// Full cone width of one ray, radians.
     pub vision_fov: f32,
+    /// A new eye looks within this many radians of the heading, drawn uniformly: where
+    /// eyes arise on a body that moves head first. Bilaterians carry their main sense
+    /// organs at the front, beside the mouth (cephalization).
+    ///
+    /// **π**: anywhere around the body, the draw every eye made before this existed.
+    pub vision_azimuth_spread: f32,
     /// Founder vision-ray count; evolved ray limits live in `StorageParams`.
     /// Perception remains a metered metabolic cost (spec §2.2c).
     ///
@@ -486,6 +512,17 @@ pub struct MutationParams {
     /// **0.05 (spec §5.5)**: a trait drifts a few percent per mutation, which shows
     /// over thousands of births rather than in one generation.
     pub body_trait_sigma: f32,
+    /// The gut's own additive step, taken at `body_trait_rate` (spec §3.5). Separate
+    /// because guts track a diet shift within tens of generations: an island lizard
+    /// population that turned to plants grew cecal valves in about thirty (Herrel et al.
+    /// 2008), far faster than the body's other proportions drift.
+    ///
+    /// **0.05**, the body's own step, until calibration says otherwise.
+    pub gut_sigma: f32,
+    /// The jaw's own additive step, taken at `body_trait_rate` (spec §3.5).
+    ///
+    /// **0.05**, the body's own step, until calibration says otherwise.
+    pub jaw_sigma: f32,
 }
 
 /// Per-offspring structural edits, disabled by default while preserving the accepted
@@ -576,6 +613,17 @@ pub struct OrganMutationParams {
     /// starting value for that sweep is 0.25. At most one, so a wire never starts
     /// stronger than an added connection.
     pub wired_weight_scale: f32,
+    /// Probability per eye per birth that the direction it looks drifts (spec §4.1).
+    /// Predators' eyes face forward and prey's to the sides; without this an eye
+    /// looks where its founder's draw pointed it forever. Zero draws nothing.
+    ///
+    /// **0**, so every world builds the eyes it did before eyes could turn.
+    pub eye_drift_rate: f32,
+    /// Standard deviation of a drift, in radians, wrapped onto the circle.
+    ///
+    /// **0.1**: a few degrees a step, so an eye turns over many births rather than
+    /// jumping to face the other way.
+    pub eye_drift_sigma: f32,
 }
 
 impl Default for OrganMutationParams {
@@ -588,6 +636,8 @@ impl Default for OrganMutationParams {
             energy_weight: 1.0,
             neuron_bias: 0.0,
             wired_weight_scale: 0.0,
+            eye_drift_rate: 0.0,
+            eye_drift_sigma: 0.1,
         }
     }
 }
@@ -619,6 +669,19 @@ pub struct FeedingParams {
     /// than one tick to feed as it crosses a fixed plant. Zero-reach populations went
     /// extinct across the acceptance seeds even after the metabolic budget was viable.
     pub reach: f32,
+    /// Share of a plant mouthful a killer's jaw of 1 loses: grazing intake is scaled by
+    /// `1 − jaw_graze_cost · jaw` (spec §3.5). A jaw built for force and shearing crops
+    /// and grinds plants badly — carnassials against molars, and the predatory mouth
+    /// form of *Pristionchus*, which grows more slowly on bacteria (Serobyan et al. 2014).
+    ///
+    /// **1**: a full killer's jaw cannot graze. Inert without a jaw gene.
+    pub jaw_graze_cost: f32,
+    /// Exponent on the jaw in that grazing loss, `jaw_graze_cost · jaw^e`. Above 1 the
+    /// first steps toward a killer's jaw cost little grazing and the last cost a lot:
+    /// sharpened teeth still crop, carnassials cannot grind.
+    ///
+    /// **1**: linear.
+    pub jaw_graze_exponent: f32,
 }
 
 impl Default for FeedingParams {
@@ -627,6 +690,8 @@ impl Default for FeedingParams {
             rate: 1.0,
             gate: 0.5,
             reach: 4.0,
+            jaw_graze_cost: 1.0,
+            jaw_graze_exponent: 1.0,
         }
     }
 }
@@ -773,6 +838,91 @@ pub struct PlantParams {
     pub signature: [f32; 3],
 }
 
+/// How much of what an agent eats it keeps, by its gut (spec §3.5, §5.1).
+///
+/// A gut `γ` assimilates `plant_floor + (1 − plant_floor)·γ^plant_curve` of plant
+/// energy and `1 − meat_penalty·γ` of meat, from a bite or a corpse; what it does not
+/// assimilate is dissipated. Herbivores pay for fermentation with long, expensive guts,
+/// while protein needs no fermentation, so meat is the cheaper food to digest (Karasov &
+/// Martínez del Rio 2007). The trade-off is what makes a lineage that eats mostly meat
+/// better off specializing than staying an omnivore, and what lets herbivores outcompete
+/// it on plants, the condition for an intraguild predator and its prey to coexist (Holt &
+/// Polis 1997).
+///
+/// Every field is live: a retune applies to every gut from the next meal or tick.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DigestionParams {
+    /// Share of plant energy a gut of 0 still assimilates.
+    ///
+    /// **0**: a carnivore's short gut cannot ferment plants.
+    pub plant_floor: f32,
+    /// Exponent of plant assimilation in the gut. Below 1, extraction shows the
+    /// diminishing returns of a longer retention time (Penry & Jumars 1987), so a
+    /// partly shortened gut loses little and an omnivore can trade it down by degrees.
+    ///
+    /// **1**: linear.
+    pub plant_curve: f32,
+    /// Share of meat energy the full herbivore gut loses, against a carnivore's.
+    ///
+    /// **0**: every gut digests meat alike, so a body without a gut gene keeps what it
+    /// did before the gene existed.
+    pub meat_penalty: f32,
+    /// How far a gut can shorten below its genetic set point on an all-meat diet: the
+    /// live gut tracks `set_point · (1 − plasticity · meat)`, where `meat` is the meat
+    /// share of recent meals. Guts remodel within days of a diet change (Piersma &
+    /// Lindström 1997), and the spadefoot toad's carnivore morph, with its shorter gut,
+    /// is induced by eating shrimp before it is ever inherited (Levis & Pfennig 2016):
+    /// plasticity lets a grazer that starts eating meat profit from it at once, and
+    /// selection on the set point then follows.
+    ///
+    /// **0**: the gut is the genome's, fixed for life.
+    pub plasticity: f32,
+    /// Share of the gap to its target a gut closes per second.
+    ///
+    /// **0.05**: a gut remodels over about twenty seconds, a small part of a lifetime.
+    pub acclimation: f32,
+    /// Energy over which the recent diet is averaged: each meal of `a` moves the meat
+    /// share by `a / (a + diet_memory)` of the way to its own kind.
+    ///
+    /// **100**: about the last start tank's worth of food.
+    pub diet_memory: f32,
+}
+
+impl Default for DigestionParams {
+    fn default() -> Self {
+        Self {
+            plant_floor: 0.0,
+            plant_curve: 1.0,
+            meat_penalty: 0.0,
+            plasticity: 0.0,
+            acclimation: 0.05,
+            diet_memory: 100.0,
+        }
+    }
+}
+
+impl DigestionParams {
+    /// The share of plant energy a gut `gut` assimilates.
+    #[inline]
+    pub fn plant(&self, gut: f32) -> f32 {
+        // A full gut assimilates everything whatever the curve, without a `powf` that
+        // could round 1 away from 1.
+        let extraction = if gut >= 1.0 {
+            1.0
+        } else {
+            crate::math::pow(gut, self.plant_curve)
+        };
+        self.plant_floor + (1.0 - self.plant_floor) * extraction
+    }
+
+    /// The share of meat energy a gut `gut` assimilates.
+    #[inline]
+    pub fn meat(&self, gut: f32) -> f32 {
+        1.0 - self.meat_penalty * gut
+    }
+}
+
 /// What a dead agent leaves behind (spec §5.1).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -839,6 +989,24 @@ pub struct CombatParams {
     /// **0.5 (spec §5.5)**: a held drive costs `attack_cost` per swing rather than per
     /// tick, so a biter cannot drain its own tank in a burst.
     pub cooldown_seconds: f32,
+    /// Seconds after landing a hit during which the biter's mouth is busy with its prey:
+    /// it can eat carrion but cannot graze. Holling's handling time (1959), the cost that
+    /// makes hunting and grazing compete for the same mouth. A specialist that does not
+    /// graze loses nothing to it; an omnivore at a plant patch loses the grazing.
+    ///
+    /// **0**: a hit leaves the mouth free, as before handling existed.
+    pub handling_seconds: f32,
+    /// How much a killer's jaw of 1 adds to a hit's damage and mouthful: both are scaled
+    /// by `1 + jaw_bite_gain · jaw` (spec §4.2). Bite force is what a jaw trades its
+    /// closing speed for (Westneat 1994).
+    ///
+    /// **1**: a full killer's jaw bites twice as hard. Inert without a jaw gene.
+    pub jaw_bite_gain: f32,
+    /// Exponent on the jaw in that gain, `jaw_bite_gain · jaw^e`. Below 1 the first
+    /// steps add the most force, as lever mechanics give diminishing returns.
+    ///
+    /// **1**: linear.
+    pub jaw_bite_exponent: f32,
     /// Health regained per second, only while health is above 0, so a lethal hit
     /// cannot heal before the deaths it causes are resolved (spec §2.4).
     ///
@@ -887,6 +1055,30 @@ pub struct FounderParams {
     ///
     /// **Off**: founders' bites start dormant, as the design intends.
     pub bite_wired: bool,
+    /// Whether a founder's dormant bite is cryptically wired: its neuron reads every
+    /// founding source through a connection of weight 0, so no founder swings, but
+    /// weight mutation varies the circuit neutrally until a lineage's drive crosses the
+    /// gate in some context (spec §4.2). Hidden variation of this kind is what an
+    /// evolutionary capacitor stores and releases (Rutherford & Lindquist 1998), and
+    /// variation that selection has partly seen is enriched for what works once revealed
+    /// (Masel 2006). NEAT's own answer to new structure that never joins the network is
+    /// fitness sharing, which needs a fitness score this simulation does not have.
+    /// Requires `bite`, excludes `bite_wired`, and is founding topology.
+    ///
+    /// **Off**: the dormant bite reads nothing until mutation wires it.
+    pub bite_cryptic: bool,
+    /// Whether founders carry a gut gene, at `body.gut`, which body-trait mutation then
+    /// moves (spec §3.5). Without one a genome has the full herbivore gut. Part of the
+    /// founding template, so fixed for the life of a world.
+    ///
+    /// **Off**, so every world digests as it did before the gene existed.
+    pub gut: bool,
+    /// Whether founders carry a jaw gene, at `body.jaw`, which body-trait mutation then
+    /// moves (spec §3.5). Without one a genome has the grazer's jaw. Founding template,
+    /// fixed for the life of a world.
+    ///
+    /// **Off**, so every world feeds and bites as it did before the gene existed.
+    pub jaw: bool,
 }
 
 /// Pheromone field. A 3D grid of depth 1 in V1 (spec §9.1).
@@ -1145,6 +1337,11 @@ impl SimParams {
                 "plant radius and scent rate must be finite and non-negative",
             ));
         }
+        if !(0.0..=core::f32::consts::PI).contains(&self.sensing.vision_azimuth_spread) {
+            return Err(ParamError(
+                "sensing.vision_azimuth_spread must lie in [0, π]",
+            ));
+        }
         if [
             self.sensing.vision_range,
             self.sensing.vision_fov,
@@ -1236,6 +1433,8 @@ impl SimParams {
             self.mutation.bias_perturb_sigma,
             self.mutation.tau_perturb_factor,
             self.mutation.body_trait_sigma,
+            self.mutation.gut_sigma,
+            self.mutation.jaw_sigma,
         ]
         .iter()
         .any(|&value| !(value >= 0.0) || !value.is_finite())
@@ -1327,6 +1526,14 @@ impl SimParams {
         if !(0.0..=1.0).contains(&organs.wired_weight_scale) {
             return Err(ParamError(
                 "mutation.organs.wired_weight_scale must be in [0, 1]",
+            ));
+        }
+        if !(0.0..=1.0).contains(&organs.eye_drift_rate)
+            || !(organs.eye_drift_sigma >= 0.0)
+            || !organs.eye_drift_sigma.is_finite()
+        {
+            return Err(ParamError(
+                "mutation.organs.eye_drift_rate must be in [0, 1] and eye_drift_sigma finite and non-negative",
             ));
         }
         // Structural edits can leave a target with fan-in one. The scalar control
@@ -1454,6 +1661,13 @@ impl SimParams {
         }
         // A cooldown is counted in whole ticks, so the count must fit one, counted
         // exactly as a swing counts it.
+        if !(combat.handling_seconds >= 0.0)
+            || crate::combat::countable_cooldown(combat.handling_seconds, self.world.dt).is_none()
+        {
+            return Err(ParamError(
+                "combat.handling_seconds must be non-negative and countable in ticks",
+            ));
+        }
         if !(combat.cooldown_seconds >= 0.0)
             || !combat.cooldown_seconds.is_finite()
             || crate::combat::countable_cooldown(combat.cooldown_seconds, self.world.dt).is_none()
@@ -1507,6 +1721,7 @@ impl SimParams {
             self.metabolism.k_move,
             self.metabolism.k_muscle,
             self.metabolism.k_mouth,
+            self.metabolism.k_gut,
         ]
         .iter()
         .any(|&cost| !(cost >= 0.0) || !cost.is_finite())
@@ -1558,6 +1773,7 @@ impl SimParams {
                 body.size_range[1],
                 body.muscle_range[1],
                 body.mouth_range[1],
+                1.0,
                 self.storage
                     .max_neurons
                     .saturating_add(self.storage.max_connections),
@@ -1566,8 +1782,8 @@ impl SimParams {
                 &self.metabolism,
             ),
             self.feeding.rate * gape * gape,
-            self.combat.mouthful * gape * gape,
-            self.combat.attack_damage * gape / lightest,
+            self.combat.mouthful * gape * gape * (1.0 + self.combat.jaw_bite_gain),
+            self.combat.attack_damage * gape / lightest * (1.0 + self.combat.jaw_bite_gain),
         ];
         if worst.iter().any(|value| !value.is_finite()) {
             return Err(ParamError(
@@ -1605,6 +1821,57 @@ impl SimParams {
         if self.founder.bite_wired && !self.founder.bite {
             return Err(ParamError("founder.bite_wired requires founder.bite"));
         }
+        if self.founder.bite_cryptic && (!self.founder.bite || self.founder.bite_wired) {
+            return Err(ParamError(
+                "founder.bite_cryptic requires founder.bite and excludes founder.bite_wired",
+            ));
+        }
+        // Fractions of a meal, so a gut can neither create energy nor keep less than
+        // nothing of it (spec §5.1).
+        if [
+            self.body.gut,
+            self.body.jaw,
+            self.feeding.jaw_graze_cost,
+            self.digestion.plant_floor,
+            self.digestion.meat_penalty,
+        ]
+        .iter()
+        .any(|&share| !(0.0..=1.0).contains(&share))
+        {
+            return Err(ParamError(
+                "body.gut, body.jaw, feeding.jaw_graze_cost, digestion.plant_floor, and digestion.meat_penalty must lie in [0, 1]",
+            ));
+        }
+        if !(self.combat.jaw_bite_gain >= 0.0) || !self.combat.jaw_bite_gain.is_finite() {
+            return Err(ParamError(
+                "combat.jaw_bite_gain must be finite and non-negative",
+            ));
+        }
+        if [
+            self.combat.jaw_bite_exponent,
+            self.feeding.jaw_graze_exponent,
+        ]
+        .iter()
+        .any(|&e| !(e > 0.0) || !e.is_finite())
+        {
+            return Err(ParamError("the jaw exponents must be finite and positive"));
+        }
+        if !(self.digestion.plant_curve > 0.0) || !self.digestion.plant_curve.is_finite() {
+            return Err(ParamError(
+                "digestion.plant_curve must be finite and positive",
+            ));
+        }
+        // A step that overshoots its target would oscillate rather than settle.
+        if !(0.0..=1.0).contains(&self.digestion.plasticity)
+            || !(self.digestion.acclimation >= 0.0)
+            || !(self.digestion.acclimation * self.world.dt <= 1.0)
+            || !(self.digestion.diet_memory > 0.0)
+            || !self.digestion.diet_memory.is_finite()
+        {
+            return Err(ParamError(
+                "digestion.plasticity must lie in [0, 1], acclimation per tick in [0, 1], and diet_memory be finite and positive",
+            ));
+        }
         if self.founder.bite && !(self.combat.reach * 2.0 <= self.world.size) {
             return Err(ParamError(
                 "a founder's bite must reach no further than half the world",
@@ -1632,6 +1899,8 @@ impl Default for BodyParams {
             size_range: [1.5, 6.0],
             muscle_range: [0.25, 4.0],
             mouth_range: [0.25, 4.0],
+            gut: 1.0,
+            jaw: 0.0,
         }
     }
 }
@@ -1646,6 +1915,7 @@ impl Default for MetabolismParams {
             k_move: 0.5,
             k_muscle: 0.008,
             k_mouth: 0.008,
+            k_gut: 0.01,
         }
     }
 }
@@ -1684,6 +1954,7 @@ impl Default for SensingParams {
         Self {
             vision_range: 60.0,
             vision_fov: 0.5,
+            vision_azimuth_spread: core::f32::consts::PI,
             vision_rays: 0,
             chemo_sensors: 1,
             energy_sensors: 0,
@@ -1736,6 +2007,8 @@ impl Default for MutationParams {
             tau_perturb_factor: 0.1,
             body_trait_rate: 0.0,
             body_trait_sigma: 0.05,
+            gut_sigma: 0.05,
+            jaw_sigma: 0.05,
         }
     }
 }
@@ -1783,6 +2056,9 @@ impl Default for CombatParams {
             attack_cost: 8.0,
             attack_damage: 0.25,
             cooldown_seconds: 0.5,
+            handling_seconds: 0.0,
+            jaw_bite_gain: 1.0,
+            jaw_bite_exponent: 1.0,
             health_regen: 0.02,
             dormant_bias: -1.0,
             mouthful: 20.0,
@@ -1805,6 +2081,39 @@ impl Default for ChemoParams {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn digestion_shares_hold_at_their_ends_and_bend_with_the_curve() {
+        let mut d = DigestionParams::default();
+        assert_eq!(
+            (d.plant(1.0), d.plant(0.0), d.meat(1.0), d.meat(0.0)),
+            (1.0, 0.0, 1.0, 1.0)
+        );
+        d.plant_floor = 0.2;
+        d.meat_penalty = 0.4;
+        assert_eq!(d.plant(1.0), 1.0, "a full gut assimilates everything");
+        assert!((d.plant(0.0) - 0.2).abs() < 1e-7);
+        assert!((d.meat(1.0) - 0.6).abs() < 1e-7);
+        d.plant_floor = 0.0;
+        d.plant_curve = 0.5;
+        assert!((d.plant(0.25) - 0.5).abs() < 1e-6, "diminishing returns");
+        let mut params = SimParams::default();
+        params.digestion.plant_curve = 0.0;
+        assert!(params.validate().is_err());
+        params.digestion.plant_curve = 1.0;
+        params.digestion.meat_penalty = 1.5;
+        assert!(params.validate().is_err());
+        params.digestion.meat_penalty = 0.0;
+        params.founder.bite_cryptic = true;
+        assert!(params.validate().is_err(), "a cryptic bite needs a bite");
+        params.founder.bite = true;
+        assert_eq!(params.validate(), Ok(()));
+        params.founder.bite_wired = true;
+        assert!(
+            params.validate().is_err(),
+            "cryptic and wired exclude each other"
+        );
+    }
+
     #[test]
     fn distance_coefficients_validate_at_construction_and_retune_boundaries() {
         type Change = fn(&mut DistanceParams, f32);

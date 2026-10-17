@@ -24,6 +24,14 @@ pub struct BiteCounts {
     pub hits: u64,
     /// Agents that died at health 0, whoever landed the last hit.
     pub kills: u64,
+    /// Hits whose victim belonged to the biter's own species: cannibalism, as against
+    /// predation across species.
+    #[serde(default)]
+    pub same_species_hits: u64,
+    /// Hits whose victim had eaten more plants than meat over its life: predation on
+    /// plant-eaters, as against on other meat-eaters.
+    #[serde(default)]
+    pub plant_eater_hits: u64,
 }
 
 /// One swing fixed by the first pass: who swung, whom it hits (`AgentId::NULL` for a
@@ -222,6 +230,11 @@ pub(crate) struct Hit<'a> {
     pub victim_reserve: &'a mut f64,
     /// Gape: mouth times the biter's relative size (spec §3.5).
     pub gape: f32,
+    /// The share of the mouthful the biter keeps: `combat.assimilation` times what its
+    /// gut makes of meat (spec §3.5, §4.2).
+    pub assimilation: f32,
+    /// Multiplier on the mouthful the hit asks: `1 + jaw_bite_gain · jaw` (spec §4.2).
+    pub force: f32,
 }
 
 /// What a landed hit's mouthful moved: the biter's share, and the rest, which left
@@ -232,16 +245,17 @@ pub(crate) struct Mouthful {
 }
 
 /// Takes one hit's mouthful (spec §4.2). It asks `mouthful · g²` and takes what the
-/// victim holds, of which the biter keeps `assimilation`; the rest leaves the world.
+/// victim holds, of which the biter keeps the hit's `assimilation`; the rest leaves the
+/// world.
 pub(crate) fn take_mouthful(hit: Hit<'_>, combat: &CombatParams) -> Mouthful {
-    let ask = (combat.mouthful * hit.gape * hit.gape) as f64;
+    let ask = (combat.mouthful * hit.gape * hit.gape * hit.force) as f64;
     let taken = ask.min(energy::total(*hit.victim_energy, *hit.victim_reserve));
     let kept = energy::transfer(
         hit.victim_energy,
         hit.victim_reserve,
         hit.biter_energy,
         hit.biter_reserve,
-        taken * combat.assimilation as f64,
+        taken * hit.assimilation as f64,
     );
     let dissipated = energy::take_amount(hit.victim_energy, hit.victim_reserve, taken - kept);
     Mouthful { kept, dissipated }
@@ -587,6 +601,8 @@ mod tests {
                 victim_energy: &mut victim,
                 victim_reserve: &mut victim_reserve,
                 gape: 2.0,
+                assimilation: c.assimilation,
+                force: 1.0,
             },
             &c,
         );
@@ -608,6 +624,8 @@ mod tests {
                 victim_energy: &mut victim,
                 victim_reserve: &mut 0.0,
                 gape: 2.0,
+                assimilation: c.assimilation,
+                force: 1.0,
             },
             &c,
         );

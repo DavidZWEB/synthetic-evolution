@@ -149,6 +149,11 @@ impl World {
         self.agents.muscle[id.index()] =
             genome::body_trait(genes, BodyTrait::Muscle).unwrap_or(1.0);
         self.agents.mouth[id.index()] = genome::body_trait(genes, BodyTrait::Mouth).unwrap_or(1.0);
+        let gut = genome::body_trait(genes, BodyTrait::Gut).unwrap_or(1.0);
+        self.agents.gut[id.index()] = gut;
+        self.agents.gut_set[id.index()] = gut;
+        self.agents.meat_diet[id.index()] = 0.0;
+        self.agents.jaw[id.index()] = genome::body_trait(genes, BodyTrait::Jaw).unwrap_or(0.0);
         // Classification follows ecological admission and cannot refuse it (spec §3.4).
         match self.classifier.classify(genes) {
             Ok(assignment) => {

@@ -105,6 +105,7 @@ impl World {
         self.resolve_feeding(); // 7
         self.grow_plants(); // 8, deposit
         self.update_chemo(); // 8, diffuse and decay
+        self.acclimate_guts(); // 9
         self.charge_metabolism(); // 9
         self.recover_from_bites(); // 9
         self.decay_corpses(); // 9
@@ -283,6 +284,7 @@ impl World {
                 self.agents.size[i],
                 self.agents.muscle[i],
                 self.agents.mouth[i],
+                self.agents.gut[i],
                 self.agents.brain_units[i],
                 self.agents.sensor_load[i],
                 self.intents.thrust[i] * self.agents.muscle[i],
@@ -305,6 +307,24 @@ impl World {
         }
     }
 
+    /// Moves every plastic gut toward what its recent diet asks of it, before the
+    /// upkeep it sets is charged. Part of step 9 (spec §3.5). A world whose guts are not
+    /// plastic touches nothing.
+    pub fn acclimate_guts(&mut self) {
+        let digestion = &self.params.digestion;
+        if digestion.plasticity <= 0.0 {
+            return;
+        }
+        let step = digestion.acclimation * self.params.world.dt;
+        for id in self.pool.iter_live() {
+            let i = id.index();
+            let target =
+                self.agents.gut_set[i] * (1.0 - digestion.plasticity * self.agents.meat_diet[i]);
+            let gut = &mut self.agents.gut[i];
+            *gut = (*gut + step * (target - *gut)).clamp(0.0, 1.0);
+        }
+    }
+
     /// Regenerates living health and counts down bite cooldowns. Step 9 of the tick,
     /// after the charge that notes who a bite killed (spec §2.4, §4.2).
     pub fn recover_from_bites(&mut self) {
@@ -318,6 +338,7 @@ impl World {
                 combat,
                 dt,
             );
+            self.agents.handling[i] = self.agents.handling[i].saturating_sub(1);
         }
     }
 
@@ -448,6 +469,9 @@ impl World {
         }
 
         let reference = self.params.body.size;
+        let digestion = &self.params.digestion;
+        let handling = combat::countable_cooldown(combat.handling_seconds, self.params.world.dt)
+            .unwrap_or(u32::MAX);
         let agents = &mut self.agents;
         // Mouthfuls in agent-index order: a victim holding less than every biter asks
         // serves earlier slots first, as food does (spec §4.2).
@@ -457,7 +481,17 @@ impl World {
             }
             let (i, j) = (swing.biter.index(), swing.target.index());
             let gape = agents.mouth[i] * (agents.size[i] / reference);
-            swing.damage = combat::damage(gape, agents.size[j] / reference, combat);
+            // A killer's jaw bites harder; exactly 1 for a grazer's (spec §4.2).
+            let force = if agents.jaw[i] > 0.0 {
+                1.0 + combat.jaw_bite_gain * math::pow(agents.jaw[i], combat.jaw_bite_exponent)
+            } else {
+                1.0
+            };
+            swing.damage = if force > 1.0 {
+                (combat::damage(gape, agents.size[j] / reference, combat) * force).min(1.0)
+            } else {
+                combat::damage(gape, agents.size[j] / reference, combat)
+            };
             let (mut biter_energy, mut biter_reserve) =
                 (agents.energy[i], agents.energy_reserve[i]);
             let (mut victim_energy, mut victim_reserve) =
@@ -469,6 +503,9 @@ impl World {
                     victim_energy: &mut victim_energy,
                     victim_reserve: &mut victim_reserve,
                     gape,
+                    // Exactly `combat.assimilation` for a gut that digests meat whole.
+                    assimilation: combat.assimilation * digestion.meat(agents.gut[i]),
+                    force,
                 },
                 combat,
             );
@@ -477,9 +514,26 @@ impl World {
             agents.energy[j] = victim_energy;
             agents.energy_reserve[j] = victim_reserve;
             agents.eaten_animals[i] += mouthful.kept;
+            if digestion.plasticity > 0.0 {
+                agents.meat_diet[i] = follow_diet(
+                    agents.meat_diet[i],
+                    mouthful.kept,
+                    1.0,
+                    digestion.diet_memory,
+                );
+            }
             agents.hurt_age[j] = 0;
+            // The prey occupies the mouth: no grazing or scavenging while it is handled.
+            agents.handling[i] = agents.handling[i].max(handling);
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits = self.bites.hits.saturating_add(1);
+            let species = agents.species_id[i];
+            if species != crate::ids::NULL_ID && species == agents.species_id[j] {
+                self.bites.same_species_hits = self.bites.same_species_hits.saturating_add(1);
+            }
+            if agents.eaten_plants[j] > agents.eaten_animals[j] {
+                self.bites.plant_eater_hits = self.bites.plant_eater_hits.saturating_add(1);
+            }
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
@@ -496,15 +550,17 @@ impl World {
     /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
     /// tick (spec §2.4).
     ///
-    /// A transfer, not a flow: nothing is recorded in the ledger, because the same
-    /// joules are still in the world afterwards. If this is ever written wrongly the
-    /// conservation test says so without knowing that eating exists.
+    /// A transfer, not a flow: the same joules are still in the world afterwards, so
+    /// only what a gut fails to assimilate is recorded in the ledger, as dissipation.
+    /// If this is ever written wrongly the conservation test says so without knowing
+    /// that eating exists.
     ///
     /// Agent-index order, because two agents can reach the same food in one tick and
     /// it may not hold enough for both. Whoever is asked first gets what is there;
     /// resolving in any other order would make the outcome depend on pool layout.
     pub fn resolve_feeding(&mut self) {
         let feeding = self.params.feeding.clone();
+        let digestion = self.params.digestion.clone();
         let plant_radius = self.params.plants.radius;
         let corpse_radius = self.params.corpses.radius;
         for id in self.pool.iter_live() {
@@ -524,15 +580,49 @@ impl World {
                 &mut feeding::Larder {
                     plants: &mut self.plants,
                     plant_reach: body + plant_radius,
+                    // A mouth busy with prey eats meat, not plants (spec §4.2).
+                    plants_allowed: self.agents.handling[i] == 0,
+                    plant_rate: if self.agents.jaw[i] > 0.0 {
+                        1.0 - feeding.jaw_graze_cost
+                            * math::pow(self.agents.jaw[i], feeding.jaw_graze_exponent)
+                    } else {
+                        1.0
+                    },
                     corpses: &mut self.corpses,
                     corpse_reach: body + corpse_radius,
                 },
             );
+            // What the gut cannot assimilate passes through and leaves the world, so a
+            // carnivore's short gut wastes plants and a herbivore's long one wastes some
+            // meat (spec §3.5, §5.1). A gut that keeps everything takes nothing back.
+            let share = if meal.carrion {
+                digestion.meat(self.agents.gut[i])
+            } else {
+                digestion.plant(self.agents.gut[i])
+            };
+            let mut kept = meal.amount;
+            if share < 1.0 && meal.amount > 0.0 {
+                let wasted = energy::take_amount(
+                    &mut self.agents.energy[i],
+                    &mut self.agents.energy_reserve[i],
+                    meal.amount * f64::from(1.0 - share),
+                );
+                self.ledger.record_dissipated_amount(wasted);
+                kept -= wasted.approximate();
+            }
             // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
             if meal.carrion {
-                self.agents.eaten_animals[i] += meal.amount;
+                self.agents.eaten_animals[i] += kept;
             } else {
-                self.agents.eaten_plants[i] += meal.amount;
+                self.agents.eaten_plants[i] += kept;
+            }
+            if digestion.plasticity > 0.0 && kept > 0.0 {
+                self.agents.meat_diet[i] = follow_diet(
+                    self.agents.meat_diet[i],
+                    kept,
+                    if meal.carrion { 1.0 } else { 0.0 },
+                    digestion.diet_memory,
+                );
             }
         }
     }
@@ -736,6 +826,15 @@ impl World {
         }
         self.tick += 1;
     }
+}
+
+/// The recent diet after a meal of `amount` of one kind (`meat` 1 for meat, 0 for
+/// plants): a step toward that kind weighted by the meal against `memory`, so a large
+/// meal counts for more than a nibble (spec §3.5).
+fn follow_diet(current: f32, amount: f64, meat: f32, memory: f32) -> f32 {
+    let amount = amount as f32;
+    let weight = amount / (amount + memory);
+    (current + weight * (meat - current)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -991,6 +1090,7 @@ mod tests {
             k_move: 0.5,
             k_muscle: 0.25,
             k_mouth: 0.125,
+            k_gut: 0.0,
         };
         let mut world = bodies(params, &[(1.0, 1.0, 1.0), (1.0, 2.0, 1.0), (1.0, 1.0, 2.0)]);
         for i in 0..3 {
@@ -1528,6 +1628,174 @@ mod tests {
     }
 
     #[test]
+    fn a_gut_keeps_its_share_of_a_plant_and_the_rest_leaves_the_world() {
+        // A half gut on the linear curve keeps half a mouthful of plant and dissipates
+        // the other half, and the diet counts only what it kept (spec §3.5, §5.1).
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        world.agents_mut().gut[grazer] = 0.5;
+        let (energy, dissipated) = (world.agents().energy[grazer], world.ledger().dissipated());
+        let stock = world.total_energy();
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        let kept = f64::from(world.agents().energy[grazer] - energy);
+        let wasted = world.ledger().dissipated() - dissipated;
+        assert!(kept > 0.0, "the grazer kept nothing");
+        assert!((kept - wasted).abs() < 1e-5, "kept {kept}, wasted {wasted}");
+        assert!((world.agents().eaten_plants[grazer] - kept).abs() < 1e-5);
+        assert!(
+            (stock - world.total_energy() - wasted).abs() < 1e-5,
+            "the waste is the only energy that left"
+        );
+    }
+
+    #[test]
+    fn a_full_gut_eats_exactly_as_a_body_without_one() {
+        // A gut of 1 must take nothing back, so a world whose founders carry no gut gene
+        // feeds bit for bit as it did before the gene existed (spec §3.5).
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        params.digestion.plant_curve = 0.5;
+        params.digestion.plant_floor = 0.3;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        let dissipated = world.ledger().dissipated();
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        assert_eq!(world.ledger().dissipated(), dissipated);
+        assert!(world.agents().eaten_plants[grazer] > 0.0);
+    }
+
+    #[test]
+    fn a_herbivore_gut_keeps_less_of_a_mouthful_of_meat() {
+        // The meat penalty scales the bite's assimilation by what the biter's gut makes
+        // of meat; the full herbivore gut loses `meat_penalty` of it (spec §3.5, §4.2).
+        let mut params = duel_params(2);
+        params.digestion.meat_penalty = 0.5;
+        let mut world = duel(
+            params,
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        let assimilation = world.params().combat.assimilation as f64;
+        assert!((world.agents().eaten_animals[0] - 20.0 * assimilation * 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_plastic_gut_follows_a_meat_diet_and_a_fixed_one_does_not() {
+        // On an all-meat diet a plastic gut closes `acclimation · dt` of the gap to
+        // `set · (1 − plasticity)` each tick; without plasticity nothing moves (spec §3.5).
+        let mut params = duel_params(1);
+        params.digestion.plasticity = 0.8;
+        params.digestion.acclimation = 6.0;
+        let mut world = duel(params, &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)]);
+        let i = 0;
+        world.agents_mut().meat_diet[i] = 1.0;
+        let step = 6.0 * world.params().world.dt;
+        world.acclimate_guts();
+        let expected = 1.0 + step * (0.2 - 1.0);
+        assert!((world.agents().gut[i] - expected).abs() < 1e-6);
+        for _ in 0..2_000 {
+            world.acclimate_guts();
+        }
+        assert!(
+            (world.agents().gut[i] - 0.2).abs() < 1e-4,
+            "settles at the target"
+        );
+
+        let mut fixed = duel(
+            duel_params(1),
+            &[(Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0)],
+        );
+        fixed.agents_mut().meat_diet[0] = 1.0;
+        fixed.acclimate_guts();
+        assert_eq!(fixed.agents().gut[0], 1.0);
+    }
+
+    #[test]
+    fn the_recent_diet_weighs_a_meal_by_its_size() {
+        assert_eq!(follow_diet(0.0, 100.0, 1.0, 100.0), 0.5);
+        assert!((follow_diet(0.5, 300.0, 0.0, 100.0) - 0.125).abs() < 1e-6);
+        assert_eq!(
+            follow_diet(0.3, 0.0, 1.0, 100.0),
+            0.3,
+            "nothing eaten, nothing learned"
+        );
+    }
+
+    #[test]
+    fn a_biter_handling_its_prey_cannot_graze_until_the_handling_time_runs_out() {
+        // Holling's handling time: a hit occupies the mouth, so the biter cannot graze
+        // for `handling_seconds`, counted down in step 9 (spec §4.2).
+        let mut params = duel_params(2);
+        params.combat.handling_seconds = 0.05; // three ticks at 60 per second
+        let mut world = duel(
+            params,
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+            ],
+        );
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        assert_eq!(world.agents().handling[0], 3);
+        assert_eq!(world.agents().handling[1], 0, "the victim's mouth is free");
+        for left in [2, 1, 0] {
+            world.recover_from_bites();
+            assert_eq!(world.agents().handling[0], left);
+        }
+    }
+
+    #[test]
+    fn a_killer_s_jaw_bites_harder_and_grazes_worse() {
+        // A jaw of 1 doubles the mouthful at the default gain and takes no plant at the
+        // default graze cost; a jaw of 0 changes nothing (spec §3.5, §4.2).
+        let mut world = duel(
+            duel_params(2),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                (Vec3::new(104.0, 100.0, 0.0), 0.0, 1_000.0),
+            ],
+        );
+        world.agents_mut().jaw[0] = 1.0;
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        let assimilation = world.params().combat.assimilation as f64;
+        assert!((world.agents().eaten_animals[0] - 40.0 * assimilation).abs() < 1e-3);
+
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        world.agents_mut().jaw[grazer] = 1.0;
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        assert_eq!(
+            world.agents().eaten_plants[grazer],
+            0.0,
+            "a killer's jaw cannot crop"
+        );
+        world.agents_mut().jaw[grazer] = 0.5;
+        world.resolve_feeding();
+        assert!(world.agents().eaten_plants[grazer] > 0.0);
+    }
+
+    #[test]
     fn bite_counts_saturate_rather_than_wrap() {
         // A restored checkpoint may carry any count, and one that wrapped to zero would
         // read as a world that never bit.
@@ -1542,6 +1810,8 @@ mod tests {
             swings: u64::MAX,
             hits: u64::MAX,
             kills: u64::MAX,
+            same_species_hits: u64::MAX,
+            plant_eater_hits: u64::MAX,
         };
         world.bites = full;
         world.agents_mut().health[1] = 0.25;

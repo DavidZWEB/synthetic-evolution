@@ -115,6 +115,11 @@ struct AgentState {
     hurt_age: u8,
     bite_at: [f32; 2],
     kills: u32,
+    /// The live gut and the recent diet it follows, which a plastic gut moves away from
+    /// what the genome says (spec §3.5).
+    gut: f32,
+    meat_diet: f32,
+    handling: u32,
     age: u32,
     species_id: u32,
     signature: Vec3,
@@ -211,6 +216,9 @@ impl World {
                     hurt_age: a.hurt_age[i],
                     bite_at: a.bite_at[i],
                     kills: a.kills[i],
+                    gut: a.gut[i],
+                    meat_diet: a.meat_diet[i],
+                    handling: a.handling[i],
                     age: a.age[i],
                     species_id: a.species_id[i],
                     signature: a.signature[i],
@@ -449,6 +457,11 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         if !(agent.health > 0.0 && agent.health <= 1.0) {
             return Err(invalid("a living agent's health must lie in (0, 1]"));
         }
+        if !(0.0..=1.0).contains(&agent.gut) || !(0.0..=1.0).contains(&agent.meat_diet) {
+            return Err(invalid(
+                "a living agent's gut and recent diet must lie in [0, 1]",
+            ));
+        }
         if ![agent.eaten_plants, agent.eaten_animals]
             .iter()
             .all(|&eaten| eaten >= 0.0 && eaten.is_finite())
@@ -546,6 +559,11 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.sensor_load[i] = genome::sensor_load(genes);
         a.muscle[i] = genome::body_trait(genes, BodyTrait::Muscle).unwrap_or(1.0);
         a.mouth[i] = genome::body_trait(genes, BodyTrait::Mouth).unwrap_or(1.0);
+        a.gut_set[i] = genome::body_trait(genes, BodyTrait::Gut).unwrap_or(1.0);
+        a.jaw[i] = genome::body_trait(genes, BodyTrait::Jaw).unwrap_or(0.0);
+        a.gut[i] = agent.gut;
+        a.meat_diet[i] = agent.meat_diet;
+        a.handling[i] = agent.handling;
         a.genome[i] = agent.genome.block;
         a.brain[i] = agent.brain.block;
         a.synapses[i] = agent.synapses;

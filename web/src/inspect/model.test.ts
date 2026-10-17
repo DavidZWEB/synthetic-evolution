@@ -27,6 +27,7 @@ const inspection = {
   health: 0.75,
   muscle: 1.5,
   mouth: 0.5,
+  gut: 0.75,
   eaten_plants: 30,
   eaten_animals: 10,
   kills: 2,
@@ -61,7 +62,7 @@ test('combat fields are validated: health in (0, 1], diets non-negative, kills a
     [0.75, 1.5, 0.5, 2],
   );
   const cases: Array<[string, unknown]> = [
-    ['health', 0], ['health', 1.5], ['health', null], ['muscle', 'strong'], ['mouth', null],
+    ['health', 0], ['health', 1.5], ['health', null], ['muscle', 'strong'], ['mouth', null], ['gut', 1.5], ['gut', null],
     ['eaten_plants', -1], ['eaten_animals', -0.5], ['eaten_animals', null],
     ['kills', -1], ['kills', 1.5], ['kills', 4294967296],
   ];

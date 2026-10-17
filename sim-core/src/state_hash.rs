@@ -266,6 +266,15 @@ impl World {
             h.f32(agents.size[i]);
             h.f32(agents.muscle[i]);
             h.f32(agents.mouth[i]);
+            // Only a plastic gut is state the genome cannot reconstruct, so a world
+            // without plasticity hashes as it did before guts could change.
+            if self.params.digestion.plasticity > 0.0 {
+                h.f32(agents.gut[i]);
+                h.f32(agents.meat_diet[i]);
+            }
+            if self.params.combat.handling_seconds > 0.0 {
+                h.u32(agents.handling[i]);
+            }
             h.u32(agents.parent_a[i]);
             h.u32(agents.parent_b[i]);
             h.u32(agents.grid_cell[i]);

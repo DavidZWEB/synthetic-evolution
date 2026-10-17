@@ -1,4 +1,4 @@
-//! Body-trait mutation: size, muscle, mouth, and signature colour drift by birth.
+//! Body-trait mutation: size, muscle, mouth, gut, and signature colour drift by birth.
 //!
 //! Owns each trait's step and the range it is clamped to (spec §3.5), not what the
 //! traits do; movement, intake, and upkeep read them in the tick. Meta genes stay
@@ -32,14 +32,23 @@ pub(crate) fn apply(genes: &mut [Gene], params: &SimParams, rng: &mut Rng) {
         if !rng.chance(rate) {
             continue;
         }
-        let step = rng.normal(0.0, sigma);
+        let scale = match gene.trait_ {
+            BodyTrait::Gut => params.mutation.gut_sigma,
+            BodyTrait::Jaw => params.mutation.jaw_sigma,
+            _ => sigma,
+        };
+        let step = rng.normal(0.0, scale);
         gene.value = match gene.trait_ {
             BodyTrait::Size => scaled(gene.value, step, body.size_range),
             BodyTrait::Muscle => scaled(gene.value, step, body.muscle_range),
             BodyTrait::Mouth => scaled(gene.value, step, body.mouth_range),
-            BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => {
-                (gene.value + step).clamp(0.0, 1.0)
-            }
+            // A gut is a share of plant energy, so like a colour channel it steps by
+            // addition and can reach either end (spec §3.5).
+            BodyTrait::SignatureR
+            | BodyTrait::SignatureG
+            | BodyTrait::SignatureB
+            | BodyTrait::Gut
+            | BodyTrait::Jaw => (gene.value + step).clamp(0.0, 1.0),
         };
     }
 }

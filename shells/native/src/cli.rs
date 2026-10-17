@@ -150,6 +150,18 @@ pub struct ResumeArgs {
     /// Ticks between history drains; used only with --history.
     #[arg(long, default_value_t = 1_000, requires = "history", value_parser = clap::value_parser!(u64).range(1..))]
     pub drain_every: u64,
+    /// Write this continuation's metrics JSONL: a header naming the whole run's ticks,
+    /// then samples after the saved boundary. Event counters restart at the boundary.
+    #[arg(long)]
+    pub metrics: Option<PathBuf>,
+    /// Tick interval between continuation samples; used only with --metrics.
+    #[arg(long, default_value_t = 5_000, requires = "metrics", value_parser = clap::value_parser!(u64).range(1..))]
+    pub sample_every: u64,
+    /// Partial SimParams JSON laid over the saved params of every world at the boundary,
+    /// before the first resumed tick, for interventions such as a knockout. Must be a
+    /// legal live retune.
+    #[arg(long, requires = "metrics")]
+    pub retune: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Args)]

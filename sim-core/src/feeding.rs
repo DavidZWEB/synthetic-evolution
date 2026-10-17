@@ -34,6 +34,12 @@ pub struct Meal {
 pub struct Larder<'a> {
     pub plants: &'a mut Plants,
     pub plant_reach: f32,
+    /// False while the eater's mouth is busy with prey: it can still eat carrion, which
+    /// is meat, but not graze (spec §4.2).
+    pub plants_allowed: bool,
+    /// Share of the asked amount a plant yields to this mouth: a killer's jaw crops
+    /// plants badly (spec §3.5). Carrion is taken in full.
+    pub plant_rate: f32,
     pub corpses: &'a mut Corpses,
     pub corpse_reach: f32,
 }
@@ -92,14 +98,18 @@ pub fn ingest(
     // Found first, taken second: the search borrows the food to read and the take
     // borrows it to write, and they cannot overlap.
     let plants = &*larder.plants;
-    let plant = nearest_within(
-        plants.hash(),
-        plants.position(),
-        at,
-        larder.plant_reach,
-        |i| plants.energy_at(i) > 0.0,
-    )
-    .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach));
+    let plant = if larder.plants_allowed {
+        nearest_within(
+            plants.hash(),
+            plants.position(),
+            at,
+            larder.plant_reach,
+            |i| plants.energy_at(i) > 0.0,
+        )
+        .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach))
+    } else {
+        None
+    };
     let corpses = &*larder.corpses;
     let corpse = corpses
         .hash()
@@ -122,6 +132,12 @@ pub fn ingest(
             .corpses
             .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
     } else {
+        // Exactly `wanted` for a mouth that crops plants whole.
+        let wanted = if larder.plant_rate < 1.0 {
+            wanted * larder.plant_rate
+        } else {
+            wanted
+        };
         larder
             .plants
             .transfer_to(index, agent_energy, agent_energy_reserve, wanted)
@@ -169,6 +185,8 @@ mod tests {
             &mut Larder {
                 plants,
                 plant_reach: reach,
+                plants_allowed: true,
+                plant_rate: 1.0,
                 corpses: &mut corpses,
                 corpse_reach: reach,
             },
@@ -301,6 +319,8 @@ mod tests {
             &mut Larder {
                 plants,
                 plant_reach: 5.0,
+                plants_allowed: true,
+                plant_rate: 1.0,
                 corpses,
                 corpse_reach: 5.0,
             },

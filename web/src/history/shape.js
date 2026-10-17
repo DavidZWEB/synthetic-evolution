@@ -60,11 +60,14 @@ const PARAMS = {
   },
   body: {
     size: f, size_range: ['finite', 2], muscle_range: ['finite', 2], mouth_range: ['finite', 2],
+    gut: f, jaw: f,
   },
-  metabolism: { base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f },
+  metabolism: {
+    base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f, k_gut: f,
+  },
   movement: { max_thrust: f, max_turn_rate: f, drag: f, max_speed: f },
   sensing: {
-    vision_range: f, vision_fov: f, vision_rays: u, chemo_sensors: u,
+    vision_range: f, vision_fov: f, vision_azimuth_spread: f, vision_rays: u, chemo_sensors: u,
     energy_sensors: u, chemo_radius: f, vision_gain: f, chemo_gain: f,
   },
   brain: {
@@ -80,15 +83,19 @@ const PARAMS = {
     },
     organs: {
       remove_sensor_rate: f, add_sensor_rate: f, vision_weight: f, chemo_weight: f,
-      energy_weight: f, neuron_bias: f, wired_weight_scale: f,
+      energy_weight: f, neuron_bias: f, wired_weight_scale: f, eye_drift_rate: f,
+      eye_drift_sigma: f,
     },
     weight_perturb_rate: f, weight_perturb_sigma: f, weight_reset_rate: f, weight_limit: f,
     neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f, body_trait_rate: f,
-    body_trait_sigma: f,
+    body_trait_sigma: f, gut_sigma: f, jaw_sigma: f,
   },
   distance: { disjoint_coefficient: f, excess_coefficient: f, weight_coefficient: f },
   species: { capacity: u, threshold: f },
-  feeding: { rate: f, gate: f, reach: f },
+  feeding: { rate: f, gate: f, reach: f, jaw_graze_cost: f, jaw_graze_exponent: f },
+  digestion: {
+    plant_floor: f, plant_curve: f, meat_penalty: f, plasticity: f, acclimation: f, diet_memory: f,
+  },
   plants: {
     energy_input_rate: f, max_plants: u, max_energy: f, grazing_lag: f, patchiness: f,
     patch_scale: f, death_stock: f, death_seconds: f, local_dispersal: f,
@@ -100,9 +107,11 @@ const PARAMS = {
   },
   combat: {
     gate: f, reach: f, arc: f, attack_cost: f, attack_damage: f, cooldown_seconds: f,
-    health_regen: f, dormant_bias: f, mouthful: f, assimilation: f,
+    health_regen: f, dormant_bias: f, mouthful: f, assimilation: f, handling_seconds: f,
+    jaw_bite_gain: f, jaw_bite_exponent: f,
   },
-  founder: { bite: 'boolean', bite_wired: 'boolean' },
+  founder: { bite: 'boolean', bite_wired: 'boolean', bite_cryptic: 'boolean', gut: 'boolean',
+    jaw: 'boolean' },
   chemo: { cells: ['u32', 3], decay: ['finite'], diffuse: f },
 };
 
@@ -116,6 +125,10 @@ const LATER_PARAMS = new Set([
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
   'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain', 'bite_wired',
+  'gut', 'k_gut', 'eye_drift_rate', 'eye_drift_sigma', 'gut_sigma', 'digestion', 'bite_cryptic',
+  'handling_seconds', 'plasticity', 'acclimation', 'diet_memory', 'plant_curve', 'jaw',
+  'jaw_sigma', 'jaw_graze_cost', 'jaw_bite_gain', 'jaw_bite_exponent', 'jaw_graze_exponent',
+  'vision_azimuth_spread',
 ]);
 
 export function integerParam(path) {

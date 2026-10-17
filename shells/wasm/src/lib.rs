@@ -366,12 +366,13 @@ struct Inspection<'a> {
     parent_b: u32,
     brain_units: u32,
     sensor_load: f32,
-    /// Combat, for the inspector (spec §2.2b): health in (0, 1], the body's muscle and
-    /// mouth, lifetime intake from plants and from other agents, and the victims it bit
-    /// on the tick they fell.
+    /// Combat, for the inspector (spec §2.2b): health in (0, 1], the body's muscle,
+    /// mouth, and gut, lifetime intake from plants and from other agents, and the
+    /// victims it bit on the tick they fell.
     health: f32,
     muscle: f32,
     mouth: f32,
+    gut: f32,
     eaten_plants: f64,
     eaten_animals: f64,
     kills: u32,
@@ -753,6 +754,7 @@ impl Sim {
             health: agents.health[i],
             muscle: agents.muscle[i],
             mouth: agents.mouth[i],
+            gut: agents.gut[i],
             eaten_plants: agents.eaten_plants[i],
             eaten_animals: agents.eaten_animals[i],
             kills: agents.kills[i],

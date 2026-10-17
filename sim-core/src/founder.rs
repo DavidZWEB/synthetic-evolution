@@ -50,7 +50,7 @@ pub(crate) fn sensor_parameters(
     match modality {
         // Retain the elevation slot, clamped on the simulation plane (spec §4.1, §9.1).
         Modality::VisionRay => [
-            rng.range(-core::f32::consts::PI, core::f32::consts::PI),
+            rng.range(-params.vision_azimuth_spread, params.vision_azimuth_spread),
             0.0,
             params.vision_range,
             params.vision_fov,
@@ -87,6 +87,9 @@ pub struct FounderPlan {
     /// The output neuron a founder's bite reads, when founders carry a dormant one. Its
     /// bias starts at `combat.dormant_bias` rather than a draw (spec §4.2).
     bite: Option<InnovationId>,
+    /// Whether the dormant bite's neuron reads every source at weight 0 rather than
+    /// nothing (spec §4.2). Those weights are written without a draw.
+    cryptic: bool,
 }
 
 impl FounderPlan {
@@ -114,10 +117,17 @@ impl FounderPlan {
             .brain
             .connections_per_target
             .map_or(sources, |count| u64::from(count).min(sources));
-        let connections = fan_in.checked_mul(sinks)?;
+        let cryptic = if params.founder.bite && params.founder.bite_cryptic {
+            sources
+        } else {
+            0
+        };
+        let connections = fan_in.checked_mul(sinks)?.checked_add(cryptic)?;
         let other_genes = sensors
             .checked_add(outputs)?
-            .checked_add((BODY_TRAITS.len() + META_TRAITS.len()) as u64)?;
+            .checked_add((BODY_TRAITS.len() + META_TRAITS.len()) as u64)?
+            .checked_add(u64::from(params.founder.gut))?
+            .checked_add(u64::from(params.founder.jaw))?;
         let genes = neurons.checked_add(connections)?.checked_add(other_genes)?;
         Some(FounderCounts {
             sensor_channels: u32::try_from(sensor_channels).ok()?,
@@ -259,7 +269,27 @@ impl FounderPlan {
             }
         }
 
-        for trait_ in BODY_TRAITS {
+        // A cryptic bite reads every source, after every other connection so the drawn
+        // ones keep their ids and their place in the stream (spec §4.2).
+        let cryptic = params.founder.bite && params.founder.bite_cryptic;
+        if cryptic {
+            let bite_neuron = neuron_ids[output_end - 1];
+            for &from in &sources {
+                genes.push(Gene::Connection(ConnectionGene {
+                    id: next_id(),
+                    from: neuron_ids[from],
+                    to: bite_neuron,
+                    weight: 0.0,
+                    enabled: true,
+                }));
+            }
+        }
+
+        // A gut gene only when founders carry one, so a world without it builds the
+        // template, and draws the stream, it did before the gene existed (spec §3.5).
+        let gut = params.founder.gut.then_some(BodyTrait::Gut);
+        let jaw = params.founder.jaw.then_some(BodyTrait::Jaw);
+        for trait_ in BODY_TRAITS.into_iter().chain(gut).chain(jaw) {
             genes.push(Gene::Body(BodyGene { trait_, value: 0.0 }));
         }
 
@@ -295,6 +325,7 @@ impl FounderPlan {
             bite: bite
                 .filter(|_| !wired_bite)
                 .map(|_| neuron_ids[output_end - 1]),
+            cryptic,
         })
     }
 
@@ -421,7 +452,13 @@ impl FounderPlan {
                     };
                     let scale = brain.weight_init_scale * normalized;
                     connection += 1;
-                    c.weight = rng.range(-scale, scale);
+                    // Keyed off the template, never a value: a cryptic bite's wiring
+                    // starts silent and consumes no draw (spec §4.2).
+                    c.weight = if founding && self.cryptic && Some(c.to) == self.bite {
+                        0.0
+                    } else {
+                        rng.range(-scale, scale)
+                    };
                 }
                 Gene::Sensor(s) => {
                     if !founding {
@@ -438,6 +475,8 @@ impl FounderPlan {
                         // Founders all start at the reference body, with no draw, so the
                         // random sequence is the one Phase 2 founders drew (spec §3.5).
                         BodyTrait::Muscle | BodyTrait::Mouth => 1.0,
+                        BodyTrait::Gut => params.body.gut,
+                        BodyTrait::Jaw => params.body.jaw,
                         // Founders differ in colour so lineages are distinguishable on
                         // screen from the first frame, and so `vision_ray` has
                         // something to discriminate before `set_signature` exists.
@@ -1104,6 +1143,85 @@ mod tests {
         let mut fan_in = vec![0; genes.len()];
         plan.randomize_brain(&mut Rng::from_seed(3), &params, &mut redrawn, &mut fan_in);
         assert_ne!(neuron(&redrawn).bias, params.combat.dormant_bias);
+    }
+
+    #[test]
+    fn a_cryptic_bite_reads_every_source_silently_and_draws_nothing() {
+        // Every source reaches the dormant bite at weight 0 with the dormant bias, and
+        // the drawn genes are exactly a dormant world's: the cryptic wiring takes no
+        // draw and sorts after every drawn connection (spec §4.2).
+        let mut params = SimParams::default();
+        params.sensing.vision_rays = 1;
+        params.founder.bite = true;
+        let dormant = instantiate(&plan(&params), &params, 9);
+        params.founder.bite_cryptic = true;
+        let cryptic = instantiate(&plan(&params), &params, 9);
+        let bite = cryptic
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Effector(effector) if effector.action == Action::Bite => {
+                    Some(effector.source)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let wires: Vec<&ConnectionGene> = cryptic
+            .iter()
+            .filter_map(|gene| match gene {
+                Gene::Connection(c) if c.to == bite => Some(c),
+                _ => None,
+            })
+            .collect();
+        let neurons = genome::neuron_count(&cryptic);
+        let outputs = EFFECTORS.len() + 1;
+        assert_eq!(wires.len(), neurons - outputs, "one wire from every source");
+        assert!(wires.iter().all(|c| c.weight == 0.0 && c.enabled));
+        let bias = cryptic
+            .iter()
+            .find_map(|gene| match gene {
+                Gene::Neuron(neuron) if neuron.id == bite => Some(neuron.bias),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(bias, params.combat.dormant_bias);
+        let drawn: Vec<&Gene> = cryptic
+            .iter()
+            .filter(|gene| !matches!(gene, Gene::Connection(c) if c.to == bite))
+            .collect();
+        assert_eq!(drawn, dormant.iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn founders_carry_a_jaw_only_when_asked_and_draw_nothing_for_it() {
+        let mut params = SimParams::default();
+        let without = instantiate(&plan(&params), &params, 4);
+        assert_eq!(genome::body_trait(&without, BodyTrait::Jaw), None);
+        params.founder.jaw = true;
+        params.body.jaw = 0.25;
+        let with = instantiate(&plan(&params), &params, 4);
+        assert_eq!(genome::body_trait(&with, BodyTrait::Jaw), Some(0.25));
+        let rest: Vec<&Gene> = with
+            .iter()
+            .filter(|gene| !matches!(gene, Gene::Body(b) if b.trait_ == BodyTrait::Jaw))
+            .collect();
+        assert_eq!(rest, without.iter().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn founders_carry_a_gut_only_when_asked_and_at_the_founding_value() {
+        let mut params = SimParams::default();
+        let without = instantiate(&plan(&params), &params, 4);
+        assert_eq!(genome::body_trait(&without, BodyTrait::Gut), None);
+        params.founder.gut = true;
+        params.body.gut = 0.75;
+        let with = instantiate(&plan(&params), &params, 4);
+        assert_eq!(genome::body_trait(&with, BodyTrait::Gut), Some(0.75));
+        // The gene draws nothing, so every other gene is the gutless founder's.
+        let rest: Vec<&Gene> = with
+            .iter()
+            .filter(|gene| !matches!(gene, Gene::Body(b) if b.trait_ == BodyTrait::Gut))
+            .collect();
+        assert_eq!(rest, without.iter().collect::<Vec<_>>());
     }
 
     #[test]

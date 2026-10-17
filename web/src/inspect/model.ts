@@ -27,6 +27,7 @@ export interface Inspection {
   health: number;
   muscle: number;
   mouth: number;
+  gut: number;
   eaten_plants: number;
   eaten_animals: number;
   kills: number;
@@ -104,6 +105,9 @@ function isInspection(value: unknown): value is Inspection {
     value.health <= 1 &&
     isFiniteNumber(value.muscle) &&
     isFiniteNumber(value.mouth) &&
+    isFiniteNumber(value.gut) &&
+    value.gut >= 0 &&
+    value.gut <= 1 &&
     isFiniteNumber(value.eaten_plants) &&
     value.eaten_plants >= 0 &&
     isFiniteNumber(value.eaten_animals) &&

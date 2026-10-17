@@ -57,6 +57,9 @@ pub struct Agents {
     pub health: Vec<f32>,
     /// Ticks until this agent can swing again, counted down in step 9 (spec §4.2).
     pub cooldown: Vec<u32>,
+    /// Ticks this agent's mouth stays busy with prey after a hit, during which it cannot
+    /// eat; counted down in step 9.
+    pub handling: Vec<u32>,
     /// Energy this agent has eaten over its life from plants, and from other agents
     /// through bites and corpses, so diet can be measured (spec §7.9). Neither steers
     /// the tick.
@@ -91,6 +94,17 @@ pub struct Agents {
     /// Gape relative to the body, read from the genome at birth (spec §3.5). Intake
     /// and the bite scale with it.
     pub mouth: Vec<f32>,
+    /// Plant-digesting gut in `[0, 1]` as it is now: the genome's set point, moved by
+    /// diet when guts are plastic (spec §3.5). 1, the full herbivore gut, for a genome
+    /// that does not carry it.
+    pub gut: Vec<f32>,
+    /// The genome's gut, the set point a plastic gut is measured from, cached at birth.
+    pub gut_set: Vec<f32>,
+    /// Jaw form in `[0, 1]`, read from the genome at birth (spec §3.5); 0 for a genome
+    /// that does not carry it.
+    pub jaw: Vec<f32>,
+    /// Meat share of recent meals, the cue a plastic gut follows; 0 at birth.
+    pub meat_diet: Vec<f32>,
     /// Legacy parent slots, not persistent ancestry IDs. Use `parent_birth_a/b` for
     /// lifetime references; `parent_b` stays `NULL_ID` during asexual reproduction.
     ///
@@ -184,6 +198,7 @@ impl Agents {
             energy_reserve: vec![0.0; n],
             health: vec![0.0; n],
             cooldown: vec![0; n],
+            handling: vec![0; n],
             eaten_plants: vec![0.0; n],
             eaten_animals: vec![0.0; n],
             swing_age: vec![u8::MAX; n],
@@ -196,6 +211,10 @@ impl Agents {
             size: vec![0.0; n],
             muscle: vec![1.0; n],
             mouth: vec![1.0; n],
+            gut: vec![1.0; n],
+            gut_set: vec![1.0; n],
+            jaw: vec![0.0; n],
+            meat_diet: vec![0.0; n],
             parent_a: vec![NULL_ID; n],
             parent_b: vec![NULL_ID; n],
             birth_id: vec![BirthId::NULL; n],
@@ -230,6 +249,7 @@ impl Agents {
         self.energy_reserve[i] = 0.0;
         self.health[i] = 1.0;
         self.cooldown[i] = 0;
+        self.handling[i] = 0;
         self.eaten_plants[i] = 0.0;
         self.eaten_animals[i] = 0.0;
         self.swing_age[i] = u8::MAX;
@@ -253,6 +273,10 @@ impl Agents {
         self.sensor_load[i] = 0.0;
         self.muscle[i] = 1.0;
         self.mouth[i] = 1.0;
+        self.gut[i] = 1.0;
+        self.gut_set[i] = 1.0;
+        self.jaw[i] = 0.0;
+        self.meat_diet[i] = 0.0;
         self.brain[i] = handles.brain;
         self.synapses[i] = handles.synapses;
         self.sensors[i] = handles.sensors;

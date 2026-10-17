@@ -1,4 +1,5 @@
-//! Bounded sensor addition and removal on caller-owned genome storage.
+//! Bounded sensor addition and removal on caller-owned genome storage, and the drift
+//! of where an eye looks.
 //!
 //! Owns organ selection, channel/target creation, and the one wire a new organ arrives
 //! with; later wiring and neural pruning belong to the neural pass, which the heredity
@@ -42,6 +43,26 @@ pub(crate) fn apply(
         };
         debug_assert!(genome::validate_architecture(genes).is_ok());
         on_event(StructuralMutationEvent { operator, outcome });
+    }
+    drift_eyes(genes, &params.mutation.organs, state.rng);
+}
+
+/// Turns each eye, with probability `eye_drift_rate`, by a normal step wrapped onto the
+/// circle, in gene order. Eye placement is a classic predator–prey divergence: forward
+/// for a hunter, to the sides for the hunted (spec §3.5, §4.1). A zero rate draws
+/// nothing, so a world without drift consumes the stream it did before.
+fn drift_eyes(genes: &mut [Gene], organs: &OrganMutationParams, rng: &mut Rng) {
+    if organs.eye_drift_rate <= 0.0 {
+        return;
+    }
+    for gene in genes {
+        if let Gene::Sensor(sensor) = gene
+            && sensor.modality == Modality::VisionRay
+            && rng.chance(organs.eye_drift_rate)
+        {
+            let step = rng.normal(0.0, organs.eye_drift_sigma);
+            sensor.params[0] = math::reduce_angle(sensor.params[0] + step);
+        }
     }
 }
 
@@ -197,6 +218,51 @@ fn add_sensor(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn eyes_drift_only_when_asked_and_stay_on_the_circle() {
+        use crate::genome::SensorGene;
+        let eye = |azimuth: f32, id: u32| {
+            Gene::Sensor(SensorGene {
+                id: InnovationId::new(id),
+                modality: Modality::VisionRay,
+                params: [azimuth, 0.0, 60.0, 0.5],
+                targets: [InnovationId::NULL; SENSOR_CHANNELS],
+            })
+        };
+        let nose = Gene::Sensor(SensorGene {
+            id: InnovationId::new(9),
+            modality: Modality::Chemo,
+            params: [0.0, 40.0, 0.0, 0.0],
+            targets: [InnovationId::NULL; SENSOR_CHANNELS],
+        });
+        let start = vec![eye(3.1, 1), eye(-0.2, 2), nose];
+        let mut organs = OrganMutationParams::default();
+        let mut genes = start.clone();
+        let mut rng = Rng::from_seed(5);
+        let before = rng.state_fingerprint();
+        drift_eyes(&mut genes, &organs, &mut rng);
+        assert_eq!(
+            (genes.clone(), rng.state_fingerprint()),
+            (start.clone(), before)
+        );
+        organs.eye_drift_rate = 1.0;
+        organs.eye_drift_sigma = 0.5;
+        for _ in 0..200 {
+            drift_eyes(&mut genes, &organs, &mut rng);
+            for gene in &genes {
+                if let Gene::Sensor(s) = gene
+                    && s.modality == Modality::VisionRay
+                {
+                    assert!(
+                        (-core::f32::consts::PI..=core::f32::consts::PI).contains(&s.params[0])
+                    );
+                }
+            }
+        }
+        assert_ne!(genes[0], start[0], "an eye never turned");
+        assert_eq!(genes[2], nose, "a nose has no direction to drift");
+    }
+
     use super::*;
     use crate::genome::{Action, EffectorGene, GENE_PARAMS, fixtures::tiny};
     use crate::ids::NULL_ID;

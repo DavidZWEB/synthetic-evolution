@@ -19,9 +19,11 @@ use crate::params::MetabolismParams;
 /// Energy one agent burns in a **tick**, at this body, brain, sensor load, and force.
 ///
 /// `muscle` and `mouth` add `k · (trait² − 1)` each, zero at the reference body of 1,
-/// so a Phase 2 body pays exactly what it did (spec §3.5). Below 1 they are discounts,
-/// and a bill they would take below zero is zero: upkeep dissipates energy and cannot
-/// create it (spec §5.1). `force` is the thrust a drive produced after muscle scaled
+/// so a Phase 2 body pays exactly what it did (spec §3.5). The gut adds
+/// `k_gut · (gut − 1)`: the full herbivore gut of 1 pays exactly what a body without
+/// one does, and a shorter gut is cheaper tissue to carry (spec §5.2). Below 1 these are
+/// discounts, and a bill they would take below zero is zero: upkeep dissipates energy
+/// and cannot create it (spec §5.1). `force` is the thrust a drive produced after muscle scaled
 /// it, not the acceleration mass leaves of it.
 ///
 /// Per tick, not per second, because that is how spec §5.5 states every constant in the
@@ -36,10 +38,12 @@ use crate::params::MetabolismParams;
 /// table onto a per-second footing is not something to do by arithmetic with no running
 /// population to check against — see the budget note in the M7 plan.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn cost_per_tick(
     size: f32,
     muscle: f32,
     mouth: f32,
+    gut: f32,
     brain_units: u32,
     sensor_load: f32,
     force: f32,
@@ -49,6 +53,7 @@ pub fn cost_per_tick(
         + params.k_size * size * size
         + params.k_muscle * (muscle * muscle - 1.0)
         + params.k_mouth * (mouth * mouth - 1.0)
+        + params.k_gut * (gut - 1.0)
         + params.k_brain * brain_units as f32
         + params.k_sensor * sensor_load
         + params.k_move * force * force;
@@ -71,7 +76,7 @@ pub fn idle_ticks(
     sensor_load: f32,
     params: &MetabolismParams,
 ) -> f32 {
-    let per_tick = cost_per_tick(size, 1.0, 1.0, brain_units, sensor_load, 0.0, params);
+    let per_tick = cost_per_tick(size, 1.0, 1.0, 1.0, brain_units, sensor_load, 0.0, params);
     if per_tick <= 0.0 {
         return f32::INFINITY;
     }
@@ -92,22 +97,22 @@ mod tests {
         // If any of these stopped contributing, the strategy it exists to penalise
         // would become free and the sim would quietly stop selecting against it.
         let p = SimParams::default().metabolism;
-        let base = cost_per_tick(0.0, 1.0, 1.0, 0, 0.0, 0.0, &p);
+        let base = cost_per_tick(0.0, 1.0, 1.0, 1.0, 0, 0.0, 0.0, &p);
         assert!(base > 0.0, "idling is free");
         assert!(
-            cost_per_tick(3.0, 1.0, 1.0, 0, 0.0, 0.0, &p) > base,
+            cost_per_tick(3.0, 1.0, 1.0, 1.0, 0, 0.0, 0.0, &p) > base,
             "size is free"
         );
         assert!(
-            cost_per_tick(0.0, 1.0, 1.0, 268, 0.0, 0.0, &p) > base,
+            cost_per_tick(0.0, 1.0, 1.0, 1.0, 268, 0.0, 0.0, &p) > base,
             "brain is free"
         );
         assert!(
-            cost_per_tick(0.0, 1.0, 1.0, 0, 16.0, 0.0, &p) > base,
+            cost_per_tick(0.0, 1.0, 1.0, 1.0, 0, 16.0, 0.0, &p) > base,
             "sensors are free"
         );
         assert!(
-            cost_per_tick(0.0, 1.0, 1.0, 0, 0.0, 1.0, &p) > base,
+            cost_per_tick(0.0, 1.0, 1.0, 1.0, 0, 0.0, 1.0, &p) > base,
             "moving is free"
         );
     }
@@ -123,7 +128,7 @@ mod tests {
                 + p.k_brain * units as f32
                 + p.k_sensor * load
                 + p.k_move * force * force;
-            let now = cost_per_tick(size, 1.0, 1.0, units, load, force, &p);
+            let now = cost_per_tick(size, 1.0, 1.0, 1.0, units, load, force, &p);
             assert_eq!(now.to_bits(), phase_2.to_bits());
         }
     }
@@ -131,16 +136,28 @@ mod tests {
     #[test]
     fn muscle_and_mouth_add_their_squared_upkeep() {
         let p = SimParams::default().metabolism;
-        let reference = cost_per_tick(3.0, 1.0, 1.0, 13, 3.0, 0.0, &p);
-        let strong = cost_per_tick(3.0, 2.0, 1.0, 13, 3.0, 0.0, &p);
-        let wide = cost_per_tick(3.0, 1.0, 1.5, 13, 3.0, 0.0, &p);
-        let weak = cost_per_tick(3.0, 0.5, 1.0, 13, 3.0, 0.0, &p);
+        let reference = cost_per_tick(3.0, 1.0, 1.0, 1.0, 13, 3.0, 0.0, &p);
+        let strong = cost_per_tick(3.0, 2.0, 1.0, 1.0, 13, 3.0, 0.0, &p);
+        let wide = cost_per_tick(3.0, 1.0, 1.5, 1.0, 13, 3.0, 0.0, &p);
+        let weak = cost_per_tick(3.0, 0.5, 1.0, 1.0, 13, 3.0, 0.0, &p);
         assert!((strong - reference - p.k_muscle * 3.0).abs() < 1e-6);
         assert!((wide - reference - p.k_mouth * 1.25).abs() < 1e-6);
         assert!(
             (weak - reference + p.k_muscle * 0.75).abs() < 1e-6,
             "weaker muscle is cheaper to carry"
         );
+    }
+
+    #[test]
+    fn a_shorter_gut_is_cheaper_tissue_and_the_full_gut_costs_nothing_extra() {
+        // The full herbivore gut must add nothing, or a body without the gene would pay
+        // differently from one that carries it at 1 (spec §5.2).
+        let p = MetabolismParams::default();
+        let full = cost_per_tick(3.0, 1.0, 1.0, 1.0, 13, 3.0, 0.0, &p);
+        let none = cost_per_tick(3.0, 1.0, 1.0, 0.0, 13, 3.0, 0.0, &p);
+        let half = cost_per_tick(3.0, 1.0, 1.0, 0.5, 13, 3.0, 0.0, &p);
+        assert!((full - none - p.k_gut).abs() < 1e-7, "{full} {none}");
+        assert!((full - half - 0.5 * p.k_gut).abs() < 1e-7, "{full} {half}");
     }
 
     #[test]
@@ -155,10 +172,11 @@ mod tests {
             k_move: 0.0,
             k_muscle: 1.0,
             k_mouth: 0.0,
+            k_gut: 0.0,
         };
-        let weak = cost_per_tick(3.0, 0.25, 1.0, 13, 3.0, 0.0, &p);
+        let weak = cost_per_tick(3.0, 0.25, 1.0, 1.0, 13, 3.0, 0.0, &p);
         assert_eq!(weak.to_bits(), 0.0f32.to_bits(), "{weak}");
-        assert_eq!(cost_per_tick(3.0, 2.0, 1.0, 13, 3.0, 0.0, &p), 3.0);
+        assert_eq!(cost_per_tick(3.0, 2.0, 1.0, 1.0, 13, 3.0, 0.0, &p), 3.0);
         // A bill of -0 is charged as +0, the same zero on every target.
         let negative_zero = MetabolismParams {
             base: -0.0,
@@ -168,8 +186,9 @@ mod tests {
             k_move: -0.0,
             k_muscle: -0.0,
             k_mouth: -0.0,
+            k_gut: -0.0,
         };
-        let zero = cost_per_tick(3.0, 1.0, 1.0, 13, 3.0, 0.5, &negative_zero);
+        let zero = cost_per_tick(3.0, 1.0, 1.0, 1.0, 13, 3.0, 0.5, &negative_zero);
         assert_eq!(zero.to_bits(), 0.0f32.to_bits());
     }
 
@@ -178,8 +197,8 @@ mod tests {
         // Spec §5.5 states the relationship, not the constant: upkeep is quadratic in
         // radius because surface area is.
         let p = SimParams::default().metabolism;
-        let one = cost_per_tick(1.0, 1.0, 1.0, 0, 0.0, 0.0, &p) - p.base;
-        let two = cost_per_tick(2.0, 1.0, 1.0, 0, 0.0, 0.0, &p) - p.base;
+        let one = cost_per_tick(1.0, 1.0, 1.0, 1.0, 0, 0.0, 0.0, &p) - p.base;
+        let two = cost_per_tick(2.0, 1.0, 1.0, 1.0, 0, 0.0, 0.0, &p) - p.base;
         assert!((two / one - 4.0).abs() < 1e-4, "{one} -> {two}");
     }
 
@@ -187,8 +206,8 @@ mod tests {
     fn sprinting_costs_more_than_twice_as_much_as_half_speed() {
         // Quadratic in force, so a sprint is never worth it for a marginal gain.
         let p = SimParams::default().metabolism;
-        let half = cost_per_tick(0.0, 1.0, 1.0, 0, 0.0, 0.5, &p) - p.base;
-        let full = cost_per_tick(0.0, 1.0, 1.0, 0, 0.0, 1.0, &p) - p.base;
+        let half = cost_per_tick(0.0, 1.0, 1.0, 1.0, 0, 0.0, 0.5, &p) - p.base;
+        let full = cost_per_tick(0.0, 1.0, 1.0, 1.0, 0, 0.0, 1.0, &p) - p.base;
         assert!((full / half - 4.0).abs() < 1e-4);
     }
 
