@@ -486,6 +486,13 @@ impl World {
             agents.handling[i] = agents.handling[i].max(handling);
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits = self.bites.hits.saturating_add(1);
+            let species = agents.species_id[i];
+            if species != crate::ids::NULL_ID && species == agents.species_id[j] {
+                self.bites.same_species_hits = self.bites.same_species_hits.saturating_add(1);
+            }
+            if agents.eaten_plants[j] > agents.eaten_animals[j] {
+                self.bites.plant_eater_hits = self.bites.plant_eater_hits.saturating_add(1);
+            }
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
@@ -1150,6 +1157,44 @@ mod tests {
     }
 
     #[test]
+    fn hits_are_counted_by_the_victim_s_species_and_diet() {
+        // A hit on a plant-eater of the biter's own species counts toward both tallies;
+        // a hit on a meat-eater of another species toward neither (spec §7.9).
+        let pair = || {
+            duel(
+                duel_params(2),
+                &[
+                    (Vec3::new(100.0, 100.0, 0.0), 0.0, 50.0),
+                    (Vec3::new(104.0, 100.0, 0.0), 0.0, 100.0),
+                ],
+            )
+        };
+        let mut world = pair();
+        assert_eq!(world.agents().species_id[0], world.agents().species_id[1]);
+        world.agents_mut().eaten_plants[1] = 10.0;
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        let bites = world.bite_counts();
+        assert_eq!(
+            (bites.hits, bites.same_species_hits, bites.plant_eater_hits),
+            (1, 1, 1)
+        );
+
+        let mut world = pair();
+        world.agents_mut().eaten_animals[1] = 10.0;
+        world.agents_mut().species_id[1] = world.agents().species_id[0].wrapping_add(1);
+        ask_to_bite(&mut world, 4.0);
+        world.intents_mut().bite[1] = 0.0;
+        world.resolve_bites();
+        let bites = world.bite_counts();
+        assert_eq!(
+            (bites.hits, bites.same_species_hits, bites.plant_eater_hits),
+            (1, 0, 0)
+        );
+    }
+
+    #[test]
     fn a_biter_handling_its_prey_cannot_graze_until_the_handling_time_runs_out() {
         // Holling's handling time: a hit occupies the biter's mouth for
         // `handling_seconds`, counted down in step 9, and a miss or a victim's mouth is
@@ -1752,6 +1797,8 @@ mod tests {
             swings: u64::MAX,
             hits: u64::MAX,
             kills: u64::MAX,
+            same_species_hits: u64::MAX,
+            plant_eater_hits: u64::MAX,
         };
         world.bites = full;
         world.agents_mut().health[1] = 0.25;

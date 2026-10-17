@@ -24,6 +24,12 @@ pub struct BiteCounts {
     pub hits: u64,
     /// Agents that died at health 0, whoever landed the last hit.
     pub kills: u64,
+    /// Hits whose victim belonged to the biter's own species: cannibalism, as against
+    /// predation across species.
+    pub same_species_hits: u64,
+    /// Hits whose victim had eaten more plants than meat over its life: predation on
+    /// plant-eaters, as against on other meat-eaters.
+    pub plant_eater_hits: u64,
 }
 
 /// One swing fixed by the first pass: who swung, whom it hits (`AgentId::NULL` for a
