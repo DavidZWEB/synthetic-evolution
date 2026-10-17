@@ -220,6 +220,8 @@ impl World {
         h.u64(bites.swings);
         h.u64(bites.hits);
         h.u64(bites.kills);
+        h.u64(bites.same_species_hits);
+        h.u64(bites.plant_eater_hits);
 
         let agents = self.agents();
         for id in self.pool().iter_live() {
