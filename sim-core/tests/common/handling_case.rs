@@ -28,7 +28,17 @@ const LIMITS: CheckpointLimits = CheckpointLimits {
     max_core_bytes: 96 << 20,
 };
 
-fn run(mode: BrainInheritance, handling_seconds: f32) -> u64 {
+/// What a run is checked by: its final hash, whether any agent ever grazed, and the
+/// plant stock it left. Handling only keeps a busy mouth off plants, so the stock is
+/// what shows it acting; the hash would differ from a run without handling on its
+/// timers alone.
+struct Outcome {
+    hash: u64,
+    grazed: bool,
+    plant_stock: f64,
+}
+
+fn run(mode: BrainInheritance, handling_seconds: f32) -> Outcome {
     let mut p = crate::scenario::params();
     p.world.max_agents = 64;
     // A small world, so the crowd stands among plants and every agent tries to eat:
@@ -55,7 +65,7 @@ fn run(mode: BrainInheritance, handling_seconds: f32) -> u64 {
     let mut world = World::new_with_brain_inheritance(23, p, mode).unwrap();
     world.seed_founders(48);
     let (mut wounded, mut killed, mut born) = (false, false, false);
-    let mut handled = false;
+    let (mut handled, mut grazed) = (false, false);
     let mut resumed: Option<World> = None;
     for tick in 1..=TICKS {
         world.step();
@@ -69,6 +79,7 @@ fn run(mode: BrainInheritance, handling_seconds: f32) -> u64 {
         // The starved die empty, so a corpse is a bite's kill.
         killed |= world.corpses().count() > 0;
         handled |= live.iter().any(|&i| agents.handling[i] > 0);
+        grazed |= live.iter().any(|&i| agents.eaten_plants[i] > 0.0);
         // Without handling there is no busy mouth to wait for; save at the first chance.
         let busy = live.iter().any(|&i| agents.handling[i] > 0) || handling_seconds == 0.0;
         if resumed.is_none() && tick >= SAVE_FROM && busy {
@@ -87,7 +98,11 @@ fn run(mode: BrainInheritance, handling_seconds: f32) -> u64 {
         hash,
         "{mode:?}: restored mid-meal but ended elsewhere"
     );
-    hash
+    Outcome {
+        hash,
+        grazed,
+        plant_stock: world.plants().total_energy(),
+    }
 }
 
 /// Five ticks at 60 per second: long enough to span a checkpoint, short enough to run
@@ -97,13 +112,17 @@ const HANDLING_SECONDS: f32 = 5.0 / 60.0;
 /// Each mode's run, checked for the meals it exists to pin, and against the same run
 /// without handling, before its hash is compared.
 pub fn check_handling_runs() {
-    let hashes = MODES.map(|mode| run(mode, HANDLING_SECONDS));
-    for (mode, &hash) in MODES.into_iter().zip(&hashes) {
+    let runs = MODES.map(|mode| run(mode, HANDLING_SECONDS));
+    for (mode, handled) in MODES.into_iter().zip(&runs) {
+        let free = run(mode, 0.0);
+        assert!(
+            free.grazed,
+            "{mode:?}: nothing grazed, so handling had nothing to stop"
+        );
         assert_ne!(
-            hash,
-            run(mode, 0.0),
-            "{mode:?}: handling changed nothing, so the case cannot pin it"
+            handled.plant_stock, free.plant_stock,
+            "{mode:?}: handling left the plants as grazing did without it"
         );
     }
-    assert_eq!(hashes, GOLDEN);
+    assert_eq!(runs.map(|run| run.hash), GOLDEN);
 }
