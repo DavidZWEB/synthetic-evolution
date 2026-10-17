@@ -890,12 +890,14 @@ pub struct FounderParams {
     /// Whether a dormant bite's neuron reads every founding source through a connection
     /// of weight 0, rather than reading nothing (spec §4.2). The bite stays silent, so
     /// no founder swings, but a single weight mutation can now wake it. Without these
-    /// links, waking the bite needs an added connection to land on its neuron first.
-    /// The weights are written, not drawn, so every other founder gene and the random
-    /// stream are unchanged. Requires `bite`, excludes `bite_wired`, and is founding
-    /// topology, so fixed for the life of a world.
+    /// links only slow routes remain: an added connection landing on the bite's neuron,
+    /// or bias mutation carrying its bias past the gate. The weights are written, not
+    /// drawn, so every other founder gene and the random stream are unchanged. Requires
+    /// `bite`, excludes `bite_wired`, and is founding topology, so fixed for the life of
+    /// a world.
     ///
-    /// **Off**: founders' bites read nothing until mutation wires them.
+    /// **Off**: founders' bites read nothing until mutation wires them or moves their
+    /// bias.
     pub bite_cryptic: bool,
 }
 
