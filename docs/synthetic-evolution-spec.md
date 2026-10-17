@@ -344,6 +344,13 @@ would wait on a later edit. With no non-oscillator neuron there is no candidate.
 Neuron removal keeps protecting oscillators, so oscillator counts only grow.
 Observations count it separately (`add_oscillator`), unknown in older telemetry.
 
+**PLANNED (Phase 3.5): oscillators can be lost as well as gained.** Because removal
+protects them, a lineage's oscillator count rises with its generation count rather than
+with use. In the Phase 3 research runs, a fast-breeding predator lineage gained up to six,
+over half of its neuron growth. Neuron removal will be allowed to take an oscillator, keeping
+at least the founders' `brain.oscillators`. Telemetry reports oscillators apart from
+other neurons (§7.9).
+
 Operator observations count candidate edits, not necessarily surviving births.
 Record applied edits and refusal reasons separately from spawn failures; observers
 are optional and must not alter RNG, identities, or simulation state.
@@ -720,6 +727,13 @@ If it works, you get to watch the evolution of sex as an observed transition rat
 - **Founders** carry size `body.size`, muscle 1, and mouth 1, with no random draw, so with trait mutation off a world runs exactly as it did in Phase 2. Signature colour drifts under the same operator.
 - **Mutation:** each body-trait gene changes per birth with probability `mutation.body_trait_rate`, by a multiplicative log-normal step of scale `mutation.body_trait_sigma`, so a trait is multiplied by `exp(σ·N(0, 1))`. Colour channels take an additive `σ·N(0, 1)` step instead. Each trait is clamped to its range: `body.size_range`, `body.muscle_range`, `body.mouth_range`, and `[0, 1]` for colour. Every living body lies inside the ranges, which validation proves keep the strongest, lightest, and widest-mouthed body's acceleration, upkeep, and intake finite: a spawned or restored body outside them is refused, and a retune may widen a range but not narrow it. It runs after the organ and neural passes, in gene order, in every heredity mode: both controls disturb neural heredity, not bodies, so their children inherit and mutate body traits as evolving children do. A zero rate draws nothing.
 
+**PLANNED (Phase 3.5): a body trait evolves only if founders carry it.** No operator adds
+or removes body genes, so a trait reaches a lineage only through the founding genome. Every
+later body trait is therefore carried by every founder, at the neutral value that
+reproduces the world without it, rather than gated behind a founder flag. In the Phase 3
+research, a trait that founders carried only when a flag was set never appeared in any
+run.
+
 The grounding: metabolic cost grows with mass (Kleiber); top speed peaks at intermediate size because acceleration time runs out (Hirt et al. 2017); and attack success depends on relative size. Gape limitation gives prey a size refuge, and size-dependent attack is what lets a food web branch from a single ancestor (Loeuille & Loreau 2005). Phase 5's parts distribute these traits; they do not replace them.
 
 **Bodies are multi-part and genome-derived from Phase 5** (§8), before the volumetric-3D step. The `partOffset`/`partCount` indirection in §2.2 exists to receive this.
@@ -801,6 +815,24 @@ This catalog is the actual API surface of the world. Each entry is a possible ge
 
 **DECIDED (Phase 3): knockout switches.** `sensing.vision_gain` and `sensing.chemo_gain` multiply what every vision ray and chemoreceptor reports. Both default to 1 and lie in [0, 1], so a switch can silence or dim a sense but never push an organ past the range it reports in; interoception has none. A live retune to 0 silences that sense in every existing agent, while each organ still pays its upkeep. A retune of a range or radius cannot do this, because those live in each sensor's gene. With the switches, a mid-run knockout can ask whether a lineage uses a sense (§7.9).
 
+**PLANNED (Phase 3.5): sensing a threat, and telling things apart.** Phase 3's prey cannot
+tell that they are being hunted, so predators never have to pursue them, and the research
+runs found nothing rewarding perception: predators ambushed at plant patches and survived
+the loss of either sense. Two gaps close here:
+
+- **Health interoception.** Interoception reports only energy. Its `which` param (energy,
+  age, health) waited for a second thing worth reporting, and predation supplies it: a
+  wound. A bitten agent can then flee. Escape already exists, since muscle against mass
+  sets speed (§3.5). Whether founders carry a health interoceptor or lineages must find
+  one is decided with Phase 3.5's founder configuration.
+- **What a ray hit.** A vision ray reports nearness and the hit's signature. Plants,
+  corpses, and agents differ only in colour, and agents' colours drift (§3.5), so telling
+  prey from plant is a colour discrimination a small network must first evolve. Rays will
+  also report the kind of thing hit (plant, corpse, or agent) and an agent's size relative
+  to the viewer, the cue for whether to approach or flee. Saved genomes must keep loading,
+  so the extra channels arrive as a new modality or as targets older genes leave unbound.
+  The channel layout and its `k_sensor` weight are decided in Phase 3.5's design.
+
 **Every directional param is stored as an `(azimuth, elevation)` pair, with `elevation` clamped to 0 and its mutation operator disabled in V1.** The field exists in the gene, occupies its slot in the serialized genome, and simply doesn't vary. Going 3D is then a matter of unclamping it. If you store a single scalar angle instead, every saved world and every evolved population you've accumulated becomes unloadable the day you switch — and by then you will have runs you care about.
 
 ### 4.2 Effectors
@@ -880,6 +912,15 @@ cost = base
 
 Charging for brain and sensor complexity is what makes the "why not just add everything" strategy lose. Without it genomes grow monotonically and the sim slows to a crawl over a few hours.
 
+**PLANNED (Phase 3.5): costs that select.** §5.5 prices brains for 200 units, but evolved
+brains hold 30–45, where the charge is 3–4% of base and ten more units cost 1%. At that
+price structure is neither paid for nor punished. In the Phase 3 research runs, brain size
+tracked a lineage's generation count, and by a rough estimate growth per generation was
+no higher in predators than in grazers. `k_brain` and `k_sensor` are retuned against the brains that
+actually evolve, until unwired structure is shed. The check is growth per generation in
+the evolving cohort against the structural null (§7.9). This is tuning under the
+golden-hash rule, not a new mechanism.
+
 ### 5.3 Heterogeneity is the engine of diversity
 
 A uniform world produces one optimal strategy and then stagnates. Introduce variation deliberately:
@@ -891,6 +932,16 @@ A uniform world produces one optimal strategy and then stagnates. Introduce vari
 Every one of these creates a niche, and niches are what let multiple species coexist instead of one clone sweeping the world.
 
 **DECIDED (Phase 2, M9): spatial fertility ships first.** A static map of smoothed value noise, periodic across the torus with feature size `patch_scale`, decides where plants can establish. A candidate site is accepted with probability `(fertility / peak fertility)^patchiness`, both when the world is built and at every reseed (§5.1); after 1,024 rejected candidates the last is kept, so choosing a site cannot stall a tick, and validation bounds `patchiness` at 16 so that cap is practically never reached. Zero `patchiness` is uniform. Both fields are fixed for the life of a world. The map is drawn from the world RNG only when `patchiness` is non-zero, and is regenerated from the seed rather than saved. Fertility decides where plants live, not how fast they grow; a dense patch already receives more input because every plant is offered an equal share. Terrain and obstacles remain later work, and temporal cycles and disturbances stay in Phase 6 (§8).
+
+**PLANNED (Phase 6, first): beyond static patches.** Static patches make one predator
+strategy dominant: in the Phase 3 research, predators waited where prey must come to
+eat. Three things open Phase 6, ahead of the sex unlock, so that waiting at a patch
+becomes one strategy among several:
+
+- ephemeral blooms and local disturbances, the stochastic item above;
+- seasons;
+- terrain whose movement cost depends on body size, giving refugia a small body can enter
+  and a large one cannot.
 
 ### 5.4 Reproduction and spatial viscosity
 
@@ -1329,6 +1380,24 @@ One JSON line per sample interval: population by species, trophic biomass by tie
 
 **DECIDED (Phase 3): diet telemetry.** Each agent keeps lifetime totals of energy eaten from plants and from other agents, the latter counting both a bite's kept share and carrion. A carnivore is an agent, or a species' living members together, that took more than half its intake from other agents; an agent that has eaten nothing is neither, until it eats. Each cohort records swings, hits, and kills since the world began, the corpses on the ground, intake by source, biomass by tier (carnivore, plant-eater, unfed), and each species' meat share. `diagnose` reports the two trophic rows of the table below. `summarize` counts **persistent carnivores**: species alive at the end that ate mostly meat, with plant-eaters alive beside them, at every sample for at least the last half of the run, rounded up. That count is the measurement behind §8's Phase 3 criterion. For calibration, `summarize` also reports when predation took hold, the first sample at which a species ate mostly meat with plant-eaters alive beside it, and how long it lasted, the longest run of samples at which carnivores and plant-eaters both held biomass. Files written before the bite report all of this as unknown.
 
+**PLANNED (Phase 3.5): measurements Phase 3 showed were misleading.**
+
+- **Persistence in generations and by descent.** Fixed species representatives (§3.4)
+  are left behind at the rate a lineage changes per tick. Phase 3's predators lived 3–12×
+  shorter lives than grazers, so their species ids turned over every 40–130k ticks while the
+  grazers' founder species lasted whole runs. `summarize` will also report:
+  - persistence by descent: a chain of carnivorous species, each originating from one
+    that was carnivorous at the previous sample, through no ancestor ever sampled as a
+    plant-eater;
+  - each species' mean age, a proxy for generation time, so persistence can be read in
+    generations.
+- **Carrion apart from kills.** Diet totals record a bite's kept share and carrion
+  separately, so predation and scavenging can be told apart.
+- **Wiring by weight, and clocks apart.** A connection counts toward a path only when its
+  weight is non-zero, so silent scaffolding is not reported as wiring. Neuron counts
+  report oscillators separately (§3.3), so a rising clock count is not read as growing
+  processing.
+
 **DECIDED (Phase 3): sensor-innovation telemetry.** Each cohort records, at every sample, every sensor innovation the living carry: its innovation ID, its modality, whether it belongs to the founding template, how many living agents carry it, and in how many of those it is wired, meaning one of its target channels reaches an effector along enabled connections. An innovation is one birth's addition, inherited by every descendant, so its first and last samples bracket how long it persisted. `summarize` reports, per cohort, the innovations ever carried and still carried at the end, the median and longest sampled span, and the share of final carriers in which theirs is wired, leaving founding sensors out. Set beside both controls (§7.8), longer spans in the evolving world are the sign that selection keeps new organs that drift alone would lose (§3.3). Files written before it report all of this as unknown.
 
 **Encode §10 as a diagnostic.** Every failure mode in that table is visible in the metrics:
@@ -1531,7 +1600,28 @@ also deferred, not requirements of the Phase 2 save/load milestone.
 
 Tune the attack cost against the mouthful and prey energy. *Success: a carnivorous lineage becomes established without going extinct or eating everything. This will take tuning — the ratio of attack cost to prey energy is the critical parameter.* Measured as a species whose members take most of their energy from other agents (bites and corpses), persisting for at least half a run on several seeds while plant-eaters persist beside it, against both controls (§7.8). Build order and decisions under review live in [`phase-3-implementation-plan.md`](phase-3-implementation-plan.md).
 
-**Phase 4 — signaling and sociality.** Pheromone emit/sense, sound, `set_signature`, kin sense. Verify spatial viscosity is tight enough. *Success: signal emission correlates with something — predator presence, food location. Look for warning coloration.*
+**Phase 3.5 — perception pays.** Phase 3's research produced predators that ambush at plant
+patches. They survive the loss of either sense, eye loss is no faster with vision switched
+off, and their larger brains track faster turnover rather than selection. Nothing yet
+rewards perceiving or deciding, and Phase 4 asks signals to mean something about
+predators. This phase makes hunting and fleeing depend on information first. It covers:
+
+- prey that can tell they are hunted: health interoception (§4.1);
+- rays that report what they hit, and its relative size (§4.1);
+- costs that select: `k_brain` and `k_sensor` retuned to evolved brain sizes (§5.2), and
+  oscillators that can be lost (§3.3);
+- body traits carried by every founder (§3.5);
+- measurement that does not mislead: persistence in generations and by descent, carrion
+  apart from kills, wiring by weight, and clocks counted apart (§7.9).
+
+Items marked **PLANNED (Phase 3.5)** are approved direction. Their details are settled in
+the phase's design step and recorded as **DECIDED**, as Phase 3's were. *Success:
+perception pays once there is something to hunt or flee. Knocking out a sense measurably
+costs the lineages that carry it, evolving lineages keep and wire senses the structural
+null sheds, and brain growth per generation exceeds the null's. A human watching sees
+pursuit and flight, not only ambush.*
+
+**Phase 4 — signaling and sociality.** Pheromone emit/sense, sound, `set_signature`, kin sense. Verify spatial viscosity is tight enough. It builds on Phase 3.5: a warning signal needs prey that can tell a predator is near. New effectors enter founders dormant, as the bite does (§4.2), so a lineage discovers each one rather than receiving it. *Success: signal emission correlates with something — predator presence, food location. Look for warning coloration.*
 
 **Phase 5 — morphology.** Multi-part rigid bodies from the genome (§3.5), bilateral symmetry, sensors and effectors mounted on parts, per-part metabolic cost. Phase 3's scalar traits (size, muscle, mouth) and mass are the starting point; parts distribute them. Three.js render pass with LOD. *Success: body plans visibly co-vary with trophic role — you can guess what something eats by looking at it. If morphology is uncorrelated with niche, the functional coupling in §3.5 is too weak and parts are cosmetic.*
 
@@ -1539,13 +1629,23 @@ Tune the attack cost against the mouthful and prey energy. *Success: a carnivoro
 
 This phase is genuinely optional: the roadmap is complete and the simulator is finished without it. Consequently **Phase 5's procedural renderer must stand on its own** — genome-driven pigment, part shape, and hash-seeded texture built to look good, not built as a placeholder for something better. If 5b never happens, nothing is missing; if it does, the procedural layer is still what draws at LOD-far and what fills the gap before an asset resolves.
 
-**Phase 6 — depth.** Sexual reproduction and mate choice, senescence and evolvable
-longevity tradeoffs (§5.6), seasons, terrain heterogeneity, `grab`/symbiosis, gene
-duplication. *Success for the sex unlock specifically: a sexual lineage persists rather
+**Phase 6 — depth.** It opens with the world and the scale its questions need, before the
+sex unlock:
+
+- blooms, disturbances, seasons, and size-dependent terrain (§5.3);
+- native runs about ten times Phase 3's ~1,000 agents, and a million ticks or more.
+
+The research worlds held predator guilds of 45–134 agents, small enough that drift and
+mutation accumulation passed for adaptation. Red Queen effects on sex need populations
+where selection outweighs drift, so this scale is taken from Phase 7 early, leaving the
+rest of that phase's work in place.
+
+It then adds sexual reproduction and mate choice, senescence and evolvable longevity
+tradeoffs (§5.6), `grab`/symbiosis, and gene duplication. *Success for the sex unlock specifically: a sexual lineage persists rather
 than being outcompeted by asexual cousins. If it doesn't, the Red Queen pressure from
 Phase 3 is too weak — that's a predation-tuning problem, not a reproduction bug.*
 
-**Phase 7 — performance and scale.** SIMD in the perception and CTRNN phases, `wasm-bindgen-rayon` if needed, automatic checkpoint scheduling and retention for overnight native runs, batch parameter sweeps. Build on Phase 2's manual save/load rather than introducing checkpoints here for the first time. Push to the 50k target. (The sim core is already Rust/WASM from Phase 1 — this phase is optimization, not a port.)
+**Phase 7 — performance and scale.** Native runs at ten times Phase 3's scale arrive early, at the start of Phase 6. This phase keeps the optimization: SIMD in the perception and CTRNN phases, `wasm-bindgen-rayon` if needed, automatic checkpoint scheduling and retention for overnight native runs, batch parameter sweeps. Build on Phase 2's manual save/load rather than introducing checkpoints here for the first time. Push to the 50k target. (The sim core is already Rust/WASM from Phase 1 — this phase is optimization, not a port.)
 
 The roadmap ends here deliberately. What follows is a **branch, not a Phase 8** — volumetric 3D and articulation are alternative directions with different costs and different payoffs, and articulation in particular trades away the 50k scale target rather than building on it. See §9.3.
 
@@ -1684,6 +1784,9 @@ Worth knowing in advance, because you will hit most of these:
 | Predators evolve then wipe everything out | Attack too cheap relative to prey energy; add prey refugia |
 | No lineage ever bites | The mouthful does not repay a swing, or prey cannot be found: check founder vision before the attack cost |
 | Bodies run away to the largest or smallest size | Trait costs out of balance with intake: `k_size`, `k_muscle`, `k_mouth` against `feeding.rate` (§3.5) |
+| Predators evolve, but senses and brains do not | Hunting does not need them: prey cannot sense a threat, or food (and so prey) is static enough to ambush. Check health interoception (§4.1) and heterogeneity (§5.3) before costs |
+| Brain size tracks generation count, not niche | Structure too cheap to select (§5.2); compare growth per generation against the structural null (§7.9) |
+| A fast-breeding guild's species ids churn | The tick clock penalizes short generations; read persistence by descent and in generations (§7.9) before calling the guild unstable |
 | Communication never evolves | Almost always insufficient spatial viscosity — offspring aren't near kin |
 | Behavior looks smart but isn't | You're pattern-matching. Check against a random-weights control run |
 
