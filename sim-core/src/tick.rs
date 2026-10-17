@@ -452,6 +452,18 @@ impl World {
         let reference = self.params.body.size;
         let handling = combat::handling_ticks(combat, self.params.world.dt);
         let agents = &mut self.agents;
+        // Victims are classed by what they had eaten before this tick's mouthfuls, so a
+        // biter that is bitten back counts alike whichever slot it holds (spec §7.9).
+        for swing in self.swings.iter().filter(|swing| !swing.target.is_null()) {
+            let (i, j) = (swing.biter.index(), swing.target.index());
+            let species = agents.species_id[i];
+            if species != crate::ids::NULL_ID && species == agents.species_id[j] {
+                self.bites.same_species_hits = self.bites.same_species_hits.saturating_add(1);
+            }
+            if agents.eaten_plants[j] > agents.eaten_animals[j] {
+                self.bites.plant_eater_hits = self.bites.plant_eater_hits.saturating_add(1);
+            }
+        }
         // Mouthfuls in agent-index order: a victim holding less than every biter asks
         // serves earlier slots first, as food does (spec §4.2).
         for swing in &mut self.swings {
@@ -486,13 +498,6 @@ impl World {
             agents.handling[i] = agents.handling[i].max(handling);
             self.ledger.record_dissipated_amount(mouthful.dissipated);
             self.bites.hits = self.bites.hits.saturating_add(1);
-            let species = agents.species_id[i];
-            if species != crate::ids::NULL_ID && species == agents.species_id[j] {
-                self.bites.same_species_hits = self.bites.same_species_hits.saturating_add(1);
-            }
-            if agents.eaten_plants[j] > agents.eaten_animals[j] {
-                self.bites.plant_eater_hits = self.bites.plant_eater_hits.saturating_add(1);
-            }
         }
         // Wounds once per victim, in an order no slot chooses.
         combat::wound(&mut self.swings, &mut agents.health);
@@ -1192,6 +1197,30 @@ mod tests {
             (bites.hits, bites.same_species_hits, bites.plant_eater_hits),
             (1, 0, 0)
         );
+    }
+
+    #[test]
+    fn a_victim_s_diet_is_read_before_the_tick_s_mouthfuls() {
+        // Two grazers that bite each other are both plant-eaters when bitten. Classing
+        // the second victim after its own mouthful of meat would make the count depend
+        // on which slot bit first.
+        let mut world = duel(
+            duel_params(2),
+            &[
+                (Vec3::new(100.0, 100.0, 0.0), 0.0, 100.0),
+                (Vec3::new(104.0, 100.0, 0.0), core::f32::consts::PI, 100.0),
+            ],
+        );
+        world.agents_mut().eaten_plants[0] = 1e-6;
+        world.agents_mut().eaten_plants[1] = 1e-6;
+        ask_to_bite(&mut world, 4.0);
+        world.resolve_bites();
+        assert!(
+            world.agents().eaten_animals[0] > 1e-6,
+            "the first slot ate no meat"
+        );
+        let bites = world.bite_counts();
+        assert_eq!((bites.hits, bites.plant_eater_hits), (2, 2));
     }
 
     #[test]
