@@ -597,6 +597,17 @@ pub struct OrganMutationParams {
     /// starting value for that sweep is 0.25. At most one, so a wire never starts
     /// stronger than an added connection.
     pub wired_weight_scale: f32,
+    /// Per-eye chance, per birth, that an eye turns: its azimuth takes a normal step
+    /// wrapped onto the circle (spec §4.1). Without it an eye looks wherever its founder's
+    /// draw pointed it, forever. Zero draws nothing.
+    ///
+    /// **0**, so every world builds the eyes it did before eyes could turn.
+    pub eye_drift_rate: f32,
+    /// Standard deviation of that step, in radians.
+    ///
+    /// **0.1**: a few degrees a step, so an eye turns over many births rather than
+    /// jumping to face the other way.
+    pub eye_drift_sigma: f32,
 }
 
 impl Default for OrganMutationParams {
@@ -609,6 +620,8 @@ impl Default for OrganMutationParams {
             energy_weight: 1.0,
             neuron_bias: 0.0,
             wired_weight_scale: 0.0,
+            eye_drift_rate: 0.0,
+            eye_drift_sigma: 0.1,
         }
     }
 }
@@ -1411,6 +1424,14 @@ impl SimParams {
         if !(0.0..=1.0).contains(&organs.wired_weight_scale) {
             return Err(ParamError(
                 "mutation.organs.wired_weight_scale must be in [0, 1]",
+            ));
+        }
+        if !(0.0..=1.0).contains(&organs.eye_drift_rate)
+            || !(organs.eye_drift_sigma >= 0.0)
+            || !organs.eye_drift_sigma.is_finite()
+        {
+            return Err(ParamError(
+                "mutation.organs.eye_drift_rate must be in [0, 1] and eye_drift_sigma finite and non-negative",
             ));
         }
         // Structural edits can leave a target with fan-in one. The scalar control

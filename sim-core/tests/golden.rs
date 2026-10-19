@@ -58,6 +58,9 @@ mod handling_case;
 #[path = "common/cryptic_case.rs"]
 mod cryptic_case;
 
+#[path = "common/drift_case.rs"]
+mod drift_case;
+
 #[test]
 fn wired_sensors_and_knockouts_match_their_reference_in_every_mode() {
     wiring_case::check_wiring_runs();
@@ -76,6 +79,11 @@ fn handling_time_matches_its_reference_in_every_mode() {
 #[test]
 fn cryptic_bites_match_their_reference_in_every_mode() {
     cryptic_case::check_cryptic_runs();
+}
+
+#[test]
+fn eye_drift_matches_its_reference_in_every_mode() {
+    drift_case::check_drift_runs();
 }
 
 #[test]

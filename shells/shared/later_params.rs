@@ -37,6 +37,8 @@ pub const LATER_PARAMS: &[&str] = &[
     "k_gut",
     "gut_sigma",
     "gut",
+    "eye_drift_rate",
+    "eye_drift_sigma",
 ];
 
 /// An archive records `founder` and `combat` together, as every writer since the bite
@@ -199,6 +201,13 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     }
     if absent("/body/gut") {
         params.body.gut = 1.0;
+    }
+    // Eyes looked where their founders' draws pointed them until they could turn.
+    if absent("/mutation/organs/eye_drift_rate") {
+        params.mutation.organs.eye_drift_rate = 0.0;
+    }
+    if absent("/mutation/organs/eye_drift_sigma") {
+        params.mutation.organs.eye_drift_sigma = 0.0;
     }
     // Phase 2 added sensors unwired, and every sense reported at full strength
     // before its knockout switch existed.
