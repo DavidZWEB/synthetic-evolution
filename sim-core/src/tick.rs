@@ -545,16 +545,18 @@ impl World {
             } else {
                 self.params.digestion.plant(self.agents.gut[i])
             };
-            let mut kept = meal.amount;
-            if share < 1.0 && meal.amount > 0.0 {
-                let wasted = energy::take_amount(
+            let kept = if share < 1.0 && meal.amount > 0.0 {
+                let (kept, wasted) = take_back_waste(
                     &mut self.agents.energy[i],
                     &mut self.agents.energy_reserve[i],
-                    meal.amount * f64::from(1.0 - share),
+                    meal.amount,
+                    share,
                 );
                 self.ledger.record_dissipated_amount(wasted);
-                kept -= wasted.approximate();
-            }
+                kept
+            } else {
+                meal.amount
+            };
             // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
             // Each diet counts only what was kept.
             if meal.carrion {
@@ -764,6 +766,21 @@ impl World {
         }
         self.tick += 1;
     }
+}
+
+/// Takes back what a gut keeping `share` cannot assimilate of a plant `meal` just
+/// eaten, returning what it kept and what left the world as waste (spec §3.5, §5.1).
+/// Taking back compensated energy can report a rounding step more than was asked, so a
+/// gut that keeps nothing could count a meal as slightly negative; the diet it feeds
+/// never falls, since checkpoints refuse a negative one (spec §7.9).
+fn take_back_waste(
+    energy: &mut f32,
+    reserve: &mut f64,
+    meal: f64,
+    share: f32,
+) -> (f64, energy::Amount) {
+    let wasted = energy::take_amount(energy, reserve, meal * f64::from(1.0 - share));
+    ((meal - wasted.approximate()).max(0.0), wasted)
 }
 
 #[cfg(test)]
@@ -1103,6 +1120,18 @@ mod tests {
         params.world.max_agents = agents;
         params.plants.max_plants = 0;
         params
+    }
+
+    #[test]
+    fn a_gut_that_keeps_nothing_never_counts_a_meal_as_negative() {
+        // An agent just fed a crumb from a near-empty plant: taking the whole crumb back
+        // reports a rounding step more than the meal. Found by searching the energy
+        // operations; Copilot's review of #101 reported the same at a 2e-7 meal.
+        let (mut energy, mut reserve) = (284.49997_f32, 2.9021347152420924e-5);
+        let meal = 2.840692870547442e-14;
+        let (kept, wasted) = take_back_waste(&mut energy, &mut reserve, meal, 0.0);
+        assert!(wasted.approximate() > meal, "the case no longer rounds up");
+        assert_eq!(kept, 0.0);
     }
 
     #[test]
