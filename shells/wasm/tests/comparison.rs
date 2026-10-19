@@ -165,6 +165,44 @@ fn loading_a_bundle_reads_its_archives_params_as_their_runs_had_them() {
 }
 
 #[wasm_bindgen_test]
+fn an_archive_reads_whatever_today_s_founder_and_core_need() {
+    // A run's limits fit its own founders and world. Founders have since gained body
+    // genes and agents fields, so limits that fit exactly then fall a gene and a byte
+    // short of today's. The archive reads as the native reader reads it; a
+    // configuration made today is still refused.
+    let today: Value = serde_json::from_str(
+        &validate_params(Some(
+            json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4}}).to_string(),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    // The tightest limit today's validation accepts, found by bisection.
+    let tightest = |section: &str, field: &str| {
+        let (mut low, mut high) = (0, today[section][field].as_u64().unwrap());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let mut params = today.clone();
+            params[section][field] = json!(middle);
+            if validate_params(Some(params.to_string())).is_ok() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        high
+    };
+    for field in ["max_genes", "max_memory_bytes"] {
+        let mut older = today.clone();
+        older["storage"][field] = json!(tightest("storage", field) - 1);
+        let read: Value =
+            serde_json::from_str(&validate_archive_params(older.to_string()).unwrap()).unwrap();
+        assert_eq!(read["storage"][field], older["storage"][field], "{field}");
+        assert!(validate_params(Some(older.to_string())).is_err(), "{field}");
+    }
+}
+
+#[wasm_bindgen_test]
 fn an_archive_whose_founders_bite_must_record_their_combat() {
     // Today's defaults could describe attack rules the run never had.
     let params = json!({"world": {"max_agents": 8}, "plants": {"max_plants": 4},

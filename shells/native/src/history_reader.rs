@@ -211,7 +211,8 @@ fn validate_header(header: &Header, line: &[u8]) -> Result<()> {
         &wire["data"]["params"],
         &serde_json::to_value(&header.params)?,
     )?;
-    header.params.validate()?;
+    // As the run had them: today's founder may have outgrown the recorded limits.
+    header.params.validate_recorded()?;
     Ok(())
 }
 
@@ -646,6 +647,55 @@ mod tests {
             let (header, _) = parse_archive(&archive[..]).unwrap();
             assert_eq!(header.params.combat, later_params::no_combat());
         }
+    }
+
+    #[test]
+    fn an_archive_reads_whatever_today_s_founder_and_core_need() {
+        // A run's limits fit its own founders and world. Founders have since gained
+        // body genes and agents fields, so limits that fit exactly then fall a gene and
+        // a byte short of today's; the archive still reads as its run had it.
+        let fixture = include_bytes!("../tests/fixtures/history-v2-root.ndjson");
+        let line = fixture
+            .split_inclusive(|&byte| byte == b'\n')
+            .next()
+            .unwrap();
+        let (read, _) = parse_archive(&fixture[..]).unwrap();
+        // The tightest limit today's validation accepts, found by bisection.
+        let tightest = |set: fn(&mut sim_core::SimParams, u64), high: u64| {
+            let (mut low, mut high) = (0, high);
+            while low < high {
+                let middle = low + (high - low) / 2;
+                let mut params = read.params.clone();
+                set(&mut params, middle);
+                if params.validate().is_ok() {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            high
+        };
+        let genes = tightest(
+            |p, n| p.storage.max_genes = n as u32,
+            u64::from(read.params.storage.max_genes),
+        );
+        let core = tightest(
+            |p, n| p.storage.max_memory_bytes = n,
+            read.params.storage.max_memory_bytes,
+        );
+        let mut wire: serde_json::Value = serde_json::from_slice(line).unwrap();
+        wire["data"]["params"]["storage"]["max_genes"] = serde_json::json!(genes - 1);
+        wire["data"]["params"]["storage"]["max_memory_bytes"] = serde_json::json!(core - 1);
+        let mut archive = serde_json::to_vec(&wire).unwrap();
+        archive.push(b'\n');
+        archive.extend_from_slice(&fixture[line.len()..]);
+        let (header, _) = parse_archive(&archive[..]).unwrap();
+        assert_eq!(header.params.storage.max_genes as u64, genes - 1);
+        assert_eq!(header.params.storage.max_memory_bytes, core - 1);
+        assert!(
+            header.params.validate().is_err(),
+            "today would build no world"
+        );
     }
 
     #[test]

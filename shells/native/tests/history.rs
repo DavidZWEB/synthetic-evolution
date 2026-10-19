@@ -659,8 +659,9 @@ fn open_and_broken_pipe_errors_are_command_failures() {
     assert!(!output.status.success());
 }
 
-/// `params` with `genes_per_slot` set to half its founder's genes, so two slots hold
-/// exactly one founder and a second is refused (spec section 2.2a).
+/// `params` with `genes_per_slot` set to half its founder's genes, rounded up, so two
+/// slots hold one founder with at most a gene to spare and a second is refused (spec
+/// section 2.2a).
 fn half_founder_slot(params: &str) -> String {
     let mut value: serde_json::Value = serde_json::from_str(params).unwrap();
     let parsed: sim_core::SimParams = serde_json::from_value(value.clone()).unwrap();
@@ -668,11 +669,6 @@ fn half_founder_slot(params: &str) -> String {
         .unwrap()
         .founder_plan()
         .len();
-    assert_eq!(
-        founder % 2,
-        0,
-        "an odd founder cannot fill two slots exactly"
-    );
-    value["storage"]["genes_per_slot"] = (founder / 2).into();
+    value["storage"]["genes_per_slot"] = founder.div_ceil(2).into();
     value.to_string()
 }

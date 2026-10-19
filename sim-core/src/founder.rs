@@ -27,13 +27,17 @@ const EFFECTORS: [Action; 4] = [
     Action::Ingest,
     Action::Reproduce,
 ];
-const BODY_TRAITS: [BodyTrait; 6] = [
+/// Every founder carries every body trait, at a value that reproduces the world
+/// without it, because no operator adds body genes: a trait founders lack can never
+/// evolve (spec §3.5).
+const BODY_TRAITS: [BodyTrait; 7] = [
     BodyTrait::Size,
     BodyTrait::SignatureR,
     BodyTrait::SignatureG,
     BodyTrait::SignatureB,
     BodyTrait::Muscle,
     BodyTrait::Mouth,
+    BodyTrait::Gut,
 ];
 const META_TRAITS: [MetaTrait; 3] = [
     MetaTrait::MutationRate,
@@ -470,6 +474,9 @@ impl FounderPlan {
                         // Founders all start at the reference body, with no draw, so the
                         // random sequence is the one Phase 2 founders drew (spec §3.5).
                         BodyTrait::Muscle | BodyTrait::Mouth => 1.0,
+                        // The founders' gut, written without a draw like the reference
+                        // body, so the random sequence is unchanged (spec §3.5).
+                        BodyTrait::Gut => params.body.gut,
                         // Founders differ in colour so lineages are distinguishable on
                         // screen from the first frame, and so `vision_ray` has
                         // something to discriminate before `set_signature` exists.
@@ -824,8 +831,8 @@ mod tests {
         params.brain.connections_per_target = Some(1);
         let plan = plan(&params);
         assert_eq!(plan.neuron_count(), 7);
-        // 23 through Phase 2; Phase 3 adds the muscle and mouth genes (spec §3.5).
-        assert_eq!(plan.len(), 25);
+        // 23 through Phase 2; Phase 3 adds the muscle, mouth, and gut genes (spec §3.5).
+        assert_eq!(plan.len(), 26);
         assert_counts_and_wiring(&params, 42);
         let genes = instantiate(&plan, &params, 42);
         for trait_ in BODY_TRAITS {
@@ -1289,12 +1296,17 @@ mod tests {
                 "founders start at the reference body"
             );
         }
+        assert_eq!(
+            crate::genome::body_trait(&genes, BodyTrait::Gut),
+            Some(params.body.gut),
+            "founders carry the gut at body.gut"
+        );
     }
 
     #[test]
     fn reference_traits_draw_nothing() {
-        // The muscle and mouth genes must not consume founder draws, or every Phase 2
-        // seed would produce different founders (spec §3.5). Randomizing the template
+        // The muscle, mouth, and gut genes must not consume founder draws, or every
+        // earlier seed would produce different founders (spec §3.5). Randomizing the template
         // without them must leave every other gene, and the stream, where the full
         // template leaves them.
         let params = SimParams::default();
@@ -1303,14 +1315,14 @@ mod tests {
         let mut full_rng = Rng::from_seed(4);
         plan.randomize_scalars(&mut full_rng, &params, &mut full, true, None);
 
-        let reference = |g: &Gene| matches!(g, Gene::Body(b) if matches!(b.trait_, BodyTrait::Muscle | BodyTrait::Mouth));
+        let reference = |g: &Gene| matches!(g, Gene::Body(b) if matches!(b.trait_, BodyTrait::Muscle | BodyTrait::Mouth | BodyTrait::Gut));
         let mut without: Vec<Gene> = plan
             .genes()
             .iter()
             .copied()
             .filter(|g| !reference(g))
             .collect();
-        assert_eq!(without.len() + 2, plan.len());
+        assert_eq!(without.len() + 3, plan.len());
         let mut without_rng = Rng::from_seed(4);
         plan.randomize_scalars(&mut without_rng, &params, &mut without, true, None);
 

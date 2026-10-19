@@ -33,6 +33,10 @@ pub const LATER_PARAMS: &[&str] = &[
     "bite_wired",
     "bite_cryptic",
     "handling_seconds",
+    "digestion",
+    "k_gut",
+    "gut_sigma",
+    "gut",
 ];
 
 /// An archive records `founder` and `combat` together, as every writer since the bite
@@ -180,6 +184,21 @@ pub fn restore(params: &mut SimParams, wire: &serde_json::Value) -> Result<(), &
     // Biters grazed between hits until handling time existed.
     if absent("/combat/handling_seconds") {
         params.combat.handling_seconds = 0.0;
+    }
+    // Before the gut every body digested plants whole and paid nothing for it, and no
+    // gut could step.
+    if absent("/digestion") {
+        params.digestion = sim_core::params::DigestionParams::default();
+        params.digestion.plant_curve = 1.0;
+    }
+    if absent("/metabolism/k_gut") {
+        params.metabolism.k_gut = 0.0;
+    }
+    if absent("/mutation/gut_sigma") {
+        params.mutation.gut_sigma = 0.0;
+    }
+    if absent("/body/gut") {
+        params.body.gut = 1.0;
     }
     // Phase 2 added sensors unwired, and every sense reported at full strength
     // before its knockout switch existed.

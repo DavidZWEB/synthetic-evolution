@@ -60,8 +60,11 @@ const PARAMS = {
   },
   body: {
     size: f, size_range: ['finite', 2], muscle_range: ['finite', 2], mouth_range: ['finite', 2],
+    gut: f,
   },
-  metabolism: { base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f },
+  metabolism: {
+    base: f, k_size: f, k_brain: f, k_sensor: f, k_move: f, k_muscle: f, k_mouth: f, k_gut: f,
+  },
   movement: { max_thrust: f, max_turn_rate: f, drag: f, max_speed: f },
   sensing: {
     vision_range: f, vision_fov: f, vision_rays: u, chemo_sensors: u,
@@ -84,11 +87,12 @@ const PARAMS = {
     },
     weight_perturb_rate: f, weight_perturb_sigma: f, weight_reset_rate: f, weight_limit: f,
     neuron_perturb_rate: f, bias_perturb_sigma: f, tau_perturb_factor: f, body_trait_rate: f,
-    body_trait_sigma: f,
+    body_trait_sigma: f, gut_sigma: f,
   },
   distance: { disjoint_coefficient: f, excess_coefficient: f, weight_coefficient: f },
   species: { capacity: u, threshold: f },
   feeding: { rate: f, gate: f, reach: f },
+  digestion: { plant_curve: f },
   plants: {
     energy_input_rate: f, max_plants: u, max_energy: f, grazing_lag: f, patchiness: f,
     patch_scale: f, death_stock: f, death_seconds: f, local_dispersal: f,
@@ -116,7 +120,7 @@ const LATER_PARAMS = new Set([
   'death_seconds', 'local_dispersal', 'dispersal_radius', 'corpses', 'k_muscle', 'k_mouth',
   'body_trait_rate', 'body_trait_sigma', 'size_range', 'muscle_range', 'mouth_range',
   'combat', 'founder', 'wired_weight_scale', 'vision_gain', 'chemo_gain', 'bite_wired',
-  'bite_cryptic', 'handling_seconds',
+  'bite_cryptic', 'handling_seconds', 'digestion', 'k_gut', 'gut_sigma', 'gut',
 ]);
 
 export function integerParam(path) {

@@ -1,4 +1,4 @@
-//! Body-trait mutation: size, muscle, mouth, and signature colour drift by birth.
+//! Body-trait mutation: size, muscle, mouth, gut, and signature colour drift by birth.
 //!
 //! Owns each trait's step and the range it is clamped to (spec §3.5), not what the
 //! traits do; movement, intake, and upkeep read them in the tick. Meta genes stay
@@ -32,14 +32,21 @@ pub(crate) fn apply(genes: &mut [Gene], params: &SimParams, rng: &mut Rng) {
         if !rng.chance(rate) {
             continue;
         }
-        let step = rng.normal(0.0, sigma);
+        let scale = match gene.trait_ {
+            BodyTrait::Gut => params.mutation.gut_sigma,
+            _ => sigma,
+        };
+        let step = rng.normal(0.0, scale);
         gene.value = match gene.trait_ {
             BodyTrait::Size => scaled(gene.value, step, body.size_range),
             BodyTrait::Muscle => scaled(gene.value, step, body.muscle_range),
             BodyTrait::Mouth => scaled(gene.value, step, body.mouth_range),
-            BodyTrait::SignatureR | BodyTrait::SignatureG | BodyTrait::SignatureB => {
-                (gene.value + step).clamp(0.0, 1.0)
-            }
+            // A gut is a share of plant energy, so like a colour channel it steps by
+            // addition and can reach either end (spec §3.5).
+            BodyTrait::SignatureR
+            | BodyTrait::SignatureG
+            | BodyTrait::SignatureB
+            | BodyTrait::Gut => (gene.value + step).clamp(0.0, 1.0),
         };
     }
 }
@@ -115,6 +122,39 @@ mod tests {
         assert_eq!(after[4], math::exp(steps[4]), "muscle scales");
         assert_eq!(after[5], math::exp(steps[5]), "mouth scales");
         assert_eq!(rng.state_fingerprint(), expected.state_fingerprint());
+    }
+
+    #[test]
+    fn a_gut_steps_by_addition_at_its_own_scale_and_clamps() {
+        // The gut takes `gut_sigma`, not the body's sigma, and adds its step like a colour
+        // channel, so it can reach either end of `[0, 1]` (spec §3.5).
+        let gut = |value| {
+            vec![Gene::Body(BodyGene {
+                trait_: BodyTrait::Gut,
+                value,
+            })]
+        };
+        let mut params = mutating(0.05);
+        params.mutation.gut_sigma = 0.25;
+        let mut genes = gut(0.5);
+        let mut rng = Rng::from_seed(5);
+        apply(&mut genes, &params, &mut rng);
+        let mut expected = Rng::from_seed(5);
+        assert!(expected.chance(1.0));
+        let step = expected.normal(0.0, 0.25);
+        assert_eq!(values(&genes), vec![(0.5 + step).clamp(0.0, 1.0)]);
+        params.mutation.gut_sigma = 8.0;
+        let (mut low, mut high) = (gut(0.5), gut(0.5));
+        let mut rng = Rng::from_seed(9);
+        for _ in 0..200 {
+            apply(&mut low, &params, &mut rng);
+            apply(&mut high, &params, &mut rng);
+        }
+        let reached: Vec<f32> = [values(&low), values(&high)].concat();
+        assert!(
+            reached.iter().all(|v| (0.0..=1.0).contains(v)),
+            "{reached:?}"
+        );
     }
 
     #[test]

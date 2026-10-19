@@ -10,7 +10,8 @@
 //! hash covers them. Phase 3 M3's coverage refreshes add each agent's bite cooldown, then each agent's
 //! diet and the world's bite counts.
 //! Phase 3 M5's adds each agent's swing and hurt ages, where its latest bite landed, and
-//! its kills.
+//! its kills. Phase 3 M6's handling time adds each agent's handling timer, and founders
+//! then carry the gut gene, which takes the genome limit up by one.
 
 use sim_core::World;
 use sim_core::control::BrainInheritance;
@@ -18,8 +19,8 @@ use sim_core::genome::{Gene, Modality};
 use sim_core::mutate::StructuralMutationCounts;
 use sim_core::spawn::SpawnFailureCounts;
 
-pub const EVOLVING_GOLDEN: u64 = 0xc66e_7c80_325a_dee9;
-pub const CONTROL_GOLDEN: u64 = 0x1c1c_da4f_1d5a_68cc;
+pub const EVOLVING_GOLDEN: u64 = 0xa421_c296_abba_c94f;
+pub const CONTROL_GOLDEN: u64 = 0xe62c_5ee2_48f5_01ad;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();
@@ -35,16 +36,16 @@ fn run(mode: BrainInheritance) -> u64 {
     params.brain.oscillators = 0;
     params.brain.connections_per_target = Some(1);
     params.storage.max_neurons = 11;
-    // Exactly room for the founder (25 genes since Phase 3's muscle and mouth), one
-    // vision sensor, and one connection, so the next addition hits the genome limit.
-    params.storage.max_genes = 31;
+    // Exactly room for the founder (26 genes since Phase 3's muscle, mouth, and gut),
+    // one vision sensor, and one connection, so the next addition hits the genome limit.
+    params.storage.max_genes = 32;
     params.mutation.organs.add_sensor_rate = 1.0;
     params.mutation.organs.chemo_weight = 0.0;
     params.mutation.organs.energy_weight = 0.0;
     params.mutation.structural.add_connection_rate = 1.0;
     let mut world = World::new_with_brain_inheritance(42, params.clone(), mode).unwrap();
     let parent = world.spawn_founder(world.plants().position()[0]).unwrap();
-    assert_eq!(world.genome(parent).len(), 25);
+    assert_eq!(world.genome(parent).len(), 26);
     world.intents_mut().ingest[parent.index()] = 1.0;
     world.resolve_feeding();
     world.intents_mut().reproduce[parent.index()] = 1.0;
@@ -59,7 +60,7 @@ fn run(mode: BrainInheritance) -> u64 {
     );
     let child = world.pool().iter_live().find(|&id| id != parent).unwrap();
     assert_eq!(world.brain(child).len(), 11);
-    assert_eq!(world.genome(child).len(), 31);
+    assert_eq!(world.genome(child).len(), 32);
     assert_eq!(edits.add_sensor.unwrap().applied, 1);
     assert!(world.genome(child).iter().any(|gene| matches!(gene,
         Gene::Sensor(sensor) if sensor.modality == Modality::VisionRay)));
@@ -83,7 +84,7 @@ fn run(mode: BrainInheritance) -> u64 {
         .find(|&id| id != parent && id != child)
         .unwrap();
     assert_eq!(world.brain(grandchild).len(), 11);
-    assert_eq!(world.genome(grandchild).len(), 30);
+    assert_eq!(world.genome(grandchild).len(), 31);
     assert_eq!(edits.remove_sensor.unwrap().applied, 1);
 
     params.mutation.organs.add_sensor_rate = 1.0;

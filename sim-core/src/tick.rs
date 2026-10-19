@@ -283,6 +283,7 @@ impl World {
                 self.agents.size[i],
                 self.agents.muscle[i],
                 self.agents.mouth[i],
+                self.agents.gut[i],
                 self.agents.brain_units[i],
                 self.agents.sensor_load[i],
                 self.intents.thrust[i] * self.agents.muscle[i],
@@ -501,9 +502,10 @@ impl World {
     /// Moves energy from plants and corpses into the agents eating them. Step 7 of the
     /// tick (spec §2.4).
     ///
-    /// A transfer, not a flow: nothing is recorded in the ledger, because the same
-    /// joules are still in the world afterwards. If this is ever written wrongly the
-    /// conservation test says so without knowing that eating exists.
+    /// A transfer, not a flow: the same joules are still in the world afterwards, so
+    /// only what a gut fails to assimilate is recorded in the ledger, as dissipation.
+    /// If this is ever written wrongly the conservation test says so without knowing
+    /// that eating exists.
     ///
     /// Agent-index order, because two agents can reach the same food in one tick and
     /// it may not hold enough for both. Whoever is asked first gets what is there;
@@ -535,11 +537,32 @@ impl World {
                     corpse_reach: body + corpse_radius,
                 },
             );
-            // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
-            if meal.carrion {
-                self.agents.eaten_animals[i] += meal.amount;
+            // What a gut cannot assimilate of a plant passes through and leaves the world,
+            // so a short gut wastes plants (spec §3.5, §5.1). Meat needs no fermentation,
+            // and a gut that keeps everything takes nothing back.
+            let share = if meal.carrion {
+                1.0
             } else {
-                self.agents.eaten_plants[i] += meal.amount;
+                self.params.digestion.plant(self.agents.gut[i])
+            };
+            let kept = if share < 1.0 && meal.amount > 0.0 {
+                let (kept, wasted) = take_back_waste(
+                    &mut self.agents.energy[i],
+                    &mut self.agents.energy_reserve[i],
+                    meal.amount,
+                    share,
+                );
+                self.ledger.record_dissipated_amount(wasted);
+                kept
+            } else {
+                meal.amount
+            };
+            // Carrion is meat, so a scavenger's diet reads as an animal's (spec §7.9).
+            // Each diet counts only what was kept.
+            if meal.carrion {
+                self.agents.eaten_animals[i] += kept;
+            } else {
+                self.agents.eaten_plants[i] += kept;
             }
         }
     }
@@ -743,6 +766,21 @@ impl World {
         }
         self.tick += 1;
     }
+}
+
+/// Takes back what a gut keeping `share` cannot assimilate of a plant `meal` just
+/// eaten, returning what it kept and what left the world as waste (spec §3.5, §5.1).
+/// Taking back compensated energy can report a rounding step more than was asked, so a
+/// gut that keeps nothing could count a meal as slightly negative; the diet it feeds
+/// never falls, since checkpoints refuse a negative one (spec §7.9).
+fn take_back_waste(
+    energy: &mut f32,
+    reserve: &mut f64,
+    meal: f64,
+    share: f32,
+) -> (f64, energy::Amount) {
+    let wasted = energy::take_amount(energy, reserve, meal * f64::from(1.0 - share));
+    ((meal - wasted.approximate()).max(0.0), wasted)
 }
 
 #[cfg(test)]
@@ -998,6 +1036,7 @@ mod tests {
             k_move: 0.5,
             k_muscle: 0.25,
             k_mouth: 0.125,
+            k_gut: 0.0,
         };
         let mut world = bodies(params, &[(1.0, 1.0, 1.0), (1.0, 2.0, 1.0), (1.0, 1.0, 2.0)]);
         for i in 0..3 {
@@ -1081,6 +1120,62 @@ mod tests {
         params.world.max_agents = agents;
         params.plants.max_plants = 0;
         params
+    }
+
+    #[test]
+    fn a_gut_that_keeps_nothing_never_counts_a_meal_as_negative() {
+        // An agent just fed a crumb from a near-empty plant: taking the whole crumb back
+        // reports a rounding step more than the meal. Found by searching the energy
+        // operations; Copilot's review of #101 reported the same at a 2e-7 meal.
+        let (mut energy, mut reserve) = (284.49997_f32, 2.9021347152420924e-5);
+        let meal = 2.840692870547442e-14;
+        let (kept, wasted) = take_back_waste(&mut energy, &mut reserve, meal, 0.0);
+        assert!(wasted.approximate() > meal, "the case no longer rounds up");
+        assert_eq!(kept, 0.0);
+    }
+
+    #[test]
+    fn a_gut_keeps_its_share_of_a_plant_and_the_rest_leaves_the_world() {
+        // A half gut on the linear curve keeps half a mouthful of plant and dissipates
+        // the other half, and the diet counts only what it kept (spec §3.5, §5.1).
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        world.agents_mut().gut[grazer] = 0.5;
+        let (energy, dissipated) = (world.agents().energy[grazer], world.ledger().dissipated());
+        let stock = world.total_energy();
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        let kept = f64::from(world.agents().energy[grazer] - energy);
+        let wasted = world.ledger().dissipated() - dissipated;
+        assert!(kept > 0.0, "the grazer kept nothing");
+        assert!((kept - wasted).abs() < 1e-5, "kept {kept}, wasted {wasted}");
+        assert!((world.agents().eaten_plants[grazer] - kept).abs() < 1e-5);
+        assert!(
+            (stock - world.total_energy() - wasted).abs() < 1e-5,
+            "the waste is the only energy that left"
+        );
+    }
+
+    #[test]
+    fn a_full_gut_eats_exactly_as_a_body_without_one() {
+        // A gut of 1 takes nothing back, whatever the curve, so a body without the gene
+        // feeds bit for bit as before it existed (spec §3.5).
+        let mut params = duel_params(1);
+        params.plants.max_plants = 1;
+        params.feeding.gate = 0.0;
+        params.digestion.plant_curve = 0.5;
+        let mut world = World::new(29, params).unwrap();
+        let plant = world.plants().position()[0];
+        let grazer = world.spawn_founder(plant).unwrap().index();
+        let dissipated = world.ledger().dissipated();
+        world.intents_mut().ingest[grazer] = 1.0;
+        world.resolve_feeding();
+        assert_eq!(world.ledger().dissipated(), dissipated);
+        assert!(world.agents().eaten_plants[grazer] > 0.0);
     }
 
     #[test]
