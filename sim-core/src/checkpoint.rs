@@ -30,7 +30,7 @@ pub const CHECKPOINT_MAGIC: [u8; 8] = *b"SEVCKPT\0";
 
 /// Simulation-compatibility identity: bump with any change to this encoding or to the
 /// state continuation requires. Phase 2 rejects other versions rather than migrating.
-pub const CHECKPOINT_FORMAT: u32 = 13;
+pub const CHECKPOINT_FORMAT: u32 = 14;
 
 const HEADER_BYTES: usize = CHECKPOINT_MAGIC.len() + size_of::<u32>();
 
@@ -109,6 +109,7 @@ struct AgentState {
     energy_reserve: f64,
     health: f32,
     cooldown: u32,
+    handling: u32,
     eaten_plants: f64,
     eaten_animals: f64,
     swing_age: u8,
@@ -205,6 +206,7 @@ impl World {
                     energy_reserve: a.energy_reserve[i],
                     health: a.health[i],
                     cooldown: a.cooldown[i],
+                    handling: a.handling[i],
                     eaten_plants: a.eaten_plants[i],
                     eaten_animals: a.eaten_animals[i],
                     swing_age: a.swing_age[i],
@@ -526,6 +528,7 @@ fn restore(c: Checkpoint) -> Result<World, CheckpointError> {
         a.energy_reserve[i] = agent.energy_reserve;
         a.health[i] = agent.health;
         a.cooldown[i] = agent.cooldown;
+        a.handling[i] = agent.handling;
         a.eaten_plants[i] = agent.eaten_plants;
         a.eaten_animals[i] = agent.eaten_animals;
         a.swing_age[i] = agent.swing_age;

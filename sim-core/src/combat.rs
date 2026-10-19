@@ -53,6 +53,12 @@ pub(crate) fn cooldown_ticks(combat: &CombatParams, dt: f32) -> u32 {
     countable_cooldown(combat.cooldown_seconds, dt).unwrap_or(u32::MAX)
 }
 
+/// Ticks a hit keeps the biter's mouth busy: `handling_seconds`, which validation keeps
+/// countable, counted as a cooldown is (spec §4.2).
+pub(crate) fn handling_ticks(combat: &CombatParams, dt: f32) -> u32 {
+    countable_cooldown(combat.handling_seconds, dt).unwrap_or(u32::MAX)
+}
+
 /// The whole ticks that cover `seconds` at timestep `dt`, or `None` past `u32::MAX`:
 /// the count validation requires to fit, and the one a swing starts. `seconds` must be
 /// finite and non-negative and `dt` positive, as validation ensures first.

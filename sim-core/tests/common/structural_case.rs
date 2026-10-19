@@ -15,8 +15,8 @@ use sim_core::spawn::SpawnFailureCounts;
 // Before it, Phase 3 M2's founders gained muscle and mouth genes and the hash covered
 // both (spec §3.5), and M5's coverage-only refresh added lifetime birth identities
 // (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x9c54_cdbc_dc0b_e39b;
-pub const CONTROL_GOLDEN: u64 = 0x31e6_e383_a297_b802;
+pub const EVOLVING_GOLDEN: u64 = 0x8b13_430d_4add_24eb;
+pub const CONTROL_GOLDEN: u64 = 0x7dbc_0291_2e7c_4342;
 
 fn run(mode: BrainInheritance) -> u64 {
     let mut params = crate::scenario::params();

@@ -34,6 +34,9 @@ pub struct Meal {
 pub struct Larder<'a> {
     pub plants: &'a mut Plants,
     pub plant_reach: f32,
+    /// False while the eater's mouth is busy with prey: it can still eat carrion, which
+    /// is meat, but not graze (spec §4.2).
+    pub plants_allowed: bool,
     pub corpses: &'a mut Corpses,
     pub corpse_reach: f32,
 }
@@ -92,14 +95,18 @@ pub fn ingest(
     // Found first, taken second: the search borrows the food to read and the take
     // borrows it to write, and they cannot overlap.
     let plants = &*larder.plants;
-    let plant = nearest_within(
-        plants.hash(),
-        plants.position(),
-        at,
-        larder.plant_reach,
-        |i| plants.energy_at(i) > 0.0,
-    )
-    .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach));
+    let plant = if larder.plants_allowed {
+        nearest_within(
+            plants.hash(),
+            plants.position(),
+            at,
+            larder.plant_reach,
+            |i| plants.energy_at(i) > 0.0,
+        )
+        .map(|(index, d2)| (index, d2.sqrt() - larder.plant_reach))
+    } else {
+        None
+    };
     let corpses = &*larder.corpses;
     let corpse = corpses
         .hash()
@@ -169,6 +176,7 @@ mod tests {
             &mut Larder {
                 plants,
                 plant_reach: reach,
+                plants_allowed: true,
                 corpses: &mut corpses,
                 corpse_reach: reach,
             },
@@ -292,6 +300,15 @@ mod tests {
     }
 
     fn eat(at: Vec3, plants: &mut Plants, corpses: &mut Corpses) -> Meal {
+        eat_with(at, plants, corpses, true)
+    }
+
+    fn eat_with(
+        at: Vec3,
+        plants: &mut Plants,
+        corpses: &mut Corpses,
+        plants_allowed: bool,
+    ) -> Meal {
         let (mut energy, mut reserve) = (0.0, 0.0);
         ingest(
             at,
@@ -301,10 +318,34 @@ mod tests {
             &mut Larder {
                 plants,
                 plant_reach: 5.0,
+                plants_allowed,
                 corpses,
                 corpse_reach: 5.0,
             },
         )
+    }
+
+    #[test]
+    fn a_mouth_busy_with_prey_takes_carrion_but_not_plants() {
+        // Handling time blocks grazing only (spec §4.2): a nearer plant is passed over
+        // for the corpse, and with no corpse in reach nothing is eaten.
+        let mut plants = plants_at(&[Vec3::new(501.0, 500.0, 0.0)], 60.0);
+        let mut corpses = corpse_at(Vec3::new(504.0, 500.0, 0.0), 50.0);
+        let plant_before = plants.total_energy();
+        let meal = eat_with(
+            Vec3::new(500.0, 500.0, 0.0),
+            &mut plants,
+            &mut corpses,
+            false,
+        );
+        assert!(meal.amount > 0.0 && meal.carrion, "{meal:?}");
+        assert_eq!(plants.total_energy(), plant_before, "grazed while handling");
+
+        let mut plants = plants_at(&[Vec3::new(501.0, 500.0, 0.0)], 60.0);
+        let mut empty = no_corpses();
+        let meal = eat_with(Vec3::new(500.0, 500.0, 0.0), &mut plants, &mut empty, false);
+        assert_eq!(meal, Meal::default());
+        assert_eq!(plants.total_energy(), plant_before);
     }
 
     #[test]

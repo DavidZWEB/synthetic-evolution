@@ -865,6 +865,14 @@ pub struct CombatParams {
     ///
     /// **0.8 (spec §5.5)**: animals assimilate 60–90% of meat.
     pub assimilation: f32,
+    /// Seconds after landing a hit during which the biter cannot graze: its mouth is
+    /// busy with the prey (spec §4.2). It can still eat carrion, which is meat. Counted
+    /// in whole ticks like the cooldown, and a retune of `world.dt` keeps each running
+    /// timer's remaining time.
+    ///
+    /// **0**: biting and grazing interleave freely. Holling's handling time is what
+    /// makes them compete for one mouth (spec §4.2).
+    pub handling_seconds: f32,
 }
 
 /// What every founder carries beyond the sensing and brain layouts (spec §3.3).
@@ -1474,6 +1482,15 @@ impl SimParams {
                 "combat.cooldown_seconds must be non-negative and countable in ticks",
             ));
         }
+        // Handling counts whole ticks too, exactly as a cooldown does.
+        if !(combat.handling_seconds >= 0.0)
+            || !combat.handling_seconds.is_finite()
+            || crate::combat::countable_cooldown(combat.handling_seconds, self.world.dt).is_none()
+        {
+            return Err(ParamError(
+                "combat.handling_seconds must be non-negative and countable in ticks",
+            ));
+        }
         // The step `combat::recover` adds, in the f32 it adds it in.
         if combat.health_regen > 0.0 && !(combat.health_regen * self.world.dt >= f32::EPSILON / 2.0)
         {
@@ -1809,6 +1826,7 @@ impl Default for CombatParams {
             dormant_bias: -1.0,
             mouthful: 20.0,
             assimilation: 0.8,
+            handling_seconds: 0.0,
         }
     }
 }

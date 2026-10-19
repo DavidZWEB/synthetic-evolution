@@ -15,8 +15,8 @@ use sim_core::{AgentId, Rng, SpawnSpec, World};
 // Before it, Phase 3 M2's founders gained muscle and mouth genes and the hash covered
 // both (spec §3.5), and M5's coverage-only refresh added lifetime birth identities
 // (spec section 7.8).
-pub const EVOLVING_GOLDEN: u64 = 0x956f_2c76_1e61_5975;
-pub const CONTROL_GOLDEN: u64 = 0xa017_734d_415e_d051;
+pub const EVOLVING_GOLDEN: u64 = 0x7673_f815_f60b_82f5;
+pub const CONTROL_GOLDEN: u64 = 0x9221_94b7_71d2_8cf1;
 
 const EXTRA: usize = 8;
 

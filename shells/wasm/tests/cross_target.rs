@@ -59,6 +59,9 @@ mod combat_case;
 #[path = "../../../sim-core/tests/common/wiring_case.rs"]
 mod wiring_case;
 
+#[path = "../../../sim-core/tests/common/handling_case.rs"]
+mod handling_case;
+
 #[path = "../../../sim-core/tests/common/cryptic_case.rs"]
 mod cryptic_case;
 
@@ -70,6 +73,11 @@ fn wired_sensors_and_knockouts_agree_with_native_in_every_mode() {
 #[wasm_bindgen_test]
 fn bites_agree_with_native_in_every_mode() {
     combat_case::check_combat_runs();
+}
+
+#[wasm_bindgen_test]
+fn handling_time_agrees_with_native_in_every_mode() {
+    handling_case::check_handling_runs();
 }
 
 #[wasm_bindgen_test]
