@@ -1178,6 +1178,18 @@ impl SimParams {
         Ok(())
     }
 
+    /// Validates an archived run's params as that run had them: every value, and
+    /// storage this build can lay out, but not that this build could construct the
+    /// world. Founders gain a body gene with each trait a phase adds (spec §3.5), and
+    /// the core estimate grows with each per-agent field, so a run whose limits exactly
+    /// fit its own world would otherwise read as invalid. Archives are read, never
+    /// rebuilt into a world.
+    pub fn validate_recorded(&self) -> Result<(), ParamError> {
+        self.validate_values()?;
+        StorageLayout::recorded(self)?;
+        Ok(())
+    }
+
     /// `!(x > 0.0)` rather than `x <= 0.0` throughout: the negated form also rejects
     /// NaN, which is the shape a bad value arrives in from JSON.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
@@ -1923,6 +1935,37 @@ impl Default for ChemoParams {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_archived_run_need_not_fit_today_s_founder_or_core() {
+        // Limits that exactly fit a run's own founders and world fall short once
+        // founders gain a body gene, or agents a field (spec §3.5). Read back, the run
+        // is still valid; a new world built to those limits is still refused.
+        let mut params = SimParams::default();
+        let founder = crate::founder::FounderPlan::checked_counts(&params)
+            .unwrap()
+            .genes;
+        params.storage.max_genes = founder - 1;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError("founder exceeds storage.max_genes"))
+        );
+        assert_eq!(params.validate_recorded(), Ok(()));
+
+        let mut params = SimParams::default();
+        params.storage.max_memory_bytes = params.estimated_construction_bytes().unwrap() - 1;
+        assert_eq!(
+            params.validate(),
+            Err(ParamError(
+                "estimated core construction exceeds storage.max_memory_bytes"
+            ))
+        );
+        assert_eq!(params.validate_recorded(), Ok(()));
+
+        // Every value is still checked.
+        params.world.dt = f32::NAN;
+        assert!(params.validate_recorded().is_err());
+    }
+
     #[test]
     fn distance_coefficients_validate_at_construction_and_retune_boundaries() {
         type Change = fn(&mut DistanceParams, f32);

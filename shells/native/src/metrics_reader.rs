@@ -83,7 +83,9 @@ fn parse_metrics(input: impl BufRead) -> Result<MetricsData> {
                     )
                     .into());
                 }
-                next.params.validate().map_err(|error| {
+                // As the run had them: today's founder may have outgrown the
+                // recorded limits.
+                next.params.validate_recorded().map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("metrics header contains {error}"),
@@ -1266,6 +1268,28 @@ mod tests {
         let data = parse_values(&records).unwrap();
         assert_eq!(data.header.params.corpses.max_corpses, 0);
         assert_eq!(data.header.params.storage.max_memory_bytes, high);
+    }
+
+    #[test]
+    fn a_run_reads_whatever_today_s_founder_needs() {
+        // Limits that exactly fit a run's founders fall a gene short once founders gain
+        // a body gene; the run still reads as it was (spec §3.5).
+        let mut records = final_records();
+        let mut params: SimParams =
+            serde_json::from_value(records[0]["data"]["params"].clone()).unwrap();
+        let (mut low, mut high) = (0, params.storage.max_genes);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            params.storage.max_genes = middle;
+            if params.validate().is_ok() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        records[0]["data"]["params"]["storage"]["max_genes"] = serde_json::json!(high - 1);
+        let data = parse_values(&records).unwrap();
+        assert_eq!(data.header.params.storage.max_genes, high - 1);
     }
 
     #[test]

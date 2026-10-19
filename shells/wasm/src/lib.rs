@@ -83,8 +83,9 @@ fn parse_archive_params(params_json: &str) -> Result<SimParams, JsError> {
         serde_json::from_str(params_json).map_err(|e| js_error("bad params", e))?;
     let mut params = SimParams::deserialize(&wire).map_err(|e| js_error("bad params", e))?;
     later_params::restore(&mut params, &wire).map_err(|reason| js_error("bad params", reason))?;
+    // As the run had them: today's founder may have outgrown the recorded limits.
     params
-        .validate()
+        .validate_recorded()
         .map_err(|e| js_error("invalid params", e))?;
     Ok(params)
 }

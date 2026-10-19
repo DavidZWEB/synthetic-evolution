@@ -33,6 +33,18 @@ pub(crate) struct StorageLayout {
 impl StorageLayout {
     /// Called by parameter validation, so must never call `validate` or build a plan.
     pub(crate) fn new(params: &SimParams) -> Result<Self, ParamError> {
+        Self::laid_out(params, true)
+    }
+
+    /// The layout an archived run's params describe, without requiring that this build
+    /// could construct its world: today's founder may carry body genes the run's lacked
+    /// (spec §3.5), and today's estimate counts per-agent state the run did not have.
+    /// The run that wrote the archive already proved both fit.
+    pub(crate) fn recorded(params: &SimParams) -> Result<Self, ParamError> {
+        Self::laid_out(params, false)
+    }
+
+    fn laid_out(params: &SimParams, constructible: bool) -> Result<Self, ParamError> {
         let storage = &params.storage;
         let agents = params.world.max_agents;
         let aggregate =
@@ -124,7 +136,7 @@ impl StorageLayout {
                 "storage.effectors_per_slot times world.max_agents cannot hold one founder",
             ),
         ] {
-            if count > limit {
+            if constructible && count > limit {
                 return Err(ParamError(message));
             }
         }
@@ -190,7 +202,7 @@ impl StorageLayout {
         requests.buffer::<f32>(params.chemo.decay.capacity() as u64)?;
 
         layout.construction_bytes = requests.bytes;
-        if layout.construction_bytes > storage.max_memory_bytes {
+        if constructible && layout.construction_bytes > storage.max_memory_bytes {
             return Err(ParamError(
                 "estimated core construction exceeds storage.max_memory_bytes",
             ));
